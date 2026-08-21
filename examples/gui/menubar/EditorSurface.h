@@ -17,6 +17,7 @@
 
 #include <gui/b_commandsystem.h>
 
+using bakuon::gui::Context;
 using bakuon::gui::ContextId;
 
 namespace bakuon::examples {
@@ -26,10 +27,10 @@ class EditorSurface : public QWidget
 {
     Q_OBJECT
 public:
-    EditorSurface(const QString& label, ContextId focusContext, ContextId selectedContext,
-                  QWidget* parent = nullptr);
+    EditorSurface(const QString& label, const ContextId& focusContext,
+                  const ContextId& selectedContext, QWidget* parent = nullptr);
 
-    std::vector<ContextId> contexts() const;
+    Context context() const;
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;

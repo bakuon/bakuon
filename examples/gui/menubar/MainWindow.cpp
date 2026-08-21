@@ -18,12 +18,12 @@ MainWindow::MainWindow()
 
     auto* tabs    = new QTabWidget(this);
     m_imageCanvas = new EditorSurface(QStringLiteral("图像编辑器"),
-                                      gui::ContextId{"editor.image.focused"},
-                                      gui::ContextId{"editor.image.objectSelected"},
+                                      kImageFocused,
+                                      kImageObjectSelected,
                                       tabs);
     m_scene3d     = new EditorSurface(QStringLiteral("3D 编辑器"),
-                                      gui::ContextId{"editor.scene3d.focused"},
-                                      gui::ContextId{"editor.scene3d.objectSelected"},
+                                      kScene3dFocused,
+                                      kScene3dObjectSelected,
                                       tabs);
     m_imageCanvas->setObjectName(QStringLiteral("Image Editor"));
     m_scene3d->setObjectName(QStringLiteral("3D Editor"));

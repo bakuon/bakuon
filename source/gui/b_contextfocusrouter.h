@@ -9,11 +9,6 @@
 
 namespace bakuon::gui {
 
-class CommandManager;
-
-static void setProviderContexts(QObject* widget, const Context& context);
-static Context providerContext(const QObject* widget);
-
 // focus context provider
 class ContextFocusRouter : public QObject
 {

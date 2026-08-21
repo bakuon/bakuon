@@ -5,6 +5,7 @@
 #include "gui/b_command.h"
 #include "gui/b_commandlayout.h"
 #include "gui/b_commandmanager.h"
+#include "gui/b_context.h"
 #include "gui/b_shortcutmanager.h"
 #include "gui/b_types.h"
 
@@ -76,6 +77,15 @@ public:
     static std::unordered_set<ContextId> activeContexts();
     static bool isActiveContext(const ContextId& context) noexcept;
     static uint64_t activationOrder(const ContextId& context) noexcept;
+
+    // 为焦点部件设置属性标签上下文
+    static void setProviderContexts(QObject* widget, const Context& context);
+    // 单上下文场景的语法糖
+    static inline void setProviderContext(QObject* widget, const ContextId& context)
+    {
+        setProviderContexts(widget, Context{context});
+    }
+    static Context providerContext(const QObject* widget);
 
     /// 快捷键管理
 

@@ -66,8 +66,8 @@ TEST(ContextTest, ContextFocusRouter)
     layout->addWidget(widgetA);
     layout->addWidget(widgetB);
 
-    setProviderContexts(widgetA, Context{ctxA, ctxShared});
-    setProviderContexts(widgetB, Context{ctxB, ctxShared});
+    CommandSystem::setProviderContexts(widgetA, Context{ctxA, ctxShared});
+    CommandSystem::setProviderContexts(widgetB, Context{ctxB, ctxShared});
 
     window->show();
 

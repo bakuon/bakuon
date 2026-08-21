@@ -1,6 +1,5 @@
 #include "EditorSurface.h"
 #include "Constants.h"
-#include "FocusContextWatcher.h"
 
 #include <QtWidgets/QBoxLayout>
 #include <QtWidgets/QMessageBox>
@@ -11,15 +10,15 @@ using bakuon::gui::CommandId;
 
 namespace bakuon::examples {
 
-EditorSurface::EditorSurface(const QString& label, ContextId focusContext,
-                             ContextId selectedContext, QWidget* parent)
+EditorSurface::EditorSurface(const QString& label, const ContextId& focusContext,
+                             const ContextId& selectedContext, QWidget* parent)
     : QWidget(parent)
-    , m_selectedContext(std::move(selectedContext))
-    , m_focusContext(std::move(focusContext))
+    , m_selectedContext(selectedContext)
+    , m_focusContext(focusContext)
 {
     setFocusPolicy(Qt::StrongFocus);
     setContextMenuPolicy(Qt::DefaultContextMenu);
-    bakuon::examples::setWidgetContext(this, m_focusContext);
+    gui::CommandSystem::setProviderContext(this, m_focusContext);
 
     auto* layout = new QVBoxLayout(this);
     m_hint = new QLabel(label
@@ -31,9 +30,9 @@ EditorSurface::EditorSurface(const QString& label, ContextId focusContext,
     setupRealActions(label);
 }
 
-std::vector<ContextId> EditorSurface::contexts() const
+Context EditorSurface::context() const
 {
-    return std::vector<ContextId>{m_selectedContext, m_focusContext};
+    return Context{m_selectedContext, m_focusContext};
 }
 
 void EditorSurface::mousePressEvent(QMouseEvent* event)

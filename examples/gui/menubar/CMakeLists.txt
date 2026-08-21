@@ -12,8 +12,6 @@ add_executable(
     CustomizeMenuDialog.h
     EditorSurface.cpp
     EditorSurface.h
-    FocusContextWatcher.cpp
-    FocusContextWatcher.h
     main.cpp
     MainWindow.cpp
     MainWindow.h)
