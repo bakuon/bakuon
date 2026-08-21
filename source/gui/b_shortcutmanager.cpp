@@ -247,7 +247,7 @@ QJsonObject ShortcutManager::exportToJson() const
 
     for (const auto& binding : modifiedBindings()) {
         QJsonObject cmdObj;
-        cmdObj["id"] = binding.commandId.value();
+        cmdObj["id"] = binding.commandId.name();
 
         QJsonArray shortcutsArray;
         for (const auto& shortcut : binding.shortcuts) {

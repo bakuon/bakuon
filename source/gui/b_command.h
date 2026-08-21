@@ -7,7 +7,7 @@
 #include <QtGui/QIcon>
 #include <QtGui/QKeySequence>
 
-#include "gui/detail/b_types.h"
+#include "gui/b_types.h"
 
 namespace bakuon::gui {
 
@@ -78,7 +78,7 @@ public:
     };
     Q_DECLARE_FLAGS(Attributes, Attribute)
 
-    Command(CommandId id, QString defaultText, CommandManager& mgr);
+    Command(const CommandId& id, QString defaultText, CommandManager& mgr);
 
     const CommandId& id() const noexcept { return m_id; }
 

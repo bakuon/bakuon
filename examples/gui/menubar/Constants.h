@@ -1,6 +1,6 @@
 #pragma once
 
-#include <gui/detail/b_types.h>
+#include <gui/b_types.h>
 
 namespace bakuon::examples {
 

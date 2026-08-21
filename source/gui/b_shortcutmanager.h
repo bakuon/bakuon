@@ -6,7 +6,7 @@
 #include <QtCore/QObject>
 #include <QtGui/QKeySequence>
 
-#include "gui/detail/b_types.h"
+#include "gui/b_types.h"
 
 // QKeySequence hash support for unordered containers
 namespace std {

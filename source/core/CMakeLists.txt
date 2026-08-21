@@ -4,19 +4,22 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 # bakuon core project configure
 # ============================================================================
 project(
-    bakuon_core
+    core
     VERSION 1.0.0
     LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+file(GLOB_RECURSE ALL_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+file(GLOB_RECURSE ALL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
-bakuon_add_module(
-    NAME
+add_library(${PROJECT_NAME} STATIC)
+add_library(bakuon::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+
+target_sources(${PROJECT_NAME} PRIVATE ${ALL_SOURCES} ${ALL_HEADERS})
+
+target_include_directories(
     ${PROJECT_NAME}
-    PATH
-    ${CMAKE_CURRENT_SOURCE_DIR})
+    PUBLIC ${CMAKE_SOURCE_DIR}/source
+    PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 target_compile_definitions(
     ${PROJECT_NAME}

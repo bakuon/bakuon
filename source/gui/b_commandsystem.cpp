@@ -129,6 +129,30 @@ bool CommandSystem::loadLayout(const QString& path)
     return true;
 }
 
+bool CommandSystem::registerContext(const ContextId& id, const QString& owner,
+                                    const QString& description)
+{
+    return get().cmdManager.registerContext(id, owner, description);
+}
+
+std::optional<CommandManager::ContextInfo> CommandSystem::contextInfo(const ContextId& id)
+{
+    return get().cmdManager.contextInfo(id);
+}
+
+std::vector<ContextId> CommandSystem::registeredContexts()
+{
+    return get().cmdManager.registeredContexts();
+}
+
+ContextId CommandSystem::declareContext(const QString& idString, const QString& description,
+                                        const QString& owner)
+{
+    ContextId id{idString};
+    get().cmdManager.registerContext(id, description, owner);
+    return id;
+}
+
 void CommandSystem::pushContext(const ContextId& context, const void* source, ContextTier tier)
 {
     get().cmdManager.pushContext(context, source, tier);

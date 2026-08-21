@@ -200,9 +200,60 @@ void CommandManager::renderToolBar(CommandLayout::Item* parent, QToolBar* toolba
     }
 }
 
+bool CommandManager::registerContext(const ContextId& id, const QString& owner,
+                                     const QString& description)
+{
+    if (!id.isValid()) {
+        qWarning() << "CommandManager::registerContext: refuse to register an invalid (empty) "
+                      "ContextId, owner:"
+                   << owner;
+        return false;
+    }
+
+    auto it = m_contextRegistry.find(id);
+    if (it == m_contextRegistry.end()) {
+        m_contextRegistry.emplace(id, ContextInfo{description, owner});
+        return true;
+    }
+
+    if (it->second.owner != owner) {
+        // 两个不相关的调用方争用了同一个上下文字符串——这正是"字符串到处敲、
+        // 难免重复"想要在开发期就暴露出来的那类真实 bug，而不是等运行时仲裁
+        // 出现诡异行为才发现。
+        qWarning() << "CommandManager::registerContext: naming collision on" << id
+                   << "-- already "
+                      "owned by"
+                   << it->second.owner << ", rejected registration attempt from" << owner;
+        return false;
+    }
+
+    // 同一个 owner 重复登记：视为幂等更新（例如刷新 description），直接放行。
+    it->second.description = description;
+    return true;
+}
+
+std::optional<CommandManager::ContextInfo> CommandManager::contextInfo(const ContextId& id) const
+{
+    auto it = m_contextRegistry.find(id);
+    if (it == m_contextRegistry.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+std::vector<ContextId> CommandManager::registeredContexts() const
+{
+    std::vector<ContextId> result;
+    result.reserve(m_contextRegistry.size());
+    for (const auto& [id, _] : m_contextRegistry) {
+        result.push_back(id);
+    }
+    return result;
+}
+
 void CommandManager::pushContext(const ContextId& context, const void* source, ContextTier tier)
 {
-    const RefKey key{context, source};
+    const RefKey key{context, source, tier};
     int& refCount = m_refCounts[key];
     ++refCount;
     if (refCount > 1) {
@@ -230,7 +281,7 @@ void CommandManager::pushContext(const ContextId& context, const void* source, C
 
 void CommandManager::popContext(const ContextId& context, const void* source, ContextTier tier)
 {
-    const RefKey key{context, source};
+    const RefKey key{context, source, tier};
     auto it = m_refCounts.find(key);
     if (it == m_refCounts.end() || it->second <= 0) {
         return; // 未持有该上下文(context, source, tier)组合引用，忽略非法/多余的 pop 调用

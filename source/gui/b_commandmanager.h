@@ -68,9 +68,44 @@ public:
     void renderToolBar(CommandLayout* layout, QMainWindow* window) const;
     void renderToolBar(CommandLayout::Item* parent, QToolBar* toolbar) const;
 
+    /// Context 注册表
+
+    // 一个上下文 id 的元信息：由谁登记、用于人类阅读的描述。
+    struct ContextInfo
+    {
+        QString owner; // 登记者标识，通常是模块/插件的唯一 id，如 "core"、"plugin.image"
+        QString description;
+    };
+
+    /**
+     * 显式登记一个上下文 id。这是解决"上下文本质是字符串、散落各处容易重复/
+     * 拼写不一致"问题的第一道防线：约定业务代码不允许凭空 new 一个 ContextId
+     * 字面量，必须先在某处（通常是模块自己的一个 XxxContexts.h）调用一次
+     * registerContext()/CommandSystem::declareContext()，取得的 ContextId
+     * 常量再分发给模块内部各处使用。
+     *
+     * 冲突判定规则：
+     *   - id 尚未登记                 -> 正常登记，返回 true
+     *   - id 已登记，owner 相同        -> 视为幂等更新（如刷新 description），返回 true
+     *   - id 已登记，owner 不同        -> 真实的命名冲突（两个不相关模块争用了
+     *                                     同一个字符串），拒绝注册，qWarning 报出
+     *                                     双方 owner 以便定位，返回 false
+     *
+     * 未登记的 id 在 pushContext() 时只会 qWarning 提示、不阻断运行——保持行为
+     * 宽松，是为了不因为漏注册就让整个功能不可用，但足以在开发期第一时间暴露问题。
+     */
+    bool registerContext(const ContextId& id, const QString& owner, const QString& description);
+
+    // 查询某个上下文 id 的登记信息；从未登记过则返回 std::nullopt。
+    std::optional<ContextInfo> contextInfo(const ContextId& id) const;
+
+    // 枚举当前进程内全部已登记的上下文 id，用于生成"系统全部上下文"清单/调试面板
+    // （类似 VSCode 的 "Inspect Context Keys"）。
+    std::vector<ContextId> registeredContexts() const;
+
     /// Context 管理
 
-    /** ContextManager：维护当前“激活上下文集合”（而非简单的单一上下文/栈）。
+    /** 维护当前“激活上下文集合”（而非简单的单一上下文/栈）。
      *
      * 真实 GUI 场景中往往需要多个上下文同时生效，例如：
      *   "global"                    —— 程序启动后常驻激活
@@ -137,13 +172,16 @@ private:
         }
     };
 
-    static constexpr size_t TierCount = 2; // 与 ContextTier 的成员数量保持一致
+    static constexpr size_t TierCount = static_cast<size_t>(ContextTier::TierCount);
     using TierCounts                  = std::array<int, TierCount>;
     static bool anyTierActive(const TierCounts& counts) noexcept;
 
     std::unordered_map<CommandId, std::unique_ptr<Command>> m_commands;
 
-    // 菜单栏布局
+    // 已登记的上下文 id -> 元信息（描述、owner），见 registerContext()
+    std::unordered_map<ContextId, ContextInfo> m_contextRegistry;
+
+    // 默认菜单栏/工具栏布局
     std::unique_ptr<CommandLayout> m_menubarLayout;
     std::unique_ptr<CommandLayout> m_toolbarLayout;
 

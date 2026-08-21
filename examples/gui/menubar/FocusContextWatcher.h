@@ -25,7 +25,7 @@ inline constexpr char kContextIdPropertyName[] = "bakuon_contextId";
 inline void setWidgetContext(QObject* widget, const gui::ContextId& context)
 {
     Q_ASSERT(widget != nullptr);
-    widget->setProperty(kContextIdPropertyName, context.value());
+    widget->setProperty(kContextIdPropertyName, context.name());
 }
 
 // 便捷函数：读取一个 widget 标记的上下文 ID；未标记过则返回一个 !isValid() 的 ContextId。

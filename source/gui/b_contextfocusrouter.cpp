@@ -1,25 +1,23 @@
 #include "gui/b_contextfocusrouter.h"
+#include "gui/b_commandsystem.h"
 
 namespace bakuon::gui {
 
 ContextFocusRouter::ContextFocusRouter(QObject* parent)
     : QObject(parent)
-    , m_lastProvider(nullptr)
+    , m_currentProvider(nullptr)
 {
-    // TODO: 在外部调用过滤器
-    // 注册为全局事件过滤器，监控整个应用程序的焦点变化
-    qApp->installEventFilter(this);
-
-    // 或者连接到应用的焦点变化信号
-    // if (qApp) {
-    //     connect(qApp, &QApplication::focusChanged, this, &ContextFocusRouter::updateProvider);
-    // }
 }
 
-void ContextFocusRouter::addProviderWidget(QObject* widget, const ContextId& context)
+ContextFocusRouter::~ContextFocusRouter()
 {
-    if (!widget || !context.isValid()) {
-        qWarning() << "ContextFocusRouter: Invalid widget or context ID";
+    uninstall();
+}
+
+void ContextFocusRouter::addProviderWidget(QObject* widget, const Context& context)
+{
+    if (!widget || !context.empty()) {
+        qWarning() << "ContextFocusRouter: Invalid widget or empty context";
         return;
     }
 
@@ -33,16 +31,57 @@ void ContextFocusRouter::removeProviderWidget(QObject* widget)
         m_providers.erase(it);
     }
 
-    if (m_lastProvider == widget) {
-        m_lastProvider = nullptr;
+    if (m_currentProvider == widget) {
+        m_currentProvider = nullptr;
     }
 }
 
-void ContextFocusRouter::clear()
+void ContextFocusRouter::clearProviderWidget()
 {
-    m_lastContext  = {};
-    m_lastProvider = nullptr;
+    m_currentContext  = {};
+    m_currentProvider = nullptr;
     m_providers.clear();
+}
+
+void ContextFocusRouter::install()
+{
+    if (m_installed)
+        return;
+    if (qApp) {
+        qApp->installEventFilter(this);
+        // 或者连接到应用的焦点变化信号
+        // connect(qApp, &QApplication::focusChanged, this, &ContextFocusRouter::updateProvider);
+        m_installed = true;
+    }
+}
+
+void ContextFocusRouter::uninstall()
+{
+    if (!m_installed)
+        return;
+
+    // ContextFocusRouter 通常以 qApp 为 parent 构造，这意味着
+    // QApplication 自身析构时会走 QObjectPrivate::deleteChildren()
+    // 自动把本对象也析构掉，从而调用到这里。但此时 QApplication 正处
+    // 于自己的析构过程中，其内部状态（包括事件过滤器列表）可能已经被部
+    // 分拆除；此时仍然调用 qApp->removeEventFilter(this) 会踩到已析
+    // 构的内部数据而段错误。QCoreApplication::closingDown() 正是 Qt
+    // 提供的、专门用来判断"应用是否正在关闭"的信号，此时应跳过任何对 qApp
+    // 的进一步操作————反正应用本身即将退出，事件过滤器列表也无所谓是否移除了。
+    if (qApp && !QCoreApplication::closingDown()) {
+        qApp->removeEventFilter(this);
+    }
+    m_installed = false;
+
+    // 主动释放当前持有的引用，避免"卸载路由器"之后遗留一份永远不会再被
+    // 更新、也不会再被任何人 pop 掉的激活上下文。
+    if (m_currentProvider) {
+        for (const ContextId& ctx : m_currentContext) {
+            CommandSystem::popContext(ctx, m_currentProvider.data());
+        }
+    }
+    m_currentProvider = nullptr;
+    m_currentContext  = {};
 }
 
 bool ContextFocusRouter::eventFilter(QObject* watched, QEvent* event)
@@ -65,73 +104,76 @@ bool ContextFocusRouter::eventFilter(QObject* watched, QEvent* event)
         return QObject::eventFilter(watched, event);
     }
 
-    handleFocusProvider(gainer);
+    handleFocusIn(gainer);
 
     return QObject::eventFilter(watched, event);
 }
 
-void ContextFocusRouter::handleFocusProvider(QObject* focusedWidget)
+void ContextFocusRouter::handleFocusIn(QObject* gainer)
 {
-    if (!focusedWidget) {
-        return;
-    }
+    QObject* provider = gainer;
+    Context foundContext;
 
-    QObject* current         = focusedWidget;
-    QObject* matchedProvider = nullptr;
-    ContextId foundContext;
-
-    while (current) {
-        if (auto it = m_providers.find(current); it != m_providers.end()) {
-            matchedProvider = current;
-            foundContext    = it->second;
+    while (provider) {
+        if (auto it = m_providers.find(provider); it != m_providers.end()) {
+            foundContext = it->second;
             break;
         }
-        current = current->parent(); // 沿着对象树向上冒泡
+        /**
+        // 或者使用属性标签的形式
+        if (Context ctx = providerContext(provider); !ctx.empty()) {
+            foundContext = ctx;
+            break;
+        }
+        */
+        provider = provider->parent(); // 沿着对象树向上冒泡
     }
 
-    if (matchedProvider == m_lastProvider) {
+    if (!provider) {
+        foundContext.clear();
+    }
+
+    if (provider == m_currentProvider.data()) {
         return;
     }
 
+    auto* const oldProvider = m_currentProvider.data();
+    const auto oldContext   = m_currentContext;
+
     // !!! 顺序很重要：先 push 新上下文、再 pop 旧上下文，不要反过来。
-    // ContextManager 是"引用计数集合"而不是栈顶唯一，如果先 pop 旧的再 push 新的，
+    // CommandManager 是"引用计数集合"而不是栈顶唯一，如果先 pop 旧的再 push 新的，
     // 中间会出现一个短暂的过渡态——旧上下文已经失活、新上下文还未激活，这期间会
-    // 广播一次 contextSetChanged()，让全部 Command 都做一次多余的重新仲裁；对于
+    // 广播一次 contextChanged()，让全部 Command 都做一次多余的重新仲裁；对于
     // 那些同时绑定了新旧两个上下文的 Command（比如图像/3D 编辑器共用的"删除"命令），
     // 还会让它们在这个过渡态里短暂掉进"无权威源"分支。先 push 后 pop 则不会有这个
     // 问题：任何同时绑定新旧上下文的 Command，会在旧上下文失活之前就已经因为新
     // 上下文有更大的 activationOrder 而立刻切换过去；极端情况下如果新旧上下文恰好
     // 是同一个字符串，引用计数全程不会掉到 0，完全不会触发多余的全局重新仲裁。
-    if (matchedProvider) {
-        CommandSystem::pushContext(foundContext, matchedProvider);
+    if (provider) {
+        for (const ContextId& ctx : foundContext) {
+            CommandSystem::pushContext(ctx, provider);
+        }
     }
-    if (m_lastProvider) {
-        gui::CommandSystem::popContext(m_lastContext, m_lastProvider);
+    if (oldProvider) {
+        for (const ContextId& ctx : oldContext) {
+            CommandSystem::popContext(ctx, oldProvider);
+        }
     }
 
-    m_lastProvider = matchedProvider; // 为 nullptr 表示焦点完全离开了所有已标记部件
-    m_lastContext  = foundContext;
+    m_currentProvider = provider; // 为 nullptr 表示焦点完全离开了所有已标记部件
+    m_currentContext  = foundContext;
 }
 
-QObject* ContextFocusRouter::findContextProvider(QObject* widget) const
+QObject* ContextFocusRouter::findContextProvider(QObject* object) const
 {
-    if (!widget) {
-        return nullptr;
-    }
-    QObject* current = widget;
-    while (current) {
-        if (auto it = m_providers.find(current); it != m_providers.end()) {
-            return current;
+    QObject* provider = object;
+    while (provider) {
+        if (auto it = m_providers.find(provider); it != m_providers.end()) {
+            return provider;
         }
-        current = current->parent();
+        provider = provider->parent(); // 沿着对象树向上冒泡
     }
     return nullptr;
-}
-
-void ContextFocusRouter::updateProvider(QWidget* old, QWidget* now)
-{
-    Q_UNUSED(old)
-    Q_UNUSED(now)
 }
 
 } // namespace bakuon::gui

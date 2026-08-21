@@ -1,13 +1,12 @@
 #pragma once
 
-#include <utility>
 #include <QtCore/QDataStream>
 
 #include "gui/b_command.h"
 #include "gui/b_commandlayout.h"
 #include "gui/b_commandmanager.h"
 #include "gui/b_shortcutmanager.h"
-#include "gui/detail/b_types.h"
+#include "gui/b_types.h"
 
 namespace bakuon::gui {
 
@@ -38,7 +37,36 @@ public:
     static bool saveLayout(const QString& path);
     static bool loadLayout(const QString& path);
 
-    /// 命令上下文
+    /// 命令上下文注册表
+
+    // 显式登记一个上下文 id（owner 必填，通常传入模块/插件的唯一标识），
+    // 详细的冲突判定规则见 CommandManager::registerContext() 的注释。
+    static bool registerContext(const ContextId& id, const QString& owner,
+                                const QString& description);
+    static std::optional<CommandManager::ContextInfo> contextInfo(const ContextId& id);
+    static std::vector<ContextId> registeredContexts();
+    /**
+     * declareContext：注册 + 取得 ContextId 的一步到位版本，专为"模块级常量
+     * 声明文件"设计，典型用法：
+     *
+     *   // EditorContexts.h
+     *   namespace editor::contexts {
+     *   inline const gui::ContextId kFocused =
+     *       gui::CommandSystem::declareContext("editor.image.focused",
+     *                                          "plugin.image",
+     *                                          "图像编辑器获得焦点");
+     *   }
+     *
+     * 这样业务代码里永远不会出现裸的 ContextId("字符串") 字面量——只会引用
+     * 已经声明好的常量，重复/拼写不一致的问题从"运行时才会暴露"变成
+     * "登记时就地址空间统一"。owner 不同的两次 declareContext 撞到同一个
+     * 字符串会在这里被 qWarning 出来（见 registerContext），但仍然返回一个
+     * 可用的 ContextId——不让命名冲突直接导致编译期/启动期崩溃，只是足够刺眼。
+     */
+    static ContextId declareContext(const QString& id, const QString& description,
+                                    const QString& owner);
+
+    /// 命令上下文激活/失活
 
     static void pushContext(const ContextId& context, const void* source,
                             ContextTier tier = ContextTier::Foreground);
@@ -86,8 +114,8 @@ private:
 class ContextGuard
 {
 public:
-    ContextGuard(ContextId context, const void* source)
-        : m_context(std::move(context))
+    ContextGuard(const ContextId& context, const void* source)
+        : m_context(context)
         , m_source(source)
         , m_dismissed(false)
     {

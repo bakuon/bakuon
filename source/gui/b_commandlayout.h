@@ -3,8 +3,8 @@
 #include <QtCore/QDebug>
 #include <QtCore/QJsonObject>
 
+#include "gui/b_types.h"
 #include "gui/detail/b_treenode.h"
-#include "gui/detail/b_types.h"
 
 namespace bakuon::gui {
 

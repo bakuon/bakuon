@@ -205,7 +205,7 @@ inline constexpr char kContextIdPropertyName[] = "bakuon_contextId";
 inline void setWidgetContext(QObject* widget, const ContextId& context)
 {
     Q_ASSERT(widget != nullptr);
-    widget->setProperty(kContextIdPropertyName, context.value());
+    widget->setProperty(kContextIdPropertyName, context.name());
 }
 
 inline ContextId widgetContext(const QObject* widget)

@@ -3,10 +3,10 @@
 
 namespace bakuon::gui {
 
-Command::Command(CommandId id, QString defaultText, CommandManager& mgr)
+Command::Command(const CommandId& id, QString defaultText, CommandManager& mgr)
     : QObject(nullptr) // note: it is a std::unique_ptr<Command>
     , m_mgr(mgr)
-    , m_id(std::move(id))
+    , m_id(id)
     , m_defaultText(std::move(defaultText))
     , m_defaultCheckable(false)
     , m_active(false)

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "gui/detail/b_strongid.h"
+#include "gui/b_id.h"
 
 namespace bakuon::gui {
 
-// Tag 类型仅用于区分 StrongId 的种类，不需要定义具体内容
+// Tag 类型仅用于区分 Id 的种类，不需要定义具体内容
 struct ContextTag
 {
 };
@@ -12,8 +12,8 @@ struct CommandTag
 {
 };
 
-using ContextId = StrongId<ContextTag>; // 上下文标识：如 "editor.image.focused"
-using CommandId = StrongId<CommandTag>; // 命令标识：如 "edit.delete"
+using ContextId = Id<ContextTag>; // 上下文标识：如 "editor.image.focused"
+using CommandId = Id<CommandTag>; // 命令标识：如 "edit.delete"
 
 // ContextTier：上下文的"层级"，用于在多个同时激活的上下文之间做仲裁时，
 // 先于"时序（activationOrder）"比较——层级更高者无条件胜出，层级相同时才比时序。
@@ -33,12 +33,14 @@ using CommandId = StrongId<CommandTag>; // 命令标识：如 "edit.delete"
 // 这与"给后台任务的 Command 绑定设置更低的 priority"是两道独立的防线，
 // 建议同时使用：priority 防的是"优先级配置正确"的情况，ContextTier
 // 防的是"忘记配置 priority、或优先级恰好相同"的情况。
-enum class ContextTier : quint8 {
+enum class ContextTier : uint8_t {
 
     Background = 0, // 后台/异步任务产生的临时上下文（进度提示、后台处理状态等）。
                     // 任何情况下都不应该压过真正的交互上下文，因此数值最低。
     Foreground = 1, // 前台/交互(Interactive)层级：由焦点、鼠标点击等真实用户交互驱动 (默认)。
                     // pushContext() 的默认参数就是这个值。
+
+    TierCount // tier 数量，不要在这之后添加枚举值。
 };
 
 } // namespace bakuon::gui
