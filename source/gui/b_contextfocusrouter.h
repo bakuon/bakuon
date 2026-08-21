@@ -11,35 +11,8 @@ namespace bakuon::gui {
 
 class CommandManager;
 
-// 动态属性的键名：用于在任意 QObject/QWidget 上标记"获得焦点时应激活的上下文集合"。
-constexpr char kProviderContextsPropertyName[] = "bakuon_provider_contexts";
-
-static void setProviderContexts(QObject* widget, const Context& context)
-{
-    Q_ASSERT(widget != nullptr);
-    widget->setProperty(kProviderContextsPropertyName, context.toStringList());
-}
-
-static Context providerContext(const QObject* widget)
-{
-    if (!widget) {
-        return {};
-    }
-    const QVariant v = widget->property(kProviderContextsPropertyName);
-    if (!v.isValid()) {
-        return {};
-    }
-
-    Context result;
-    const QStringList names = v.toStringList();
-    result.reserve(static_cast<size_t>(names.size()));
-    for (const QString& name : names) {
-        if (ContextId id{name}; id.isValid()) {
-            result.append(id);
-        }
-    }
-    return result;
-}
+static void setProviderContexts(QObject* widget, const Context& context);
+static Context providerContext(const QObject* widget);
 
 // focus context provider
 class ContextFocusRouter : public QObject

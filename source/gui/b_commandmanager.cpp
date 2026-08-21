@@ -212,7 +212,7 @@ bool CommandManager::registerContext(const ContextId& id, const QString& owner,
 
     auto it = m_contextRegistry.find(id);
     if (it == m_contextRegistry.end()) {
-        m_contextRegistry.emplace(id, ContextInfo{description, owner});
+        m_contextRegistry.emplace(id, ContextInfo{owner, description});
         return true;
     }
 
@@ -253,6 +253,14 @@ std::vector<ContextId> CommandManager::registeredContexts() const
 
 void CommandManager::pushContext(const ContextId& context, const void* source, ContextTier tier)
 {
+    if (!m_contextRegistry.contains(context)) {
+        // 只警告、不阻断：漏注册不应该让整个功能瘫痪，但要足够刺眼，
+        // 逼着开发期就把 registerContext()/CommandSystem::declareContext() 补上。
+        qWarning() << "CommandManager::pushContext: pushing an unregistered context" << context
+                   << "-- did you forget to call registerContext() / "
+                      "CommandSystem::declareContext() for it?";
+    }
+
     const RefKey key{context, source, tier};
     int& refCount = m_refCounts[key];
     ++refCount;

@@ -37,6 +37,14 @@ bakuon_add_test(
 
 bakuon_add_test(
     NAME
+    test_gui_context
+    SOURCES
+    "gui/context_test.cpp"
+    DEPENDS
+    bakuon::gui)
+
+bakuon_add_test(
+    NAME
     test_gui_commandsystem
     SOURCES
     "gui/commandsystem_test.cpp"

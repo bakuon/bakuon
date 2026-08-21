@@ -3,6 +3,36 @@
 
 namespace bakuon::gui {
 
+// 动态属性的键名：用于在任意 QObject/QWidget 上标记"获得焦点时应激活的上下文集合"。
+constexpr char kProviderContextsPropertyName[] = "bakuon_provider_contexts";
+
+void setProviderContexts(QObject* widget, const Context& context)
+{
+    Q_ASSERT(widget != nullptr);
+    widget->setProperty(kProviderContextsPropertyName, context.toStringList());
+}
+
+Context providerContext(const QObject* widget)
+{
+    if (!widget) {
+        return {};
+    }
+    const QVariant v = widget->property(kProviderContextsPropertyName);
+    if (!v.isValid()) {
+        return {};
+    }
+
+    Context result;
+    const QStringList names = v.toStringList();
+    result.reserve(static_cast<size_t>(names.size()));
+    for (const QString& name : names) {
+        if (ContextId id{name}; id.isValid()) {
+            result.append(id);
+        }
+    }
+    return result;
+}
+
 ContextFocusRouter::ContextFocusRouter(QObject* parent)
     : QObject(parent)
     , m_currentProvider(nullptr)
@@ -132,7 +162,7 @@ void ContextFocusRouter::handleFocusIn(QObject* gainer)
     }
 
     if (provider == m_currentProvider.data()) {
-        return;
+        return; // 焦点仍在同一个已标记部件（或其内部）转移，无需变更
     }
 
     auto* const oldProvider = m_currentProvider.data();
