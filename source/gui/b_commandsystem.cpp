@@ -129,14 +129,14 @@ bool CommandSystem::loadLayout(const QString& path)
     return true;
 }
 
-void CommandSystem::pushContext(const ContextId& context, const void* source)
+void CommandSystem::pushContext(const ContextId& context, const void* source, ContextTier tier)
 {
-    get().cmdManager.pushContext(context, source);
+    get().cmdManager.pushContext(context, source, tier);
 }
 
-void CommandSystem::popContext(const ContextId& context, const void* source)
+void CommandSystem::popContext(const ContextId& context, const void* source, ContextTier tier)
 {
-    get().cmdManager.popContext(context, source);
+    get().cmdManager.popContext(context, source, tier);
 }
 
 void CommandSystem::releaseContext(const void* source)

@@ -200,40 +200,40 @@ void CommandManager::renderToolBar(CommandLayout::Item* parent, QToolBar* toolba
     }
 }
 
-void CommandManager::pushContext(const ContextId& context, const void* source, ActivationTier tier)
+void CommandManager::pushContext(const ContextId& context, const void* source, ContextTier tier)
 {
     const RefKey key{context, source};
     int& refCount = m_refCounts[key];
     ++refCount;
     if (refCount > 1) {
-        return; // 同一来源重复 push，只增加自身计数，总激活状态未发生变化
+        return; // 同一来源(context, source, tier)组合重复 push，只增加自身计数，总激活状态未发生变化
     }
 
-    int& total             = m_contextRefTotals[context];
-    const bool wasInactive = (total == 0);
-    ++total;
+    TierCounts& tierCounts        = m_contextTierCounts[context]; // 首次访问时值初始化为全 0
+    const bool wasOverallInactive = !anyTierActive(tierCounts);
+    ++tierCounts[static_cast<size_t>(tier)];
 
     // 全局首次激活
-    if (wasInactive) {
-        if (tier == ActivationTier::Foreground) {
-            // 交互式前台：正常推进全局时钟
-            m_activationOrder[context] = ++m_activationClock; // 记录本次“变为激活”的时序
-        } else {
-            // 后台任务：不推进时钟，使其时钟序号保持为 0
-            // 在 Command::findAuthoritativeIndex 判定中，由于 0 < 任何前台时钟，它绝对无法喧宾夺主
-            m_activationOrder[context] = 0;
-        }
-
-        emit contextChanged(); // 级联驱动所有 Command 重新仲裁
+    if (wasOverallInactive) {
+        // 只在"整体从未激活变为激活"时刷新时序戳——tier 只是同一整体激活状态下
+        // 的"生效层级"计算依据，不应该因为多来一个不同 tier 的引用就被刷新，
+        // 否则会削弱"层级比较严格优先于时序"这个仲裁语义的清晰度。
+        m_activationOrder[context] = ++m_activationClock;
     }
+
+    // 无条件广播：即使 context 整体早已激活，这次 push 也可能改变 effectiveTier()
+    // 的返回值（比如之前只有 Background 层级的持有者，这次新增了 Interactive
+    // 层级的持有者，生效层级从 Background 跃升为 Interactive），必须让所有
+    // Command 都有机会重新仲裁。
+    emit contextChanged();
 }
 
-void CommandManager::popContext(const ContextId& context, const void* source)
+void CommandManager::popContext(const ContextId& context, const void* source, ContextTier tier)
 {
     const RefKey key{context, source};
     auto it = m_refCounts.find(key);
     if (it == m_refCounts.end() || it->second <= 0) {
-        return; // 未持有该上下文引用，忽略非法/多余的 pop 调用
+        return; // 未持有该上下文(context, source, tier)组合引用，忽略非法/多余的 pop 调用
     }
     --(it->second);
     if (it->second > 0) {
@@ -241,31 +241,39 @@ void CommandManager::popContext(const ContextId& context, const void* source)
     }
     m_refCounts.erase(it);
 
-    auto totalIt = m_contextRefTotals.find(context);
-    if (totalIt == m_contextRefTotals.end()) {
-        return;
+    auto tierIt = m_contextTierCounts.find(context);
+    if (tierIt == m_contextTierCounts.end()) {
+        return; // 理论上不会发生：能查到 ref counts 就必然有对应的 tierCounts 条目
     }
-    --(totalIt->second);
-    if (totalIt->second <= 0) {
-        m_contextRefTotals.erase(totalIt);
-        emit contextChanged();
+    TierCounts& tierCounts = tierIt->second;
+    --tierCounts[static_cast<size_t>(tier)];
+
+    if (!anyTierActive(tierCounts)) {
+        // 整体失活，清理；m_activationOrder 的记录保留，
+        // 下次重新激活时会被覆盖，不需要在这里主动清理
+        m_contextTierCounts.erase(tierIt);
     }
+
+    // 同 pushContext：无条件广播，因为这次 pop 也可能改变 effectiveTier() 的返回值
+    // （即便 context 整体仍然激活——比如刚好是最后一个 Foreground 层级持有者
+    // 释放了，生效层级从 Foreground 回落到 Background）。
+    emit contextChanged();
 }
 
 void CommandManager::releaseContext(const void* source)
 {
-    // 先收集该 source 持有引用的全部上下文，避免遍历过程中修改容器
-    std::vector<ContextId> owned;
+    // 先收集该 source 持有引用的全部 (context, tier)组合上下文，避免遍历过程中修改容器
+    std::vector<std::pair<ContextId, ContextTier>> owned;
     for (const auto& [key, count] : m_refCounts) {
         if (key.source == source && count > 0) {
-            owned.push_back(key.context);
+            owned.emplace_back(key.context, key.tier);
         }
     }
-    for (const auto& ctx : owned) {
-        auto it = m_refCounts.find(RefKey{ctx, source});
+    for (const auto& [ctx, tier] : owned) {
+        auto it = m_refCounts.find(RefKey{ctx, source, tier});
         while (it != m_refCounts.end() && it->second > 0) {
-            popContext(ctx, source);
-            it = m_refCounts.find(RefKey{ctx, source});
+            popContext(ctx, source, tier);
+            it = m_refCounts.find(RefKey{ctx, source, tier});
         }
     }
 }
@@ -273,8 +281,8 @@ void CommandManager::releaseContext(const void* source)
 std::unordered_set<ContextId> CommandManager::activeContexts()
 {
     std::unordered_set<ContextId> result;
-    for (const auto& [ctx, count] : m_contextRefTotals) {
-        if (count > 0) {
+    for (const auto& [ctx, counts] : m_contextTierCounts) {
+        if (anyTierActive(counts)) {
             result.insert(ctx);
         }
     }
@@ -283,8 +291,24 @@ std::unordered_set<ContextId> CommandManager::activeContexts()
 
 bool CommandManager::isActiveContext(const ContextId& context) const noexcept
 {
-    auto it = m_contextRefTotals.find(context);
-    return it != m_contextRefTotals.end() && it->second > 0;
+    auto it = m_contextTierCounts.find(context);
+    return it != m_contextTierCounts.end() && anyTierActive(it->second);
+}
+
+ContextTier CommandManager::effectiveTier(const ContextId& context) const noexcept
+{
+    auto it = m_contextTierCounts.find(context);
+    if (it == m_contextTierCounts.end()) {
+        // 未激活时的安全默认值，调用方应先用 isActiveContext() 判断
+        return ContextTier::Foreground;
+    }
+    const TierCounts& counts = it->second;
+    for (int t = static_cast<int>(TierCount) - 1; t >= 0; --t) {
+        if (counts[static_cast<size_t>(t)] > 0) {
+            return static_cast<ContextTier>(t);
+        }
+    }
+    return ContextTier::Foreground; // 理论上不会走到这里：isActive() 为真必然有某个 tier > 0
 }
 
 uint64_t CommandManager::activationOrder(const ContextId& context) const noexcept
@@ -294,6 +318,11 @@ uint64_t CommandManager::activationOrder(const ContextId& context) const noexcep
     }
     auto it = m_activationOrder.find(context);
     return it != m_activationOrder.end() ? it->second : 0;
+}
+
+bool CommandManager::anyTierActive(const TierCounts& counts) noexcept
+{
+    return std::ranges::any_of(counts, [](int i) { return i > 0; });
 }
 
 } // namespace bakuon::gui

@@ -40,8 +40,10 @@ public:
 
     /// 命令上下文
 
-    static void pushContext(const ContextId& context, const void* source);
-    static void popContext(const ContextId& context, const void* source);
+    static void pushContext(const ContextId& context, const void* source,
+                            ContextTier tier = ContextTier::Foreground);
+    static void popContext(const ContextId& context, const void* source,
+                           ContextTier tier = ContextTier::Foreground);
     static void releaseContext(const void* source);
     static std::unordered_set<ContextId> activeContexts();
     static bool isActiveContext(const ContextId& context) noexcept;

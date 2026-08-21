@@ -122,11 +122,11 @@ void Command::setAttribute(Attributes attribute, bool on)
     resyncAuthoritativeBinding();
 }
 
-void Command::addContextAction(QAction* action, const ContextId& context, int priority)
+void Command::addContextAction(QAction* realAction, const ContextId& context, int priority)
 {
-    Q_ASSERT_X(action != nullptr, "Command::registerContextAction", "action is null");
+    Q_ASSERT_X(realAction != nullptr, "Command::addContextAction", "realAction is null");
 
-    if (action == m_proxyAction) {
+    if (realAction == m_proxyAction) {
         return;
     }
 
@@ -161,19 +161,19 @@ void Command::addContextAction(QAction* action, const ContextId& context, int pr
     if (it != m_bindings.end()) {
         QObject::disconnect(it->changedConn);
         QObject::disconnect(it->destroyedConn);
-        it->realAction = action;
+        it->realAction = realAction;
         it->priority   = priority;
         wireBinding(*it);
     } else {
         ContextBinding binding;
         binding.context    = context;
-        binding.realAction = action;
+        binding.realAction = realAction;
         binding.priority   = priority;
         wireBinding(binding);
         m_bindings.push_back(std::move(binding));
     }
 
-    m_authoritativeIndex = -1; // 下标可能因新增而需要重新计算
+    m_authoritativeIndex = -1; // 绑定关系发生了变化，下标必须重新计算，不能沿用旧值
     resyncAuthoritativeBinding();
 }
 
@@ -213,20 +213,28 @@ std::vector<ContextId> Command::contexts() const
 
 int Command::findAuthoritativeIndex() const
 {
-    int bestIndex      = -1;
-    int bestPriority   = std::numeric_limits<int>::min();
-    uint64_t bestOrder = 0;
+    ContextTier bestTier = ContextTier::Foreground; // 会被第一个候选无条件覆盖，初值不重要
+    int bestIndex        = -1;
+    int bestPriority     = std::numeric_limits<int>::min();
+    uint64_t bestOrder   = 0;
 
     for (int i = 0; i < static_cast<int>(m_bindings.size()); ++i) {
         const ContextBinding& binding = m_bindings[i];
         if (binding.realAction.isNull() || !m_mgr.isActiveContext(binding.context)) {
             continue; // 只在"已注册且其上下文当前激活"的绑定里挑选
         }
-        const uint64_t order = m_mgr.activationOrder(binding.context);
-        // 优先级更高者胜出；同优先级下，取最近被激活的上下文（activationOrder 更大）
-        if (bestIndex < 0 || binding.priority > bestPriority
-            || (binding.priority == bestPriority && order > bestOrder)) {
+
+        const ContextTier tier = m_mgr.effectiveTier(binding.context);
+        const uint64_t order   = m_mgr.activationOrder(binding.context);
+
+        // 仲裁优先级：层级 > 优先级 > 时序，层级比较严格占先——
+        // 即便某个候选的 priority/order 再高，只要层级更低就不可能胜出，
+        // 这正是防止"后台任务反复刷新时序、压过真正的交互上下文"的关键。
+        if (bestIndex < 0 || tier > bestTier
+            || (tier == bestTier && binding.priority > bestPriority)
+            || (tier == bestTier && binding.priority == bestPriority && order > bestOrder)) {
             bestIndex    = i;
+            bestTier     = tier;
             bestPriority = binding.priority;
             bestOrder    = order;
         }
@@ -246,7 +254,7 @@ void Command::resyncAuthoritativeBinding()
     }
 
     // 无需任何更新
-    if (newIndex == m_authoritativeIndex) {
+    if (m_authoritativeIndex >= 0 && newIndex == m_authoritativeIndex) {
         return;
     }
 
