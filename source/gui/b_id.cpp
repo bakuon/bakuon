@@ -11,7 +11,7 @@ public:
     IdData() = default;
 
     explicit IdData(QString original)
-        : str(std::move(original).toCaseFolded())
+        : str(std::move(original).toCaseFolded()) // 大小写不敏感
     {
         hash = detail::hashString(str.toUtf8());
     }
