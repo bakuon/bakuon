@@ -1,6 +1,7 @@
 #include <QtWidgets/QApplication>
 
-#include "FocusContextWatcher.h"
+#include <gui/b_contextfocusrouter.h>
+
 #include "MainWindow.h"
 
 using namespace bakuon::examples;
@@ -9,8 +10,8 @@ int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
 
-    auto* watcher = new FocusContextWatcher(&app);
-    app.installEventFilter(watcher);
+    auto* router = new bakuon::gui::ContextFocusRouter(&app);
+    router->install();
 
     MainWindow window;
     window.show();

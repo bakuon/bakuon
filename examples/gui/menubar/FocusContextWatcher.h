@@ -6,6 +6,8 @@
 
 #include <gui/b_commandsystem.h>
 
+// Warning: 已废弃，请使用 gui::ContextFocusRouter 代替
+
 namespace bakuon::examples {
 
 // 动态属性的键名：用于在任意 QObject/QWidget 上标记"获得焦点时应激活的上下文"。

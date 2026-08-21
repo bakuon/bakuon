@@ -119,13 +119,11 @@ void ContextFocusRouter::handleFocusIn(QObject* gainer)
             foundContext = it->second;
             break;
         }
-        /**
-        // 或者使用属性标签的形式
+        // 同时支持使用属性标签的形式
         if (Context ctx = providerContext(provider); !ctx.empty()) {
-            foundContext = ctx;
+            foundContext.merge(ctx);
             break;
         }
-        */
         provider = provider->parent(); // 沿着对象树向上冒泡
     }
 

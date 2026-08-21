@@ -32,6 +32,8 @@ public:
 
     void reserve(size_t capacity) { m_set.reserve(capacity); }
     void append(const ContextId &id) { m_set.emplace(id); }
+    void append(const Context &ctx) { m_set.insert(ctx.begin(), ctx.end()); }
+    void merge(Context &ctx) { m_set.merge(ctx.m_set); }
     void remove(const ContextId &id) { m_set.erase(id); }
     void clear() { m_set.clear(); }
 
