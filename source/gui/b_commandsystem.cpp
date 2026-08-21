@@ -150,11 +150,11 @@ std::vector<ContextId> CommandSystem::registeredContexts()
     return get().cmdManager.registeredContexts();
 }
 
-ContextId CommandSystem::declareContext(const QString& idString, const QString& description,
-                                        const QString& owner)
+ContextId CommandSystem::declareContext(const QString& idString, const QString& owner,
+                                        const QString& description)
 {
     ContextId id{idString};
-    get().cmdManager.registerContext(id, description, owner);
+    get().cmdManager.registerContext(id, owner, description);
     return id;
 }
 

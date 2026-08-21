@@ -64,8 +64,8 @@ public:
      * 字符串会在这里被 qWarning 出来（见 registerContext），但仍然返回一个
      * 可用的 ContextId——不让命名冲突直接导致编译期/启动期崩溃，只是足够刺眼。
      */
-    static ContextId declareContext(const QString& id, const QString& description,
-                                    const QString& owner);
+    static ContextId declareContext(const QString& id, const QString& owner,
+                                    const QString& description);
 
     /// 命令上下文激活/失活
 
