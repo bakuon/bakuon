@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+/// 这是插件原生插件，与 gui::Plugin 不同，没有 GUI 和 Qt 依赖。
+
 namespace bakuon::plugin {
 
 class Plugin

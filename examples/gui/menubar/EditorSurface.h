@@ -16,9 +16,11 @@
 #include <QtWidgets/QLabel>
 
 #include <gui/b_commandsystem.h>
+#include <gui/b_contextselectionrouter.h>
 
 using bakuon::gui::Context;
 using bakuon::gui::ContextId;
+using bakuon::gui::ContextSelectionRouter;
 
 namespace bakuon::examples {
 
@@ -41,6 +43,7 @@ private:
 
     ContextId m_selectedContext;
     ContextId m_focusContext;
+    ContextSelectionRouter m_selectionRouter;
     bool m_selected            = false;
     QLabel* m_hint             = nullptr;
     QAction* m_deleteAction    = nullptr;

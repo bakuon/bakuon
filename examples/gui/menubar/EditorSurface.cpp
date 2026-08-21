@@ -15,6 +15,7 @@ EditorSurface::EditorSurface(const QString& label, const ContextId& focusContext
     : QWidget(parent)
     , m_selectedContext(selectedContext)
     , m_focusContext(focusContext)
+    , m_selectionRouter(m_selectedContext, this)
 {
     setFocusPolicy(Qt::StrongFocus);
     setContextMenuPolicy(Qt::DefaultContextMenu);
@@ -40,13 +41,12 @@ void EditorSurface::mousePressEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton) {
         setFocus(Qt::MouseFocusReason);
         m_selected = !m_selected;
-        if (m_selected) {
-            gui::CommandSystem::pushContext(m_selectedContext, this);
-        } else {
-            gui::CommandSystem::popContext(m_selectedContext, this);
-        }
-        m_deleteAction->setEnabled(m_selected);
-        m_duplicateAction->setEnabled(m_selected);
+        m_selectionRouter.setSelected(m_selected);
+
+        // 不要主动控制 action 的状态，让上下文去控制命令状态。
+        // m_deleteAction->setEnabled(m_selected);
+        // m_duplicateAction->setEnabled(m_selected);
+
         m_hint->setText(QStringLiteral("对象状态：%1")
                             .arg(m_selected ? QStringLiteral("已选中") : QStringLiteral("未选中")));
     }
@@ -65,7 +65,6 @@ void EditorSurface::contextMenuEvent(QContextMenuEvent* event)
 void EditorSurface::setupRealActions(const QString& label)
 {
     m_deleteAction = new QAction(QStringLiteral("删除"), this);
-    m_deleteAction->setEnabled(false);
     connect(m_deleteAction, &QAction::triggered, this, [this, label]() {
         QMessageBox::information(this,
                                  QStringLiteral("删除"),
@@ -73,7 +72,6 @@ void EditorSurface::setupRealActions(const QString& label)
     });
 
     m_duplicateAction = new QAction(QStringLiteral("复制"), this);
-    m_duplicateAction->setEnabled(false);
     connect(m_duplicateAction, &QAction::triggered, this, [this, label]() {
         if (auto* mw = qobject_cast<QMainWindow*>(window())) {
             mw->statusBar()->showMessage(QStringLiteral("已复制%1对象").arg(label), 2000);
