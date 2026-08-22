@@ -62,7 +62,7 @@ endfunction()
 # ============================================================================
 # 公共函数：按需为一个库目标安装头文件 + 导出 target（装进 SDK / devkit 包）
 #
-# 默认关闭（BAKUON_INSTALL_DEVKIT=OFF）：项目目前还在孵化期，没有正式的发布/打包流程，
+# 默认关闭（BAKUON_INSTALL_SDK=OFF）：项目目前还在孵化期，没有正式的发布/打包流程，
 # 贸然打开 install() 只会带来一堆没人验证过的坑。这里先把“将来要不要装、装哪些东西”的
 # 骨架搭好、语义正确（BUILD_INTERFACE/INSTALL_INTERFACE 已经在 target_include_directories
 # 里配好了），真正决定打包方案时只需要把 BAKUON_INSTALL_SDK 打开，

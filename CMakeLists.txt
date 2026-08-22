@@ -26,7 +26,7 @@ option(BAKUON_BUILD_STANDALONE "构建 standalone 主程序" ${PROJECT_IS_TOP_LE
 option(BAKUON_BUILD_PLUGINS "构建 plugins/ 下的运行时插件（MODULE/SHARED）" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_ENABLE_WARNINGS "启用 -Wall -Wextra / W4 等编译警告" ON)
 option(BAKUON_WARNINGS_AS_ERRORS "将编译警告视为错误" OFF)
-option(BAKUON_INSTALL_DEVKIT "安装 core/gui/plugin 的头文件与导出 target（打包方案未定，默认关闭）" OFF)
+option(BAKUON_INSTALL_SDK "安装 core/gui/plugin 的头文件与导出 target（打包方案未定，默认关闭）" OFF)
 
 # ----------------------------------------------------------------------------
 # C++ 标准通过 target_compile_features(cxx_std_20) 按目标下发（见
