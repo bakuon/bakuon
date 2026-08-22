@@ -4,7 +4,7 @@
 
 #include "gui/b_extensionpoint.h"
 
-// 仅内部注册延迟加载接口扩展点使用
+// 仅内部注册接口扩展点使用
 
 namespace bakuon::gui {
 
