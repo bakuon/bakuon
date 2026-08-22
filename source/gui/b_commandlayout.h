@@ -19,6 +19,7 @@ struct CommandLayoutData
         Container, // 一级/多级子菜单或工具栏容器
         Command,   // 引用一个 CommandId
         Separator, // 分隔线
+        // Section, // Section Header: a non-clickable text item to the menu
     };
 
     Type type = Type::Root;

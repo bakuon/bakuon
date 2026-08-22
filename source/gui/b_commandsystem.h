@@ -13,7 +13,36 @@ namespace bakuon::gui {
 
 /**
  * @brief 命令系统门面 Command Facade
- * @todo 可能使用命名空间代替静态类
+ * @todo 未来可能会走向“多个独立的命令系统实例”，
+ * 因为每个插件沙箱都可能有各自隔离的一套命令和上下文，尤其是多文档多窗口的编辑器。
+ * 
+ * 而使用命名空间的原则是：
+ * Google C++ 风格指南和 C++ Core Guidelines 都明确建议:
+ * 如果一个类里只有 static 成员、没有任何实例状态,就不该是类,
+ * 应该用命名空间。这条建议的落脚点很直接——class 的存在意义是
+ * "封装状态 + 行为不变量",一旦你发现自己在写 private: SomeClass() = default; 
+ * 只是为了"防止被 new 出来",这本身就是一个信号:
+ * 你其实想要的是命名空间,只是习惯性地用类的语法在表达它。
+ *
+ * // 拆成语义明确的子命名空间,而不是维持一个大而全的静态门面
+ * namespace bakuon::gui::commands { Command& registerCommand(...); ... }
+ * namespace bakuon::gui::context  { bool registerContext(...); void pushContext(...); ... }
+ * namespace bakuon::gui::shortcuts{ QString shortcutString(...); ... }
+ * namespace bakuon::gui::layout   { CommandLayout* menubarLayout(); ... }
+ *
+ * // 拆散之后失去"一个入口好记好敲代码补全"的体验可加一层薄的汇聚命名空间做门面
+ * namespace bakuon::gui::cmd {
+ *     using namespace commands;
+ *     using namespace context;
+ *     using namespace shortcuts;
+ *     using namespace layout;
+ * }
+ *
+ * 唯一真正值得权衡、不能一句话打发的点是:
+ * 如果未来真的会走向"多个独立的命令系统实例"(比如每个文档窗口、
+ * 每个插件沙箱各自隔离一套命令注册表和上下文),那从"静态门面类"演进到"可实
+ * 例化的类"是渐进式改动;而从"命名空间自由函数"演进到那一步,是结构性重写。
+ * 给定是 IDE/工业软件编辑器这种有可能走向多文档、多窗口架构的项目,这确实是一个不能忽略的伏笔。
  */
 class CommandSystem
 {
@@ -63,6 +92,8 @@ public:
      * "登记时就地址空间统一"。owner 不同的两次 declareContext 撞到同一个
      * 字符串会在这里被 qWarning 出来（见 registerContext），但仍然返回一个
      * 可用的 ContextId——不让命名冲突直接导致编译期/启动期崩溃，只是足够刺眼。
+     *
+     * @todo 之后可以内置声明标准命令（StandardCommands）如保存、复制、删除等
      */
     static ContextId declareContext(const QString& id, const QString& owner,
                                     const QString& description);

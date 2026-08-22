@@ -10,6 +10,8 @@ namespace {
 constexpr char kProviderContextsPropertyName[] = "bakuon_provider_contexts";
 } // namespace
 
+// TODO: 把 CommandSystemPrivate 从藏在 .cpp 里的匿名类,升级成一个正式的、公开可见的类型
+// 建立"一套独立的命令/上下文/快捷键体系" CommandWorkspace
 class CommandSystemPrivate
 {
 public:

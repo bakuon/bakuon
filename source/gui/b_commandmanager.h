@@ -103,7 +103,7 @@ public:
     // （类似 VSCode 的 "Inspect Context Keys"）。
     std::vector<ContextId> registeredContexts() const;
 
-    /// Context 管理
+    /// Context Tracker
 
     /** 维护当前“激活上下文集合”（而非简单的单一上下文/栈）。
      *

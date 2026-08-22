@@ -61,6 +61,10 @@ struct ShortcutBinding
 
 class CommandManager;
 
+/**
+ * @brief 命令快捷键配置 Shortcut Configure / ShortcutMapper/Mapping
+ * @todo 不强依赖 CommandManager，可替换为将 CommandManager 的所有命令以列表的方式传入是否为更优方案。
+ */
 class ShortcutManager : public QObject
 {
     Q_OBJECT

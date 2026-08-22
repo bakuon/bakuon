@@ -67,6 +67,7 @@ public:
     //     完全由外部通过 action() 自行摆布，Command 不再触碰）；
     //   - HideWhenIdle：没有任何已注册上下文处于激活状态时，代理是"仅禁用、保留最后一次
     //     镜像的展示内容"（默认），还是"直接从菜单/工具栏隐藏"。
+    // todo 改成 Flag
     enum class Attribute : quint8 {
         None          = 0,
         UpdateText    = 1u << 0, // 镜像 realAction 的 text()
