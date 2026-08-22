@@ -43,8 +43,15 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # 必须在 add_subdirectory() 之前设置，否则 add_compile_options 是目录属性，
 # 不会回溯应用到之前已经 add_subdirectory 进来的目标。
+# 注意：
+# 与 gtest-all 或其他第三方库中的 /utf-8 冲突
+# /utf-8 和 /source-charset:utf-8 都用于指定源文件的字符集为 UTF-8，但这两个选项实际上是重复的，
+# 并且在同一个编译命令中同时使用它们会导致冲突。将原有的分开设置的选项替换为单一的
+# /utf-8 选项。/utf-8 等效于同时设置 /source-charset:utf-8 和 /execution-charset:utf-8，且能避免冲突。
 if(MSVC)
-    add_compile_options("/source-charset:utf-8" "/execution-charset:utf-8")
+    add_compile_options("/utf-8")
+    # 可选：如果希望更严格地控制，可以使用 target_compile_options 针对特定目标
+    # target_compile_options(your_target_name PRIVATE "/utf-8")
 endif()
 
 # ============================================================================
