@@ -8,8 +8,9 @@ include(BakuonUtils)
 # ============================================================================
 include(CMakeParseArguments)
 include(CPM)
+include(GNUInstallDirs) # 为将来的 install()/export() 预留，当前不强制使用
 
 # ============================================================================
 # third_party cmake modules
 # ============================================================================
-include(GoogleTest)
+include(GoogleTest) # 提供 gtest_discover_tests()，仅在 BAKUON_BUILD_TESTS 时实际用到

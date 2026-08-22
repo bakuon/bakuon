@@ -12,7 +12,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-enable_testing()
+# enable_testing() 已在根 CMakeLists.txt 内、add_subdirectory(tests) 之前调用，此处不再重复。
 
 function(bakuon_add_test)
     cmake_parse_arguments(
@@ -24,6 +24,8 @@ function(bakuon_add_test)
 
     add_executable(${ARG_NAME} ${ARG_SOURCES})
     target_link_libraries(${ARG_NAME} PRIVATE gtest gtest_main ${ARG_DEPENDS})
+    target_compile_features(${ARG_NAME} PRIVATE cxx_std_20)
+    bakuon_apply_warnings(${ARG_NAME})
     gtest_discover_tests(${ARG_NAME}) # required: include(GoogleTest)
 endfunction(bakuon_add_test)
 
