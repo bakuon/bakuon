@@ -8,6 +8,7 @@ namespace bakuon::examples {
 
 const gui::CommandId kCmdDelete{"edit.delete"};
 const gui::CommandId kCmdDuplicate{"edit.duplicate"};
+const gui::CommandId kCmdPaste{"edit.paste"};
 const gui::CommandId kCmdSave{"file.save"};
 const gui::CommandId kCmdCustomize{"view.customize"};
 

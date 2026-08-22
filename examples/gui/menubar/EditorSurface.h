@@ -47,6 +47,7 @@ private:
     bool m_selected            = false;
     QLabel* m_hint             = nullptr;
     QAction* m_deleteAction    = nullptr;
+    QAction* m_pasteAction     = nullptr;
     QAction* m_duplicateAction = nullptr;
 };
 

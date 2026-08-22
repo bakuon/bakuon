@@ -17,6 +17,7 @@ MainWindow::MainWindow()
     registerCommands(); // 先建立完整的命令目录（存在性 + 行为），与菜单布局的加载顺序无关
 
     auto* tabs    = new QTabWidget(this);
+    auto welcome  = new QLabel(QStringLiteral("Welcome panel"));
     m_imageCanvas = new EditorSurface(QStringLiteral("图像编辑器"),
                                       kImageFocused,
                                       kImageObjectSelected,
@@ -25,8 +26,12 @@ MainWindow::MainWindow()
                                       kScene3dFocused,
                                       kScene3dObjectSelected,
                                       tabs);
+
+    welcome->setFocusPolicy(Qt::StrongFocus);
+    welcome->setAlignment(Qt::AlignCenter);
     m_imageCanvas->setObjectName(QStringLiteral("Image Editor"));
     m_scene3d->setObjectName(QStringLiteral("3D Editor"));
+    tabs->addTab(welcome, QStringLiteral("欢迎"));
     tabs->addTab(m_imageCanvas, QStringLiteral("图像编辑"));
     tabs->addTab(m_scene3d, QStringLiteral("3D 编辑"));
     setCentralWidget(tabs);
@@ -52,8 +57,12 @@ void MainWindow::registerCommands()
 
     auto& dup = gui::CommandSystem::registerCommand(kCmdDuplicate, QStringLiteral("复制"));
     dup.setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
-    dup.setAttribute(gui::Command::Attribute::HideWhenIdle, true);
+    dup.setAttribute(gui::Command::Attribute::HideWhenIdle, true); // test hidden
     dup.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditCopy));
+
+    auto& paste = gui::CommandSystem::registerCommand(kCmdPaste, QStringLiteral("粘贴"));
+    del.setShortcut(QKeySequence::Paste);
+    paste.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditPaste));
 
     auto& save = gui::CommandSystem::registerCommand(kCmdSave, QStringLiteral("保存"));
     save.setShortcut(QKeySequence::Save);
@@ -92,6 +101,7 @@ void MainWindow::buildDefaultMenuLayout()
     m_menuLayout->addCommand(editMenu, kAppend, kCmdDelete);
     m_menuLayout->addSeparator(editMenu, kAppend);
     m_menuLayout->addCommand(editMenu, kAppend, kCmdDuplicate);
+    m_menuLayout->addCommand(editMenu, kAppend, kCmdPaste);
 
     Item* viewMenu = m_menuLayout->addMenu(nullptr, kAppend, QStringLiteral("视图(&V)"));
     m_menuLayout->addCommand(viewMenu, kAppend, kCmdCustomize);
@@ -122,6 +132,7 @@ void MainWindow::buildToolBar()
     toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     toolBar->addAction(gui::CommandSystem::command(kCmdDelete)->action());
     toolBar->addAction(gui::CommandSystem::command(kCmdDuplicate)->action());
+    toolBar->addAction(gui::CommandSystem::command(kCmdPaste)->action());
 }
 
 } // namespace bakuon::examples
