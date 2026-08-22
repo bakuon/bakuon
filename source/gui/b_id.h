@@ -7,8 +7,8 @@
 namespace bakuon::gui {
 
 namespace internal {
-uint32_t id_lookdown(QString original);
-QString id_lookup(uint32_t raw);
+uint32_t lookupId(QString original);
+QString lookupName(uint32_t raw);
 } // namespace internal
 
 // 通用的“强类型 ID”包装器：CommandId 与 ContextId 底层都是字符串，
@@ -21,7 +21,7 @@ class Id
 public:
     Id() = default;
     Id(QString name)
-        : m_id(internal::id_lookdown(std::move(name)))
+        : m_id(internal::lookupId(std::move(name)))
     {
     }
 
@@ -32,7 +32,7 @@ public:
 
     uint32_t rawId() const noexcept { return m_id; }
     bool isValid() const noexcept { return m_id != 0; }
-    QString name() const { return internal::id_lookup(m_id); }
+    QString name() const { return internal::lookupName(m_id); }
 
     friend bool operator==(const Id& lhs, const Id& rhs) noexcept { return lhs.m_id == rhs.m_id; }
     friend bool operator!=(const Id& lhs, const Id& rhs) noexcept { return lhs.m_id != rhs.m_id; }

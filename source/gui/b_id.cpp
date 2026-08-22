@@ -38,31 +38,31 @@ struct IdDataHash
     }
 };
 
-using Cache = detail::Bimap<IdData, uint32_t, IdDataHash>;
-static Cache& cache()
+using LookupTable = detail::Bimap<IdData, uint32_t, IdDataHash>;
+static LookupTable& lookup()
 {
-    static auto* c = new Cache;
-    return *c;
+    static auto* t = new LookupTable;
+    return *t;
 }
 
 namespace internal {
-uint32_t id_lookdown(QString original)
+uint32_t lookupId(QString original)
 {
     if (original.isEmpty()) {
         return 0;
     }
     IdData d(std::move(original));
-    auto id = cache().left().find(d);
+    auto id = lookup().left().find(d);
     if (!id.has_value()) {
         id = d.hash;
-        cache().insert(d, id.value());
+        lookup().insert(d, id.value());
     }
     return id.value();
 }
 
-QString id_lookup(uint32_t raw)
+QString lookupName(uint32_t raw)
 {
-    return raw == 0 ? QString{} : cache().right().find(raw)->str;
+    return raw == 0 ? QString{} : lookup().right().find(raw)->str;
 }
 } // namespace internal
 
