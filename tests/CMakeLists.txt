@@ -52,3 +52,9 @@ bakuon_add_test(
     "gui/commandsystem_test.cpp"
     DEPENDS
     bakuon::gui)
+
+bakuon_add_test(
+    NAME
+    test_actorsystem
+    SOURCES
+    "actorsystem_test.cpp")
