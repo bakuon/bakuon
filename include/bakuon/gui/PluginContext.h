@@ -26,12 +26,19 @@ namespace bakuon::gui {
  * 设计原则：
  *  - 接口稳定：未来扩展新能力只需添加成员，不改 initialize() 签名
  *  - 轻量传递：不持有所有权，仅持有引用
+ *
+ * @warning 早期版本这里用 `const QStringList&` 引用绑定默认参数 `{}`，
+ *          临时对象在构造函数调用结束后就销毁了，导致 m_arguments 变成悬垂引用——
+ *          Plugin::initialize() 里正是用 `PluginContext ctx;`（走默认参数）调用的，
+ *          相当于每次插件初始化都会触发未定义行为。现在改成按值持有，从根上避免这个坑；
+ *          不允许拷贝 PluginContext 本身仍然保留（见下方），是为了不鼓励插件把 ctx
+ *          存到 initialize() 调用栈之外的地方长期持有。
  */
 class PluginContext
 {
 public:
-    explicit PluginContext(const QStringList& arguments = {})
-        : m_arguments(arguments)
+    explicit PluginContext(QStringList arguments = {})
+        : m_arguments(std::move(arguments))
     {
     }
 
@@ -45,7 +52,7 @@ public:
     const QStringList& arguments() const { return m_arguments; }
 
 private:
-    const QStringList& m_arguments;
+    QStringList m_arguments;
 };
 
 } // namespace bakuon::gui

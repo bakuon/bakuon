@@ -55,6 +55,14 @@ bakuon_add_test(
 
 bakuon_add_test(
     NAME
+    test_gui_pluginblock
+    SOURCES
+    "gui/pluginblock_test.cpp"
+    DEPENDS
+    bakuon::gui)
+
+bakuon_add_test(
+    NAME
     test_actorsystem
     SOURCES
-    "actorsystem_test.cpp")
+    "gui/actorsystem_test.cpp")
