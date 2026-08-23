@@ -4,6 +4,8 @@
 
 namespace bakuon::gui {
 
+// Warning:已经移动到 include/bakuon/gui，此文件随时会被删除。
+
 /**
  * @brief 插件初始化上下文
  *
