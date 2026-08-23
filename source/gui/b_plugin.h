@@ -12,7 +12,7 @@ namespace bakuon::gui {
 
 /**
  * @brief 该类是对 IPlugin 接口的一层包装（不是 IPlugin 本身），持有一个具体的 IPlugin 实例。
- * 不做 MetaData 元数据校验，能实例化就说明插件是有效的，但支持元数据访问。
+ * 不做 MetaData 元数据校验，能实例化就说明插件是有效的。
  * 此类只做插件 load/unload 和运行期状态跟踪，组合内存分配 + 生命周期由 PluginBlock 管理
  * （见 b_pluginblock.h：本类不应该被单独 new/delete，只能通过 PluginBlock::create() 构造）。
  */
