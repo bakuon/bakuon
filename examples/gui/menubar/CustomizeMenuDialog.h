@@ -22,6 +22,9 @@ class CustomizeMenuDialog : public QDialog
 public:
     explicit CustomizeMenuDialog(gui::CommandModel* model, QWidget* parent = nullptr);
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     void moveSelected(int direction);
 

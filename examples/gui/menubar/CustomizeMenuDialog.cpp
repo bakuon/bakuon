@@ -21,7 +21,6 @@ CustomizeMenuDialog::CustomizeMenuDialog(gui::CommandModel* model, QWidget* pare
     , m_model(model)
 {
     setWindowTitle(QStringLiteral("自定义菜单布局"));
-    resize(420, 480);
 
     m_tree = new QTreeView(this);
     m_tree->setModel(model);
@@ -72,6 +71,13 @@ CustomizeMenuDialog::CustomizeMenuDialog(gui::CommandModel* model, QWidget* pare
     mainLayout->addWidget(m_tree);
     mainLayout->addLayout(btnLayout);
 }
+void CustomizeMenuDialog::showEvent(QShowEvent* event)
+{
+    resize(420, 480);
+
+    QDialog::showEvent(event);
+}
+
 void CustomizeMenuDialog::moveSelected(int direction)
 {
     const QModelIndex idx = m_tree->currentIndex();
