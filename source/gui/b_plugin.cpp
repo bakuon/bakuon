@@ -60,6 +60,7 @@ bool Plugin::unload()
         return true; // 幂等：本来就没加载
     }
     m_instance.reset();
+    m_initialized = false;
 
     if (!m_loader) {
         // 内置插件没有动态库可卸载；到这里视为该 Plugin 实例已不可再用。
@@ -77,7 +78,8 @@ bool Plugin::initialize()
     // 等 PluginSystem::startup() 那边确定参数来源（例如从 QCoreApplication::arguments() 或
     // 插件自己的 --plugin-xxx-arg 语法解析）之后，再把参数传进来。
     PluginContext ctx;
-    return m_instance->initialize(ctx);
+    m_initialized = m_instance->initialize(ctx);
+    return m_initialized;
 }
 
 void Plugin::reactExtensions()

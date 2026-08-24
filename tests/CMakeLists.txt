@@ -12,8 +12,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# enable_testing() 已在根 CMakeLists.txt 内、add_subdirectory(tests) 之前调用，此处不再重复。
-
 function(bakuon_add_test)
     cmake_parse_arguments(
         ARG
@@ -28,6 +26,8 @@ function(bakuon_add_test)
     bakuon_apply_warnings(${ARG_NAME})
     gtest_discover_tests(${ARG_NAME}) # required: include(GoogleTest)
 endfunction(bakuon_add_test)
+
+# TODO 根据每个目录模块和文件名使用循环自动批量增加测试
 
 bakuon_add_test(
     NAME
@@ -63,6 +63,23 @@ bakuon_add_test(
 
 bakuon_add_test(
     NAME
+    test_gui_pluginsystem
+    SOURCES
+    "gui/pluginsystem_test.cpp"
+    DEPENDS
+    bakuon::gui)
+
+# example_plugin 只在 BAKUON_BUILD_PLUGINS 打开时才存在；测试用它验证 discoverPlugin() 走
+# 真实动态库路径（而不是只测内置插件），target 不存在时对应的测试用例会在编译期被 #ifdef 跳过。
+if(TARGET example_plugin)
+    target_compile_definitions(
+        test_gui_pluginsystem
+        PRIVATE BAKUON_TEST_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:example_plugin>")
+    add_dependencies(test_gui_pluginsystem example_plugin)
+endif()
+
+bakuon_add_test(
+    NAME
     test_actorsystem
     SOURCES
-    "gui/actorsystem_test.cpp")
+    "actorsystem_test.cpp")

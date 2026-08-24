@@ -21,9 +21,9 @@ namespace bakuon::gui {
  * 同一块内存里，PluginBlock 在前，Plugin 紧随其后：
  *
  * +-----------------+------------------+
- * |     block        |    plugin (T)    |
+ * |     block        |    plugin (T)   |
  * +-----------------+------------------+
- * |      data        |       data       |
+ * |      data        |       data      |
  * +-----------------+------------------+
  *
  * 外部存储表只需要整数的原子自增 id 作为 key，PluginBlock 共享指针作为值存储，
@@ -91,7 +91,7 @@ public:
 
     /**
      * @brief 从 shared_ptr<PluginBlock> 借用同一份引用计数，得到一个 shared_ptr<Plugin>。
-     * @note 这是本类唯一推荐的“拿到 shared_ptr<Plugin>”的方式；get() 只返回裸指针，
+     * @note 这是本类唯一推荐的“拿到 shared_ptr<Plugin>”的方式；plugin() 只返回裸指针，
      *       仅供已经确保 PluginBlock 存活期间的内部短生命周期访问使用。
      */
     static std::shared_ptr<Plugin> pluginOf(const std::shared_ptr<PluginBlock>& block)

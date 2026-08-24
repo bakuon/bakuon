@@ -30,48 +30,46 @@ namespace bakuon::gui {
 /**
 // 插件标准格式定义
 {
-    "MetaData": {
-        "Id": "com.bakuon.editor.text",
-        "Name": "Text Editor",
-        "Version": "1.2.3",
-        "CompatVersion": "1.0.0",
-        "Category": "Editor",
-        "Description": "Advanced text editor with syntax highlighting",
-        "Vendor": "bakuon team",
-        "Copyright": "Copyright (c) 2026",
-        "License": "MIT",
-        "Url": "https://example.com/plugins/texteditor",
-        "Platform": "Windows",
-        "Experimental": false,
-        "Required": false,
-        "DisabledByDefault": false,
-        "Dependencies": [
-            {
-                "Id": "com.bakuon.core",
-                "Name": "Core",
-                "Version": "1.0.0",
-                "Type": 0
-            },
-            {
-                "Id": "com.bakuon.plugin.syntaxhighlighter",
-                "Name": "Syntax Highlighter",
-                "Version": "1.1.0",
-                "Type": 1
-            }
-        ],
-        "Arguments": [
-            {
-                "Name": "theme",
-                "Parameter": "--theme=<name>",
-                "Description": "Set the editor theme"
-            },
-            {
-                "Name": "readonly",
-                "Parameter": "--readonly",
-                "Description": "Open in read-only mode"
-            }
-        ]
-    }
+    "Id": "com.bakuon.editor.text",
+    "Name": "Text Editor",
+    "Version": "1.2.3",
+    "CompatVersion": "1.0.0",
+    "Category": "Editor",
+    "Description": "Advanced text editor with syntax highlighting",
+    "Vendor": "bakuon team",
+    "Copyright": "Copyright (c) 2026",
+    "License": "MIT",
+    "Url": "https://example.com/plugins/texteditor",
+    "Platform": "Windows",
+    "Experimental": false,
+    "Required": false,
+    "DisabledByDefault": false,
+    "Dependencies": [
+        {
+            "Id": "com.bakuon.core",
+            "Name": "Core",
+            "Version": "1.0.0",
+            "Required": 1
+        },
+        {
+            "Id": "com.bakuon.plugin.syntaxhighlighter",
+            "Name": "Syntax Highlighter",
+            "Version": "1.1.0",
+            "Required": 0
+        }
+    ],
+    "Arguments": [
+        {
+            "Name": "theme",
+            "Parameter": "--theme=<name>",
+            "Description": "Set the editor theme"
+        },
+        {
+            "Name": "readonly",
+            "Parameter": "--readonly",
+            "Description": "Open in read-only mode"
+        }
+    ]
 }
 */
 

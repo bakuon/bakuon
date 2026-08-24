@@ -36,7 +36,13 @@ public:
     [[nodiscard]] size_t id() const { return m_id; }
     [[nodiscard]] const QString& filePath() const { return m_filepath; }
     [[nodiscard]] bool isLoaded() const { return static_cast<bool>(m_instance); }
-    // 元数据和状态访问
+    [[nodiscard]] bool isInitialized() const { return m_initialized; }
+
+    // 底层 IPlugin 实例的元数据转发；未 load() 成功前 m_instance 为空，一律返回空字符串。
+    // PluginSystem 用 pluginId() 作为“字符串 id → PluginBlock”表的 key（见 b_pluginsystem.cpp）。
+    [[nodiscard]] QString pluginId() const { return m_instance ? m_instance->id() : QString(); }
+    [[nodiscard]] QString name() const { return m_instance ? m_instance->name() : QString(); }
+    [[nodiscard]] QString version() const { return m_instance ? m_instance->version() : QString(); }
     // 启动/关闭时间戳
     // 错误消息
 
@@ -78,10 +84,8 @@ private:
 
     // 插件动态库实例生命周期管理；内置插件（builtin 构造函数）时为 nullptr。
     std::unique_ptr<QPluginLoader> m_loader;
+
+    bool m_initialized = false; // initialize() 成功后置 true；unload()/quit() 后重置为 false
 };
 
 } // namespace bakuon::gui
-
-// 注：不要在这里对 Plugin 声明 Q_DECLARE_INTERFACE ——Plugin 不是 QObject 派生类，
-// 也不是插件需要实现的接口；真正的接口声明在 include/bakuon/gui/IPlugin.h 里的 IPlugin。
-// 之前这里错误地对 Plugin 也声明了同一个 IID "com.bakuon.plugin"，已移除。
