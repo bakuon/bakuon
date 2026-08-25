@@ -12,6 +12,8 @@
 
 #include "gui/b_plugin.h"
 
+/// Warning: 废弃的代码，该文件随时会删除，请勿使用！！！使用 PluginPipeline 代替。
+
 namespace bakuon::gui {
 
 /**

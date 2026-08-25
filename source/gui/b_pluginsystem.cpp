@@ -6,10 +6,6 @@
 #include <QtCore/QReadLocker>
 #include <QtCore/QWriteLocker>
 
-#include "gui/b_plugin.h"
-#include "gui/b_pluginblock.h"
-#include "gui/b_plugindiscoverer.h"
-
 namespace bakuon::gui {
 
 PluginSystem::PluginSystem(QObject* parent)
@@ -20,384 +16,228 @@ PluginSystem::PluginSystem(QObject* parent)
 PluginSystem::~PluginSystem() = default;
 
 // ============================================================================
-// 私有辅助
+// 注册
 // ============================================================================
 
-std::shared_ptr<PluginBlock> PluginSystem::blockFor(size_t id) const
+size_t PluginSystem::registerBuiltIn(std::shared_ptr<IPlugin> instance)
 {
-    QReadLocker locker(&m_lock);
-    auto it = m_entries.find(id);
-    return it != m_entries.end() ? it->second : nullptr;
-}
-
-size_t PluginSystem::numericIdOf(const QString& pluginId) const
-{
-    QReadLocker locker(&m_lock);
-    auto it = m_namedEntries.find(pluginId);
-    return it != m_namedEntries.end() ? it->second->id() : 0;
-}
-
-PluginDiscoverer& PluginSystem::discoverer()
-{
-    if (!m_discoverer) {
-        // 不传 QObject parent：所有权完全交给 unique_ptr，避免和 QObject 父子删除机制混在一起。
-        m_discoverer = std::make_unique<PluginDiscoverer>();
-    }
-    return *m_discoverer;
-}
-
-// ============================================================================
-// 注册/发现
-// ============================================================================
-
-size_t PluginSystem::nextId()
-{
-    return m_nextId.fetch_add(1, std::memory_order_relaxed);
-}
-
-size_t PluginSystem::discoverBuiltIn(const std::shared_ptr<PluginBlock>& plugin)
-{
-    if (!plugin || !plugin->plugin()) {
-        m_lastError = QStringLiteral("discoverBuiltIn: 传入了空的 PluginBlock");
+    if (!instance) {
+        m_lastError = QStringLiteral("registerBuiltIn: 传入了空的 IPlugin 实例");
         return 0;
     }
-
-    const QString stringId = plugin->plugin()->pluginId();
-    if (stringId.isEmpty()) {
-        m_lastError = QStringLiteral(
-            "discoverBuiltIn: 插件未提供有效的 IPlugin::id()（是否忘了 load()？"
-            "内置插件应该在构造 Plugin 时就已经绑定实例，一构造完就是已加载状态）");
-        return 0;
-    }
-
-    const size_t numericId = plugin->id();
-
-    QWriteLocker locker(&m_lock);
-    if (m_entries.contains(numericId)) {
-        m_lastError = QStringLiteral("discoverBuiltIn: 数字 id=%1 已被占用，请用 nextId() 分配")
-                          .arg(numericId);
-        return 0;
-    }
-    if (m_namedEntries.contains(stringId)) {
-        m_lastError = QStringLiteral("discoverBuiltIn: 插件 id \"%1\" 与已注册插件冲突")
-                          .arg(stringId);
-        return 0;
-    }
-
-    m_entries.emplace(numericId, plugin);
-    m_namedEntries.emplace(stringId, plugin);
-    locker.unlock();
-
-    Q_EMIT pluginDiscovered(plugin->plugin()->filePath());
-    return numericId;
+    const size_t id = nextId();
+    auto p          = std::make_shared<PluginPipeline>(id, std::move(instance));
+    registerPipeline(id, p);
+    return id;
 }
 
-size_t PluginSystem::discoverPlugin(const QString& filePath)
+size_t PluginSystem::registerFile(const QString& filePath)
 {
-    if (!discoverer().discover(filePath)) {
-        m_lastError = QStringLiteral("discoverPlugin: 元数据解析失败: %1").arg(filePath);
-        Q_EMIT pluginDiscoveryFailed(filePath, m_lastError);
-        return 0;
-    }
-
-    const auto meta = discoverer().metadata(filePath);
-    if (!meta) {
-        // 理论上不会走到这里：discover() 刚刚成功过，metadata() 应该一定能取到。
-        m_lastError = QStringLiteral(
-                          "discoverPlugin: 内部错误，discover() 成功但拿不到 metadata: %1")
-                          .arg(filePath);
-        return 0;
-    }
-
-    {
-        QReadLocker locker(&m_lock);
-        if (m_namedEntries.contains(meta->id)) {
-            m_lastError = QStringLiteral("discoverPlugin: 插件 id \"%1\" 与已注册插件冲突 (%2)")
-                              .arg(meta->id, filePath);
-            return 0;
-        }
-    }
-
-    const size_t numericId = nextId();
-    // 这里只是分配好了 QPluginLoader 壳子（构造 Plugin，但不调用 load()），真正的
-    // dlopen/instance() 延迟到 load()/loadAll() 才发生——discover 和 load 是两个独立阶段。
-    auto block             = PluginBlock::create(numericId, filePath);
-
-    QWriteLocker locker(&m_lock);
-    m_entries.emplace(numericId, block);
-    m_namedEntries.emplace(meta->id, block);
-    locker.unlock();
-
-    Q_EMIT pluginDiscovered(filePath);
-    return numericId;
+    const size_t id = nextId();
+    auto p          = std::make_shared<PluginPipeline>(id, filePath);
+    registerPipeline(id, p);
+    return id;
 }
 
-QVector<size_t> PluginSystem::discoverPlugins(const QString& directory, bool recursive)
+QVector<size_t> PluginSystem::registerDirectory(const QString& directory, bool recursive)
 {
     QVector<size_t> ids;
 
     QDir dir(directory);
     if (!dir.exists()) {
-        m_lastError = QStringLiteral("discoverPlugins: 目录不存在: %1").arg(directory);
+        m_lastError = QStringLiteral("registerDirectory: 目录不存在: %1").arg(directory);
         return ids;
     }
 
-    // 没有直接复用 PluginDiscoverer::discoverDirectory()：那个方法只做“文件级”发现，
-    // 不经过 PluginSystem 的 id 分配 / 命名冲突检测。这里自己扫描目录、对每个候选文件调用
-    // discoverPlugin()，确保目录批量发现和单文件发现走的是同一条注册路径。
     const auto flags = recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
     QDirIterator it(directory, QDir::Files, flags);
     while (it.hasNext()) {
         const QString filePath = it.next();
-        if (!QLibrary::isLibrary(filePath)) {
-            continue;
-        }
-        const size_t id = discoverPlugin(filePath);
-        if (id != 0) {
-            ids.push_back(id);
+        if (QLibrary::isLibrary(filePath)) {
+            ids.push_back(registerFile(filePath));
         }
     }
     return ids;
 }
 
-// ============================================================================
-// 生命周期：load / unload
-// ============================================================================
-
-bool PluginSystem::load(size_t id)
+bool PluginSystem::unregisterPlugin(size_t id)
 {
-    auto block = blockFor(id);
-    if (!block) {
-        m_lastError = QStringLiteral("load: 未知的插件 id=%1").arg(id);
+    QWriteLocker locker(&m_lock);
+
+    auto it = m_entries.find(id);
+    if (it == m_entries.end()) {
+        m_lastError = QStringLiteral("unregisterPlugin: 未知的插件 id=%1").arg(id);
         return false;
     }
-
-    Q_EMIT pluginLoading(id);
-    if (!block->plugin()->load()) {
-        m_lastError = QStringLiteral("load: 插件加载失败 id=%1 (%2)")
+    if (it->second->state() != PluginState::Unloaded) {
+        m_lastError = QStringLiteral(
+                          "unregisterPlugin: 插件 id=%1 当前处于 %2，只有 Unloaded 态才允许移除")
                           .arg(id)
-                          .arg(block->plugin()->filePath());
-        Q_EMIT pluginLoadFailed(id);
+                          .arg(toString(it->second->state()));
         return false;
     }
-    Q_EMIT pluginLoaded(id);
+
+    const QString pluginId = it->second->metadata().id;
+    m_entries.erase(it);
+
+    if (!pluginId.isEmpty()) {
+        auto namedIt = m_namedEntries.find(pluginId);
+        // 理论上这里一定能找到、且指向同一个对象；加个防御性检查，避免误删了同名冲突场景下
+        // 属于另一个插件的条目（见 onPipelineStateChanged() 里对 id 冲突的处理）。
+        if (namedIt != m_namedEntries.end() && namedIt->second->id() == id) {
+            m_namedEntries.erase(namedIt);
+        }
+    }
     return true;
 }
 
-bool PluginSystem::load(const QString& pluginId)
+size_t PluginSystem::unregisterUnloaded()
 {
-    const size_t id = numericIdOf(pluginId);
-    if (id == 0) {
-        m_lastError = QStringLiteral("load: 未知的插件 id=\"%1\"").arg(pluginId);
-        return false;
-    }
-    return load(id);
-}
+    // 不能直接对 m_entries 做 range-for 同时调用 unregisterPlugin()（它会 erase() 当前正在遍历的
+    // 元素，是未定义行为），见 idSnapshot 函数实现里的注释。
+    const std::vector<size_t> ids = idSnapshot();
 
-bool PluginSystem::loadAll()
-{
-    std::vector<size_t> ids;
-    {
-        QReadLocker locker(&m_lock);
-        ids.reserve(m_entries.size());
-        for (const auto& entry : m_entries) {
-            ids.push_back(entry.first);
+    size_t removed = 0;
+    for (size_t id : ids) {
+        auto p = pipeline(id);
+        if (p && p->state() == PluginState::Unloaded && unregisterPlugin(id)) {
+            ++removed;
         }
     }
+    return removed;
+}
+
+// ============================================================================
+// 批量编排
+// ============================================================================
+
+bool PluginSystem::launchAll()
+{
+    const std::vector<size_t> ids = idSnapshot();
 
     bool allOk = true;
     for (size_t id : ids) {
-        allOk = load(id) && allOk;
+        if (auto p = pipeline(id)) {
+            allOk = p->launch() && allOk;
+        }
+    }
+
+    // 依赖顺序不保证：如果插件 A 依赖插件 B、而 B 的注册顺序排在 A 后面，A 第一轮 resolve 时
+    // B 还没被发现过，会失败在 ResolveFailed。跑完第一轮后，所有插件（不论自己成功与否）只要
+    // 走到过 Validated，id 就已经登记进命名表了，这时候重试一次 resolve 就有完整信息了——
+    // 一轮重试对任意依赖深度都足够，因为命名表的完整性只取决于"是否跑过一轮"，不取决于顺序。
+    for (size_t id : ids) {
+        auto p = pipeline(id);
+        if (p && p->state() == PluginState::ResolveFailed) {
+            allOk = p->launch() && allOk;
+        }
     }
     return allOk;
 }
 
-bool PluginSystem::unload(size_t id)
+bool PluginSystem::runAll()
 {
-    auto block = blockFor(id);
-    if (!block) {
-        m_lastError = QStringLiteral("unload: 未知的插件 id=%1").arg(id);
-        return false;
-    }
-
-    if (!block->plugin()->unload()) {
-        m_lastError = QStringLiteral("unload: 插件卸载失败 id=%1").arg(id);
-        Q_EMIT pluginUnloadFailed(id);
-        return false;
-    }
-    Q_EMIT pluginUnloaded(id);
-    return true;
-}
-
-bool PluginSystem::unload(const QString& pluginId)
-{
-    const size_t id = numericIdOf(pluginId);
-    if (id == 0) {
-        m_lastError = QStringLiteral("unload: 未知的插件 id=\"%1\"").arg(pluginId);
-        return false;
-    }
-    return unload(id);
-}
-
-bool PluginSystem::unloadAll()
-{
-    std::vector<size_t> ids;
-    {
-        QReadLocker locker(&m_lock);
-        ids.reserve(m_entries.size());
-        for (const auto& entry : m_entries) {
-            ids.push_back(entry.first);
-        }
-    }
+    const std::vector<size_t> ids = idSnapshot();
 
     bool allOk = true;
     for (size_t id : ids) {
-        allOk = unload(id) && allOk;
+        auto p = pipeline(id);
+        if (!p || p->state() != PluginState::Initialized) {
+            continue; // 没准备好的直接跳过，不计入失败——它有自己的失败状态可查（见类头部说明）
+        }
+        allOk = p->run() && allOk;
     }
     return allOk;
-}
-
-// ============================================================================
-// 生命周期：initialize / shutdown
-// ============================================================================
-
-bool PluginSystem::doInitialize(size_t id)
-{
-    auto block = blockFor(id);
-    if (!block) {
-        m_lastError = QStringLiteral("initialize: 未知的插件 id=%1").arg(id);
-        return false;
-    }
-    if (!block->plugin()->isLoaded()) {
-        m_lastError = QStringLiteral("initialize: 插件 id=%1 尚未 load()").arg(id);
-        return false;
-    }
-
-    if (!block->plugin()->initialize()) {
-        m_lastError = QStringLiteral("initialize: 插件 id=%1 initialize() 返回失败").arg(id);
-        Q_EMIT pluginInitializeFailed(id);
-        return false;
-    }
-    Q_EMIT pluginInitialized(id);
-    return true;
-}
-
-bool PluginSystem::initializeOne(size_t id)
-{
-    Q_EMIT pluginInitializing(id, 0, 1);
-    const bool ok = doInitialize(id);
-    if (ok) {
-        // 单独调用 initializeOne() 时，没有“全部插件都初始化完再统一 reactExtensions()”这个批量语义，
-        // 所以这里对这一个插件单独完成第 3 阶段。initializeAll() 里有自己的批量版本，见下方。
-        auto block = blockFor(id);
-        if (block) {
-            block->plugin()->reactExtensions();
-            Q_EMIT pluginRunning(id);
-        }
-    }
-    return ok;
-}
-
-bool PluginSystem::initializeAll()
-{
-    std::vector<size_t> ids;
-    {
-        QReadLocker locker(&m_lock);
-        ids.reserve(m_entries.size());
-        for (const auto& entry : m_entries) {
-            ids.push_back(entry.first);
-        }
-    }
-
-    bool allOk      = true;
-    const int total = static_cast<int>(ids.size());
-    for (int i = 0; i < total; ++i) {
-        const size_t id = ids[static_cast<size_t>(i)];
-        Q_EMIT pluginInitializing(id, i, total);
-        allOk = doInitialize(id) && allOk;
-    }
-
-    if (!allOk) {
-        // 文档约定"失败时插件系统应回滚"；这里的回滚策略很朴素：不调用任何 extensionsInitialized()，
-        // 已经 initialize() 成功的插件仍处于“已初始化但未 reactExtensions()”状态，调用方可以选择
-        // shutdownAll()/unloadAll() 整体回退，也可以自行排查 lastError() 后重试失败的那几个。
-        return false;
-    }
-
-    // 全部 initialize() 成功后，按文档约定的第 3 阶段统一调用 extensionsInitialized()，
-    // 此时所有插件都已经完成 initialize()，可以安全地互相访问对方注册的扩展。
-    for (size_t id : ids) {
-        auto block = blockFor(id);
-        if (block) {
-            block->plugin()->reactExtensions();
-            Q_EMIT pluginRunning(id);
-        }
-    }
-    return true;
-}
-
-bool PluginSystem::isInitialized(size_t id) const
-{
-    auto block = blockFor(id);
-    return block && block->plugin()->isInitialized();
-}
-
-bool PluginSystem::isAllInitialized() const
-{
-    QReadLocker locker(&m_lock);
-    for (const auto& entry : m_entries) {
-        if (!entry.second->plugin()->isInitialized()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void PluginSystem::shutdownOne(size_t id)
-{
-    auto block = blockFor(id);
-    if (!block) {
-        return;
-    }
-    Q_EMIT pluginStopped(id);
-    block->plugin()->quit();
-}
-
-void PluginSystem::shutdownAll()
-{
-    std::vector<size_t> ids;
-    {
-        QReadLocker locker(&m_lock);
-        ids.reserve(m_entries.size());
-        for (const auto& entry : m_entries) {
-            ids.push_back(entry.first);
-        }
-    }
-    // 反向遍历只是一个占位策略，并不是真正的“反向依赖顺序”——依赖排序还没实现（见类头部说明），
-    // 拓扑排序接入后这里应该改成按拓扑序的逆序遍历。
-    for (auto rit = ids.rbegin(); rit != ids.rend(); ++rit) {
-        shutdownOne(*rit);
-    }
 }
 
 bool PluginSystem::startup()
 {
-    // 简化版一步到位流程：依赖解析目前是空的（见类头部说明），这里就是 loadAll() + initializeAll()
-    // 的顺序封装，不做任何拓扑排序。
-    if (!loadAll()) {
-        return false;
+    bool ok = launchAll();
+    ok      = runAll() && ok;
+    return ok;
+}
+
+bool PluginSystem::stopAll()
+{
+    const std::vector<size_t> ids = idSnapshot();
+
+    bool allOk = true;
+    for (auto rit = ids.rbegin(); rit != ids.rend(); ++rit) {
+        auto p = pipeline(*rit);
+        if (p && (p->state() == PluginState::Running || p->state() == PluginState::RunFailed)) {
+            allOk = p->stop() && allOk;
+        }
     }
-    return initializeAll();
+    return allOk;
+}
+
+bool PluginSystem::unloadAll()
+{
+    const std::vector<size_t> ids = idSnapshot();
+
+    bool allOk = true;
+    for (auto rit = ids.rbegin(); rit != ids.rend(); ++rit) {
+        auto p = pipeline(*rit);
+        if (p && p->state() == PluginState::Stopped) {
+            allOk = p->unload() && allOk;
+            // unload()/unloadAll()不自动移除：卸载后可能还想查 pipeline(id)->lastError()/最终状态做诊断，
+            // "卸载"和"彻底释放"是两个动作，交给调用方自己决定要不要接着调 unregisterPlugin()
+        }
+    }
+    return allOk;
 }
 
 void PluginSystem::shutdown()
 {
-    shutdownAll();
+    stopAll();
     unloadAll();
 }
 
 // ============================================================================
-// 访问插件数据
+// 单个插件的编排（薄封装，直接转发给对应的 pipeline）
+// ============================================================================
+
+bool PluginSystem::launch(size_t id)
+{
+    auto p = pipeline(id);
+    if (!p) {
+        m_lastError = QStringLiteral("launch: 未知的插件 id=%1").arg(id);
+        return false;
+    }
+    return p->launch();
+}
+
+bool PluginSystem::run(size_t id)
+{
+    auto p = pipeline(id);
+    if (!p) {
+        m_lastError = QStringLiteral("run: 未知的插件 id=%1").arg(id);
+        return false;
+    }
+    return p->run();
+}
+
+bool PluginSystem::stop(size_t id)
+{
+    auto p = pipeline(id);
+    if (!p) {
+        return false;
+    }
+    return p->stop();
+}
+
+bool PluginSystem::unloadNow(size_t id)
+{
+    auto p = pipeline(id);
+    if (!p) {
+        return false;
+    }
+    // NOTE: 是否忘记了释放 Pipeline 对象？
+    return p->unload();
+}
+
+// ============================================================================
+// 查询
 // ============================================================================
 
 bool PluginSystem::hasPlugin(size_t id) const
@@ -418,10 +258,24 @@ size_t PluginSystem::pluginCount() const
     return m_entries.size();
 }
 
-std::vector<std::shared_ptr<PluginBlock>> PluginSystem::plugins() const
+std::shared_ptr<PluginPipeline> PluginSystem::pipeline(size_t id) const
 {
     QReadLocker locker(&m_lock);
-    std::vector<std::shared_ptr<PluginBlock>> result;
+    auto it = m_entries.find(id);
+    return it != m_entries.end() ? it->second : nullptr;
+}
+
+std::shared_ptr<PluginPipeline> PluginSystem::pipeline(const QString& id) const
+{
+    QReadLocker locker(&m_lock);
+    auto it = m_namedEntries.find(id);
+    return it != m_namedEntries.end() ? it->second : nullptr;
+}
+
+std::vector<std::shared_ptr<PluginPipeline>> PluginSystem::pipelines() const
+{
+    QReadLocker locker(&m_lock);
+    std::vector<std::shared_ptr<PluginPipeline>> result;
     result.reserve(m_entries.size());
     for (const auto& entry : m_entries) {
         result.push_back(entry.second);
@@ -429,16 +283,151 @@ std::vector<std::shared_ptr<PluginBlock>> PluginSystem::plugins() const
     return result;
 }
 
-std::shared_ptr<PluginBlock> PluginSystem::plugin(size_t id) const
+// ============================================================================
+// 私有辅助
+// ============================================================================
+
+size_t PluginSystem::nextId()
 {
-    return blockFor(id);
+    return m_nextId.fetch_add(1, std::memory_order_relaxed);
 }
 
-std::shared_ptr<PluginBlock> PluginSystem::plugin(const QString& id) const
+/**
+ * 为什么这里要先把 id 收集成一份快照（std::vector），而不是在需要遍历的地方直接写
+ * for (const auto &[id, pipeline] : m_entries) { ... }：
+ * 
+ *  1. 遍历期间会调用 pipeline->launch()/run()/stop()/unloadNow()，这些调用会同步触发
+ *     PluginPipeline::stateChanged 信号，直接连接到 onPipelineStateChanged()——它会尝试
+ *     获取 m_lock 来写 m_namedEntries。如果外层遍历时正持有 m_lock（哪怕只是读锁），
+ *     这个回调再去请求写锁就会自死锁：QReadWriteLock 不允许同一线程从"持有读锁"升级到
+ *     "持有写锁"。所以外层遍历必须先释放锁，再去调用 pipeline 的方法，这就要求先把
+ *     "要遍历哪些 id" 这件事在锁的保护下一次性问清楚、存下来，而不是让锁的生命周期
+ *     横跨整个遍历过程。
+ *  2. 直接对 m_entries 做 range-for，同时循环体里又可能触发 unregisterPlugin() 之类会
+ *     erase() 该 map 的操作（见 unregisterAllUnloaded()），对 unordered_map 边遍历边
+ *     erase 当前元素之外的操作是未定义行为，快照成普通 vector 之后就没有这个问题。
+ *  3. 收集到的 id 集合天然是"那一刻的快照"：遍历过程中哪怕通过其它路径新增/移除了插件，
+ *     这一轮批量操作的范围也不会被打乱，语义更容易讲清楚。
+ * 
+ * 代价是要按 id 重新 pipeline(id) 查一次（多一次哈希查找 + 加锁/解锁），量级上（几十个
+ * 插件）可以忽略；真的想省这次查找，可以在快照里直接存 shared_ptr<PluginPipeline> 而不是
+ * id——目前存 id 是因为 unregisterAllUnloaded() 这类场景需要用 id 重新判断"现在还在不在/
+ * 现在是什么状态"，而不是用快照时刻的旧状态。
+ */
+std::vector<size_t> PluginSystem::idSnapshot() const
 {
     QReadLocker locker(&m_lock);
-    auto it = m_namedEntries.find(id);
-    return it != m_namedEntries.end() ? it->second : nullptr;
+    std::vector<size_t> ids;
+    ids.reserve(m_entries.size());
+    for (const auto& entry : m_entries) {
+        ids.push_back(entry.first);
+    }
+    return ids;
+}
+
+void PluginSystem::registerPipeline(size_t id, const std::shared_ptr<PluginPipeline>& pipeline)
+{
+    pipeline->setResolveHook([this](const PluginMetadata& meta) { return resolveDependency(meta); });
+    connect(pipeline.get(),
+            &PluginPipeline::stateChanged,
+            this,
+            &PluginSystem::onPipelineStateChanged);
+    connect(pipeline.get(), &PluginPipeline::running, this, &PluginSystem::pluginRunning);
+    connect(pipeline.get(), &PluginPipeline::failed, this, &PluginSystem::pluginFailed);
+
+    QWriteLocker locker(&m_lock);
+    m_entries.emplace(id, pipeline);
+    // 内置插件构造完 metadata 就已经知道了（状态直接是 Validated），趁写锁还在手上顺便登记进命名表；
+    // 动态库插件此时 metadata 还是空的，要等 onPipelineStateChanged() 在 Validated 时机再登记。
+    if (!pipeline->metadata().id.isEmpty()) {
+        m_namedEntries.emplace(pipeline->metadata().id, pipeline);
+    }
+}
+
+void PluginSystem::onPipelineStateChanged(size_t id, PluginState state)
+{
+    Q_EMIT pluginStateChanged(id, state);
+
+    if (state != PluginState::Validated) {
+        return;
+    }
+
+    auto p = pipeline(id);
+    if (!p) {
+        return;
+    }
+    const QString pluginId = p->metadata().id;
+    if (pluginId.isEmpty()) {
+        return;
+    }
+
+    // 注意这里的抢锁
+    QWriteLocker locker(&m_lock);
+    auto it = m_namedEntries.find(pluginId);
+    if (it != m_namedEntries.end() && it->second != p) {
+        m_lastError = QStringLiteral("插件 id 冲突：\"%1\" 同时被多个动态库文件声明").arg(pluginId);
+        return;
+    }
+    m_namedEntries.emplace(pluginId, p);
+}
+
+std::optional<QString> PluginSystem::resolveDependency(const PluginMetadata& meta) const
+{
+    for (const auto& dep : meta.dependencies) {
+        if (dep.id == meta.id) {
+            return QStringLiteral("插件不能依赖自身: %1").arg(meta.id);
+        }
+    }
+
+    QReadLocker locker(&m_lock);
+
+    for (const auto& dep : meta.dependencies) {
+        if (dep.type == PluginDependency::RequireType::Required
+            && !m_namedEntries.contains(dep.id)) {
+            return QStringLiteral(
+                       "缺少必需依赖 \"%1\"（如果它也在同一批目录扫描里，稍后会自动重试）")
+                .arg(dep.id);
+        }
+    }
+
+    if (!meta.id.isEmpty()) {
+        QSet<QString> visiting;
+        QSet<QString> visited;
+        QStringList path;
+        if (hasDependencyCycle(meta.id, visiting, visited, path)) {
+            return QStringLiteral("检测到循环依赖: %1").arg(path.join(QStringLiteral(" -> ")));
+        }
+    }
+    return std::nullopt;
+}
+
+bool PluginSystem::hasDependencyCycle(const QString& startId, QSet<QString>& visiting,
+                                      QSet<QString>& visited, QStringList& pathOut) const
+{
+    if (visited.contains(startId)) {
+        return false;
+    }
+    if (visiting.contains(startId)) {
+        pathOut.push_back(startId); // 闭合点：把环显示完整
+        return true;
+    }
+
+    visiting.insert(startId);
+    pathOut.push_back(startId);
+
+    auto it = m_namedEntries.find(startId);
+    if (it != m_namedEntries.end()) {
+        for (const auto& dep : it->second->metadata().dependencies) {
+            if (hasDependencyCycle(dep.id, visiting, visited, pathOut)) {
+                return true;
+            }
+        }
+    }
+
+    pathOut.removeLast();
+    visiting.remove(startId);
+    visited.insert(startId);
+    return false;
 }
 
 } // namespace bakuon::gui

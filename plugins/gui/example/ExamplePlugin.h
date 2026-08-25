@@ -26,6 +26,7 @@ public:
     [[nodiscard]] QString description() const override;
 
     bool initialize(bakuon::gui::PluginContext& ctx) override;
+    void extensionsInitialized() override;
     void shutdown() override;
 };
 

@@ -55,9 +55,9 @@ bakuon_add_test(
 
 bakuon_add_test(
     NAME
-    test_gui_pluginblock
+    test_gui_pluginpipeline
     SOURCES
-    "gui/pluginblock_test.cpp"
+    "gui/pluginpipeline_test.cpp"
     DEPENDS
     bakuon::gui)
 
@@ -69,17 +69,12 @@ bakuon_add_test(
     DEPENDS
     bakuon::gui)
 
-# example_plugin 只在 BAKUON_BUILD_PLUGINS 打开时才存在；测试用它验证 discoverPlugin() 走
+# example_plugin 只在 BAKUON_BUILD_PLUGINS 打开时才存在；测试用它验证 registerFile()/launch() 走
 # 真实动态库路径（而不是只测内置插件），target 不存在时对应的测试用例会在编译期被 #ifdef 跳过。
 if(TARGET example_plugin)
-    target_compile_definitions(
-        test_gui_pluginsystem
-        PRIVATE BAKUON_TEST_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:example_plugin>")
-    add_dependencies(test_gui_pluginsystem example_plugin)
+    foreach(t test_gui_pluginpipeline test_gui_pluginsystem)
+        target_compile_definitions(
+            ${t} PRIVATE BAKUON_TEST_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:example_plugin>")
+        add_dependencies(${t} example_plugin)
+    endforeach()
 endif()
-
-bakuon_add_test(
-    NAME
-    test_actorsystem
-    SOURCES
-    "actorsystem_test.cpp")

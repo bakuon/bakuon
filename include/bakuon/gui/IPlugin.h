@@ -61,12 +61,12 @@ namespace bakuon::gui {
     "Arguments": [
         {
             "Name": "theme",
-            "Parameter": "--theme=<name>",
+            "Option": "--theme=<value>",
             "Description": "Set the editor theme"
         },
         {
             "Name": "readonly",
-            "Parameter": "--readonly",
+            "Option": "--readonly",
             "Description": "Open in read-only mode"
         }
     ]

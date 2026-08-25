@@ -10,12 +10,19 @@ QString ExamplePlugin::description() const
 bool ExamplePlugin::initialize(bakuon::gui::PluginContext& /*ctx*/)
 {
     // 示例插件不注册任何扩展点，直接返回成功。
+    qDebug() << Q_FUNC_INFO;
     return true;
+}
+
+void ExamplePlugin::extensionsInitialized()
+{
+    qDebug() << Q_FUNC_INFO;
 }
 
 void ExamplePlugin::shutdown()
 {
     // 示例插件没有需要释放的资源。
+    qDebug() << Q_FUNC_INFO;
 }
 
 } // namespace bakuon::plugins::gui

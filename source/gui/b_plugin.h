@@ -8,6 +8,8 @@
 #include <bakuon/gui/IPlugin.h>
 #include <bakuon/gui/PluginContext.h>
 
+/// Warning: 废弃的代码，该文件随时会删除，请勿使用！！！
+
 namespace bakuon::gui {
 
 /**
