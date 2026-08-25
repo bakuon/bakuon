@@ -232,7 +232,6 @@ bool PluginSystem::unloadNow(size_t id)
     if (!p) {
         return false;
     }
-    // NOTE: 是否忘记了释放 Pipeline 对象？
     return p->unload();
 }
 
