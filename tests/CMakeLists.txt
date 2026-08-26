@@ -78,3 +78,11 @@ if(TARGET example_plugin)
         add_dependencies(${t} example_plugin)
     endforeach()
 endif()
+
+bakuon_add_test(
+    NAME
+    test_gui_extensionpoint
+    SOURCES
+    "gui/extensionpoint_test.cpp"
+    DEPENDS
+    bakuon::gui)

@@ -12,6 +12,8 @@
 
 namespace bakuon::gui {
 
+class IExtensionSystem;
+
 /**
  * @brief 插件初始化上下文
  *
@@ -37,6 +39,11 @@ namespace bakuon::gui {
 class PluginContext
 {
 public:
+    /**
+     * @brief 插件上下文
+     * @todo 注入 IExtensionSystem 引用，让插件初始化时获取到依赖的扩展点，
+     *       供初始化时注册扩展以及启动时 extensionsInitialized() 访问其他插件注册的扩展。
+     */
     explicit PluginContext(QStringList arguments = {})
         : m_arguments(std::move(arguments))
     {
