@@ -157,6 +157,123 @@ TEST(PluginSystemTest, OneFailedPluginDoesNotBlockOthersFromRunning)
     qDebug("[OK] one InitializeFailed plugin does not block healthy plugins from Running\n");
 }
 
+TEST(PluginSystemTest, RunOrderDoesNotNeedToRespectDependencies)
+{
+    // 更正：extensionsInitialized() 的调用顺序不需要跟着依赖图走。IPlugin 的契约是扩展在
+    // initialize() 阶段就注册完成了，runAll() 只会在全体插件都到达 Initialized 之后才被调用，
+    // 也就是说无论 run.b 的 extensionsInitialized() 是在 run.a 之前还是之后执行，run.a 需要
+    // 访问的、run.b 注册的扩展早就已经就绪了——所以这里不对调用顺序做任何断言，只验证
+    // 两个都能正常进入 Running，顺序是任意的（这正是 runAll() 用 idSnapshot() 而不是
+    // topologicalOrder() 的原因）。
+    PluginSystem system;
+    system.registerBuiltIn(makeFake(QStringLiteral("run.a"), {QStringLiteral("run.b")}));
+    system.registerBuiltIn(makeFake(QStringLiteral("run.b")));
+
+    ASSERT_TRUE(system.startup()) << system.lastError().toStdString();
+    EXPECT_EQ(system.pipeline(QStringLiteral("run.a"))->state(), PluginState::Running);
+    EXPECT_EQ(system.pipeline(QStringLiteral("run.b"))->state(), PluginState::Running);
+    qDebug("[OK] runAll() succeeds regardless of extensionsInitialized() call order\n");
+}
+
+TEST(PluginSystemTest, StopAndUnloadOrderRespectsDependenciesInReverse)
+{
+    // A 依赖 B：停止/卸载时 A 必须先于 B——A 的 shutdown() 可能还要访问 B 的扩展。
+    std::vector<std::string> log;
+    PluginSystem system;
+    system.registerBuiltIn(makeFake(QStringLiteral("stop.a"), {QStringLiteral("stop.b")}, &log));
+    system.registerBuiltIn(makeFake(QStringLiteral("stop.b"), {}, &log));
+
+    ASSERT_TRUE(system.startup());
+    system.shutdown();
+
+    const auto aShutdown = std::find(log.begin(), log.end(), "stop.a:shutdown");
+    const auto bShutdown = std::find(log.begin(), log.end(), "stop.b:shutdown");
+    ASSERT_NE(aShutdown, log.end());
+    ASSERT_NE(bShutdown, log.end());
+    EXPECT_LT(aShutdown, bShutdown) << "依赖 B 的插件 A 必须先于 B 停止，B 停止时 A 已经不会再用它了";
+
+    EXPECT_EQ(system.pipeline(QStringLiteral("stop.a"))->state(), PluginState::Unloaded);
+    EXPECT_EQ(system.pipeline(QStringLiteral("stop.b"))->state(), PluginState::Unloaded);
+    qDebug("[OK] stopAll()/unloadAll() stop dependents before dependencies (reverse topological order)\n");
+}
+
+TEST(PluginSystemTest, StopOrderRespectsChainOfThree)
+{
+    // A -> B -> C（A 依赖 B，B 依赖 C）。停止顺序必须是 A, B, C。
+    std::vector<std::string> log;
+    PluginSystem system;
+    system.registerBuiltIn(makeFake(QStringLiteral("chain.a"), {QStringLiteral("chain.b")}, &log));
+    system.registerBuiltIn(makeFake(QStringLiteral("chain.b"), {QStringLiteral("chain.c")}, &log));
+    system.registerBuiltIn(makeFake(QStringLiteral("chain.c"), {}, &log));
+
+    ASSERT_TRUE(system.startup()) << system.lastError().toStdString();
+    system.shutdown();
+
+    const auto posA = std::find(log.begin(), log.end(), "chain.a:shutdown");
+    const auto posB = std::find(log.begin(), log.end(), "chain.b:shutdown");
+    const auto posC = std::find(log.begin(), log.end(), "chain.c:shutdown");
+    ASSERT_NE(posA, log.end());
+    ASSERT_NE(posB, log.end());
+    ASSERT_NE(posC, log.end());
+    EXPECT_LT(posA, posB);
+    EXPECT_LT(posB, posC);
+    qDebug("[OK] three-level dependency chain stops in exact A -> B -> C order\n");
+}
+
+TEST(PluginSystemTest, CommandLineArgumentsScopedAndGlobalBroadcast)
+{
+    QStringList argsSeenByA;
+    QStringList argsSeenByB;
+
+    class ArgCapturePlugin : public IPlugin
+    {
+    public:
+        ArgCapturePlugin(QString id, QStringList* sink)
+            : m_id(std::move(id))
+            , m_sink(sink)
+        {
+        }
+        [[nodiscard]] QString id() const override { return m_id; }
+        [[nodiscard]] QString name() const override { return m_id; }
+        [[nodiscard]] QString version() const override { return QStringLiteral("1.0"); }
+        bool initialize(PluginContext& ctx) override
+        {
+            *m_sink = ctx.arguments();
+            return true;
+        }
+        void extensionsInitialized() override {}
+        void shutdown() override {}
+
+    private:
+        QString m_id;
+        QStringList* m_sink;
+    };
+
+    PluginSystem system;
+    system.setCommandLineArguments({
+        QStringLiteral("--verbose"),                  // 全局：应该被 A 和 B 都收到
+        QStringLiteral("--plugin:arg.a.theme=dark"),   // 只应该给 arg.a（还原成 --theme=dark）
+        QStringLiteral("--plugin:arg.b.level=3"),      // 只应该给 arg.b（还原成 --level=3）
+    });
+
+    system.registerBuiltIn(std::make_shared<ArgCapturePlugin>(QStringLiteral("arg.a"), &argsSeenByA));
+    system.registerBuiltIn(std::make_shared<ArgCapturePlugin>(QStringLiteral("arg.b"), &argsSeenByB));
+
+    ASSERT_TRUE(system.launchAll()) << system.lastError().toStdString();
+
+    EXPECT_TRUE(argsSeenByA.contains(QStringLiteral("--verbose")));
+    EXPECT_TRUE(argsSeenByA.contains(QStringLiteral("--theme=dark")));
+    EXPECT_FALSE(argsSeenByA.contains(QStringLiteral("--level=3")))
+        << "不属于 arg.a 的限定参数不应该泄漏给它";
+
+    EXPECT_TRUE(argsSeenByB.contains(QStringLiteral("--verbose")));
+    EXPECT_TRUE(argsSeenByB.contains(QStringLiteral("--level=3")));
+    EXPECT_FALSE(argsSeenByB.contains(QStringLiteral("--theme=dark")));
+
+    qDebug("[OK] global args broadcast to all, --plugin:<id>. args scoped correctly\n");
+}
+
+
 #ifdef BAKUON_TEST_EXAMPLE_PLUGIN_PATH
 TEST(PluginSystemTest, RegisterFileAndFullOrchestration)
 {

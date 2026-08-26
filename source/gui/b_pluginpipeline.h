@@ -10,6 +10,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPluginLoader>
 #include <QtCore/QString>
+#include <QtCore/QStringList>
 
 #include <bakuon/gui/IPlugin.h>
 #include <bakuon/gui/PluginContext.h>
@@ -325,16 +326,18 @@ public:
     [[nodiscard]] std::optional<QDateTime> runningAt() const noexcept { return m_runningAt; }
 
     /**
-     * @brief 获取运行时实际命令行参数值
+     * @brief 获取当前设置的运行时命令行参数值。
      * @see PluginArgument
      */
-    // [[nodiscard]] QStringList argumentValues() const; // 有意注释：暂时不确定如何实现
+    [[nodiscard]] QStringList argumentValues() const noexcept { return m_argumentValues; }
     /**
-     * @brief 设置运行时命令行参数值
-     * @note  通常由应用启动阶段的参数解析器调用
-     * @see PluginArgument
+     * @brief 设置运行时命令行参数值，Initializing 阶段会用它构造 PluginContext。
+     * @note 通常由 PluginSystem 在 Validated 时机根据 metadata().id 计算好后下发
+     *       （见 b_pluginsystem.cpp 的 argumentsFor()），不需要调用方手动拼接；
+     *       单独使用 PluginPipeline（不经过 PluginSystem）时可以直接调用本方法自己传值。
+     *       调用时机没有限制——哪怕已经 Initialized，重新设置后走 InitializeFailed 重试也会用新值。
      */
-    // void setArgumentValues(const QStringList &values); // 有意注释：暂时不确定如何实现
+    void setArgumentValues(QStringList values) { m_argumentValues = std::move(values); }
 
     /**
      * @brief 依赖解析钩子：返回 std::nullopt 表示通过，否则是失败原因（写入 lastError()）。
@@ -407,6 +410,7 @@ private:
 
     std::unique_ptr<QPluginLoader> m_loader; // nullptr：内置插件，或动态库插件尚未到达 Loading
     std::shared_ptr<IPlugin> m_instance;     // Loading 成功后设置（内置插件构造时就已设置）
+    QStringList m_argumentValues;            // Initializing 阶段传给 PluginContext 的命令行参数
 
     // 用队列代替递归，避免 handle()/execute_*() 互相调用时栈深不受控
     std::deque<PluginEvent> m_pendingEvents;

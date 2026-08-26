@@ -325,10 +325,11 @@ void PluginPipeline::executeInitialize()
         return;
     }
 
-    // TODO(启动参数): 目前还不确定如何把命令行参数透传给插件，PluginContext 先保持是空参数构造；
-    // 等确定参数来源（QCoreApplication::arguments() 过滤 / metadata().arguments 声明的选项）
-    // 之后再传进来。
-    PluginContext ctx;
+    // 参数来源见 PluginSystem::argumentsFor()：按 "--plugin:<id>.<rest>" 的约定从全局命令行里
+    // 筛出属于这个插件的部分（剥掉前缀还原成 "--<rest>"），外加所有不带 "--plugin:" 前缀的全局参数。
+    // 单独使用 PluginPipeline（不经过 PluginSystem）时，m_argumentValues 默认空，除非调用方自己
+    // 用 setArgumentValues() 传值。
+    PluginContext ctx(m_argumentValues);
     if (!m_instance->initialize(ctx)) {
         m_lastError = QStringLiteral("IPlugin::initialize() 返回失败");
         handle(PluginEvent::Fail);

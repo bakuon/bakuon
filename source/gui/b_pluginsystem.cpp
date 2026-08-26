@@ -1,5 +1,9 @@
 #include "gui/b_pluginsystem.h"
 
+#include <algorithm>
+#include <deque>
+
+#include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QDirIterator>
 #include <QtCore/QLibrary>
@@ -58,6 +62,12 @@ QVector<size_t> PluginSystem::registerDirectory(const QString& directory, bool r
         }
     }
     return ids;
+}
+
+void PluginSystem::setCommandLineArguments(QStringList arguments)
+{
+    QWriteLocker locker(&m_lock);
+    m_commandLineArguments = std::move(arguments);
 }
 
 bool PluginSystem::unregisterPlugin(size_t id)
@@ -137,6 +147,12 @@ bool PluginSystem::launchAll()
 
 bool PluginSystem::runAll()
 {
+    // 顺序无关：扩展是在 initialize() 阶段注册完成的（IPlugin 的契约），runAll() 只在所有插件
+    // 都到达 Initialized 之后才会被调用——这意味着调用这里的任何一个 run() 之前，全体插件的扩展
+    // 都已经注册完毕。extensionsInitialized() 只负责"安全地使用"这些已经注册好的扩展，它本身不
+    // 注册任何东西，所以谁先谁后调用 extensionsInitialized() 不影响正确性，不需要拓扑排序。
+    // （需要依赖图精确顺序的只有 stopAll()/unloadAll()：shutdown() 阶段插件可能还要访问其他
+    // 插件的扩展做收尾工作，这时候顺序就重要了，见那两个函数。）
     const std::vector<size_t> ids = idSnapshot();
 
     bool allOk = true;
@@ -159,11 +175,13 @@ bool PluginSystem::startup()
 
 bool PluginSystem::stopAll()
 {
-    const std::vector<size_t> ids = idSnapshot();
+    // 依赖它的插件先停，被依赖的插件后停：A 依赖 B 时，A 的 shutdown() 可能还要访问 B
+    // 注册的扩展做收尾，B 这时候必须还活着。见类头部/头文件里对这个顺序问题的说明。
+    const std::vector<size_t> ids = reverseTopologicalOrder();
 
     bool allOk = true;
-    for (auto rit = ids.rbegin(); rit != ids.rend(); ++rit) {
-        auto p = pipeline(*rit);
+    for (size_t id : ids) {
+        auto p = pipeline(id);
         if (p && (p->state() == PluginState::Running || p->state() == PluginState::RunFailed)) {
             allOk = p->stop() && allOk;
         }
@@ -173,11 +191,12 @@ bool PluginSystem::stopAll()
 
 bool PluginSystem::unloadAll()
 {
-    const std::vector<size_t> ids = idSnapshot();
+    // 顺序同 stopAll()：依赖它的插件先卸载，被依赖的插件后卸载。
+    const std::vector<size_t> ids = reverseTopologicalOrder();
 
     bool allOk = true;
-    for (auto rit = ids.rbegin(); rit != ids.rend(); ++rit) {
-        auto p = pipeline(*rit);
+    for (size_t id : ids) {
+        auto p = pipeline(id);
         if (p && p->state() == PluginState::Stopped) {
             allOk = p->unload() && allOk;
             // unload()/unloadAll()不自动移除：卸载后可能还想查 pipeline(id)->lastError()/最终状态做诊断，
@@ -334,12 +353,20 @@ void PluginSystem::registerPipeline(size_t id, const std::shared_ptr<PluginPipel
     connect(pipeline.get(), &PluginPipeline::running, this, &PluginSystem::pluginRunning);
     connect(pipeline.get(), &PluginPipeline::failed, this, &PluginSystem::pluginFailed);
 
-    QWriteLocker locker(&m_lock);
-    m_entries.emplace(id, pipeline);
-    // 内置插件构造完 metadata 就已经知道了（状态直接是 Validated），趁写锁还在手上顺便登记进命名表；
-    // 动态库插件此时 metadata 还是空的，要等 onPipelineStateChanged() 在 Validated 时机再登记。
-    if (!pipeline->metadata().id.isEmpty()) {
-        m_namedEntries.emplace(pipeline->metadata().id, pipeline);
+    QString knownPluginId;
+    {
+        QWriteLocker locker(&m_lock);
+        m_entries.emplace(id, pipeline);
+        // 内置插件构造完 metadata 就已经知道了（状态直接是 Validated），趁写锁还在手上顺便登记进命名表；
+        // 动态库插件此时 metadata 还是空的，要等 onPipelineStateChanged() 在 Validated 时机再登记。
+        if (!pipeline->metadata().id.isEmpty()) {
+            m_namedEntries.emplace(pipeline->metadata().id, pipeline);
+            knownPluginId = pipeline->metadata().id;
+        }
+    } // 锁在此释放：argumentsFor() 自己会再加读锁，不能在还持有写锁时调用它。
+
+    if (!knownPluginId.isEmpty()) {
+        pipeline->setArgumentValues(argumentsFor(knownPluginId));
     }
 }
 
@@ -360,14 +387,22 @@ void PluginSystem::onPipelineStateChanged(size_t id, PluginState state)
         return;
     }
 
-    // 注意这里的抢锁
-    QWriteLocker locker(&m_lock);
-    auto it = m_namedEntries.find(pluginId);
-    if (it != m_namedEntries.end() && it->second != p) {
-        m_lastError = QStringLiteral("插件 id 冲突：\"%1\" 同时被多个动态库文件声明").arg(pluginId);
-        return;
+    bool conflict = false;
+    {
+        // 注意这里的抢锁
+        QWriteLocker locker(&m_lock);
+        auto it = m_namedEntries.find(pluginId);
+        if (it != m_namedEntries.end() && it->second != p) {
+            m_lastError = QStringLiteral("插件 id 冲突：\"%1\" 同时被多个动态库文件声明").arg(pluginId);
+            conflict    = true;
+        } else {
+            m_namedEntries.emplace(pluginId, p);
+        }
+    } // 锁在此释放，argumentsFor() 需要自己再加读锁
+
+    if (!conflict) {
+        p->setArgumentValues(argumentsFor(pluginId));
     }
-    m_namedEntries.emplace(pluginId, p);
 }
 
 std::optional<QString> PluginSystem::resolveDependency(const PluginMetadata& meta) const
@@ -427,6 +462,112 @@ bool PluginSystem::hasDependencyCycle(const QString& startId, QSet<QString>& vis
     visiting.remove(startId);
     visited.insert(startId);
     return false;
+}
+
+std::vector<size_t> PluginSystem::topologicalOrder() const
+{
+    QReadLocker locker(&m_lock);
+
+    // 邻接表：依赖 id -> 依赖它的插件 id 列表；入度：每个插件还有多少"已知"依赖没处理。
+    std::unordered_map<size_t, std::vector<size_t>> adjacency;
+    std::unordered_map<size_t, int> indegree;
+    indegree.reserve(m_entries.size());
+    for (const auto& entry : m_entries) {
+        indegree[entry.first] = 0;
+    }
+
+    for (const auto& entry : m_entries) {
+        const size_t id = entry.first;
+        for (const auto& dep : entry.second->metadata().dependencies) {
+            auto depIt = m_namedEntries.find(dep.id);
+            if (depIt == m_namedEntries.end() || depIt->second->id() == id) {
+                continue; // 依赖未知（尚未发现/校验过），或自依赖（正常已在 resolveDependency 里被拒绝），
+                          // 都不构成排序约束——不能因为一条不确定的边就把整个排序算法搞挂。
+            }
+            adjacency[depIt->second->id()].push_back(id);
+            indegree[id] += 1;
+        }
+    }
+
+    // 起点：所有没有（已知）依赖的插件。按 id 排序只是为了让结果确定、方便复现问题/写测试，
+    // 不影响正确性。
+    std::vector<size_t> ready;
+    for (const auto& entry : indegree) {
+        if (entry.second == 0) {
+            ready.push_back(entry.first);
+        }
+    }
+    std::sort(ready.begin(), ready.end());
+
+    std::vector<size_t> order;
+    order.reserve(m_entries.size());
+    std::deque<size_t> queue(ready.begin(), ready.end());
+
+    while (!queue.empty()) {
+        const size_t id = queue.front();
+        queue.pop_front();
+        order.push_back(id);
+
+        auto adjIt = adjacency.find(id);
+        if (adjIt == adjacency.end()) {
+            continue;
+        }
+        std::vector<size_t> nextReady;
+        for (size_t dependent : adjIt->second) {
+            if (--indegree[dependent] == 0) {
+                nextReady.push_back(dependent);
+            }
+        }
+        std::sort(nextReady.begin(), nextReady.end());
+        for (size_t nid : nextReady) {
+            queue.push_back(nid);
+        }
+    }
+
+    if (order.size() != m_entries.size()) {
+        // 正常不应该发生：Resolving 阶段的 hasDependencyCycle() 已经拦截过循环依赖。
+        // 万一还是走到这里（比如某个插件从未 launch() 过、依赖图信息不完整），把剩下的插件
+        // 按数字 id 顺序追加在末尾，保证返回列表仍然覆盖全部已注册插件，不静默丢插件。
+        qWarning() << "[PluginSystem] topologicalOrder(): 检测到未预期的循环依赖或孤立节点，"
+                   << (m_entries.size() - order.size()) << "个插件按 id 顺序追加在末尾";
+        std::vector<size_t> remaining;
+        remaining.reserve(m_entries.size() - order.size());
+        for (const auto& entry : m_entries) {
+            if (std::find(order.begin(), order.end(), entry.first) == order.end()) {
+                remaining.push_back(entry.first);
+            }
+        }
+        std::sort(remaining.begin(), remaining.end());
+        order.insert(order.end(), remaining.begin(), remaining.end());
+    }
+
+    return order;
+}
+
+std::vector<size_t> PluginSystem::reverseTopologicalOrder() const
+{
+    auto order = topologicalOrder();
+    std::reverse(order.begin(), order.end());
+    return order;
+}
+
+QStringList PluginSystem::argumentsFor(const QString& pluginId) const
+{
+    static const QString kScopedPrefix = QStringLiteral("--plugin:");
+    const QString myPrefix             = kScopedPrefix + pluginId + QStringLiteral(".");
+
+    QReadLocker locker(&m_lock);
+    QStringList result;
+    result.reserve(m_commandLineArguments.size());
+    for (const QString& arg : m_commandLineArguments) {
+        if (arg.startsWith(myPrefix)) {
+            result.push_back(QStringLiteral("--") + arg.mid(myPrefix.size()));
+        } else if (!arg.startsWith(kScopedPrefix)) {
+            result.push_back(arg); // 不带 "--plugin:" 前缀的一律视为全局参数，广播给每个插件
+        }
+        // else: 带 "--plugin:" 前缀但不是给"我"的，跳过——属于别的插件。
+    }
+    return result;
 }
 
 } // namespace bakuon::gui
