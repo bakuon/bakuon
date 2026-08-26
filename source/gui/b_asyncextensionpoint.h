@@ -183,7 +183,12 @@ public:
                 exec([ext, sharedHandler, done, pending, sharedPromise, defaultValue]() mutable {
                     try {
                         Result r = std::invoke(*sharedHandler, ext);
-                        if (r != defaultValue) {
+                        // 注意：这里必须和 Result{} 比较（"这个扩展有没有给出答案"），
+                        // 不能和 defaultValue 比较——defaultValue 是"全部扩展都没有答案时，
+                        // 返回给调用方的兜底值"，调用方完全可以把它设成跟 Result{} 不一样的值
+                        // （比如这里的 "NOT_FOUND"），两者是两个不同的概念，混在一起比较会导致
+                        // "扩展明明没给出答案（返回了 Result{}），却被误判成命中"。
+                        if (r != Result{}) {
                             bool expected = false;
                             if (done->compare_exchange_strong(expected, true)) {
                                 try {
@@ -249,7 +254,8 @@ private:
         exec([this, snapshot, idx, ext, sharedHandler, defaultValue, promise, exec]() mutable {
             try {
                 Result r = (*sharedHandler)(ext);
-                if (r != defaultValue) {
+                // 和 Result{} 比较，不能和 defaultValue 比较，见 tryAsync() FirstWins 分支的注释。
+                if (r != Result{}) {
                     try {
                         promise->set_value(std::move(r));
                     } catch (...) {

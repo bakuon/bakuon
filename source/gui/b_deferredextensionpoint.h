@@ -79,8 +79,14 @@ public:
         if (!factory)
             return false;
         std::unique_lock<std::shared_mutex> lock(m_mutex);
-        m_entries.push_back(
-            {std::move(factory), priority, m_orderCounter++, policy, nullptr, nullptr});
+        // cachedOnce 在这里（写锁保护下）就创建好，resolve() 才能放心地在只持有读锁、
+        // 甚至完全不持锁的情况下调用 std::call_once（见 resolve() 的注释）。
+        m_entries.push_back({std::move(factory),
+                             priority,
+                             m_orderCounter++,
+                             policy,
+                             nullptr,
+                             std::make_unique<std::once_flag>()});
         sortEntries();
         return true;
     }
@@ -106,7 +112,8 @@ public:
         entry.order      = m_orderCounter++;
         entry.policy     = extension::DeferredPolicy::Singleton;
         entry.cached     = extension; // 直接填充缓存
-        entry.cachedOnce = nullptr;
+        // 同样在写锁保护下预先创建好，见 registerFactory() 和 resolve() 的注释。
+        entry.cachedOnce = std::make_unique<std::once_flag>();
         m_entries.push_back(std::move(entry));
         sortEntries();
         return true;
@@ -181,9 +188,9 @@ public:
     /**
      * @brief 重写 tryExtensions：按优先级顺序，仅当真正要访问扩展时才实例化
      * @tparam Result 返回类型
-     * @param handler      回调，接收 const ExtensionPtr&（实例），返回 Result
-     * @param defaultValue 未命中时的默认值
-     * @todo 这个函数应该在父类中实现
+     * @param handler      回调，接收 const ExtensionPtr&（实例），返回 Result；
+     *                     返回 Result{} 表示这个扩展没有答案，继续下一个（未命中的 Transient 工厂不会被调用）
+     * @param defaultValue 全部扩展都没有答案时的兜底值（不要求等于 Result{}，见 IExtensionPoint::tryExtensions() 的说明）
      *
      * 注意：Transient 策略下，未命中的工厂不会被调用；命中的工厂在调用
      * handler 前被创建，handler 返回后该临时实例立即释放（除非 handler 自己
@@ -206,7 +213,7 @@ public:
             if (!inst)
                 continue;
             Result r = std::invoke(std::forward<Handler>(handler), inst);
-            if (r != defaultValue)
+            if (r != Result{})
                 return r;
         }
         return defaultValue;
@@ -224,8 +231,9 @@ public:
         for (auto& e : m_entries) {
             if (e.policy == extension::DeferredPolicy::Singleton) {
                 e.cached.reset();
-                // unique_ptr<std::once_flag> 可重置为新 once_flag 实例
-                e.cachedOnce.reset();
+                // 直接换一个新的 once_flag（仍在写锁保护下），不能 reset() 成 nullptr——
+                // 那样下次 resolve() 又会看到空指针，见 resolve() 里"绝不在这里懒加载"的注释。
+                e.cachedOnce = std::make_unique<std::once_flag>();
             }
         }
     }
@@ -310,14 +318,24 @@ private:
 
     /**
      * @brief 根据策略解析扩展实例（调用时必须持有 m_mutex 的读/写锁，
-     *        以保证 m_entries 生命周期稳定）
+     *        以保证 m_entries 生命周期稳定；但不要求持有任何锁来保护 e.cached/e.cachedOnce
+     *        本身的并发写入——那件事由 std::call_once 负责）
+     *
+     * @warning 这里绝不能对 e.cachedOnce 做"为空则创建"的懒加载：resolve() 会在只持有 shared_lock
+     *          （extensions()/instantiateAll()）、甚至完全不持锁（tryExtensions() 先拷贝快照、
+     *          释放锁之后才调用 resolve()）的情况下被多线程并发调用；对同一个 mutable 成员指针
+     *          做"检查为空再赋值"是未加保护的写，两个线程同时命中会产生数据竞争。之前这里确实
+     *          有这个 bug，已经通过让 registerFactory()/registerExtension()/clearCache() 三处
+     *          （都在 m_mutex 的写锁保护下）预先创建好 cachedOnce 来修复——resolve() 只管调用
+     *          std::call_once，不再自己创建 once_flag。
      */
     ExtensionPtr resolve(const Entry& e) const
     {
         if (e.policy == extension::DeferredPolicy::Singleton) {
-            if (!e.cachedOnce) {
-                e.cachedOnce = std::make_unique<std::once_flag>();
-            }
+            //!!! 不要在这里这么做
+            // if (!e.cachedOnce) {
+            //     e.cachedOnce = std::make_unique<std::once_flag>();
+            // }
             std::call_once(*e.cachedOnce, [&] {
                 if (!e.cached && e.factory) {
                     e.cached = e.factory();

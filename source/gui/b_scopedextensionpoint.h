@@ -196,11 +196,12 @@ public:
         }
         return out;
     }
+
     /**
      * @brief 指定作用域下的责任链查找
      * @param scope        当前上下文作用域
-     * @param handler      处理回调
-     * @param defaultValue 默认值
+     * @param handler      处理回调；返回 Result{} 表示这个扩展没有答案，继续下一个
+     * @param defaultValue 全部扩展都没有答案时的兜底值（不要求等于 Result{}，见 tryExtensions() 的说明）
      */
     template<typename Result, typename Handler>
     Result tryExtensionsIn(const Scope& scope, Handler&& handler, Result defaultValue = {}) const
@@ -208,7 +209,7 @@ public:
         const auto snapshot = extensionsIn(scope);
         for (const auto& ext : snapshot) {
             Result r = std::invoke(std::forward<Handler>(handler), ext);
-            if (r != defaultValue)
+            if (r != Result{})
                 return r;
         }
         return defaultValue;

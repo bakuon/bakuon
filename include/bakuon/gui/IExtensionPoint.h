@@ -220,10 +220,15 @@ public:
 
     /**
      * @brief 责任链式查找：依次尝试每个扩展，返回第一个"非默认值"的结果
-     * @tparam Result 处理结果类型
-     * @param handler       对每个扩展执行的回调；返回值不等于 defaultValue 即命中
-     * @param defaultValue  未命中时返回的默认值
+     * @tparam Result 处理结果类型，要求可默认构造 + 支持 operator!=
+     * @param handler       对每个扩展执行的回调；返回 Result{}（默认构造值）表示"这个扩展没有答案，继续下一个"
+     * @param defaultValue  全部扩展都没有答案时返回给调用方的兜底值，可以是任意值，
+     *                      不要求等于 Result{}
      * @return 第一个命中的结果，或 defaultValue
+     *
+     * @note "非默认值"指 "!= Result{}"，不是 "!= defaultValue"——这是两个不同的概念：
+     *       前者是"这个扩展有没有给出答案"的判定标准，后者是"全部扩展都没有答案时给调用方的兜底值"，
+     *       两者可以不相等（例如 defaultValue 传 "NOT_FOUND" 这种更有辨识度的哨兵）。
      *
      * 示例：
      * @code
@@ -242,7 +247,7 @@ public:
         const auto snapshot = this->extensions();
         for (const auto& ext : snapshot) {
             Result r = std::invoke(std::forward<Handler>(handler), ext);
-            if (r != defaultValue) {
+            if (r != Result{}) {
                 return r;
             }
         }
@@ -258,7 +263,7 @@ public:
         const auto snapshot = this->extensions();
         for (const auto& ext : snapshot) {
             Result r = std::invoke(std::forward<Handler>(handler), ext);
-            if (r != defaultValue) {
+            if (r != Result{}) {
                 return r;
             }
         }

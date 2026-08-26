@@ -242,6 +242,42 @@ TEST_F(LazyFactoryTest, SingletonFactory_InstantiatedOnce)
     EXPECT_EQ(counter.load(), 2); // 只多了一次 greet，没有再构造
 }
 
+TEST_F(LazyFactoryTest, SingletonFactory_ConcurrentFirstAccessCallsFactoryOnce)
+{
+    // 回归测试：resolve() 里 cachedOnce 曾经是"读锁下懒加载 unique_ptr<once_flag>"，
+    // 多线程第一次并发访问同一个尚未实例化的 Singleton 条目时是未加保护的写，是数据竞争。
+    // 现在 cachedOnce 在 registerFactory() 时（写锁下）就创建好了，resolve() 只调用
+    // std::call_once，不再自己创建 once_flag——这里用真正的多线程并发访问验证工厂确实只跑一次。
+    std::atomic<int> factoryCalls{0};
+    ep->registerFactory(
+        [&] {
+            ++factoryCalls;
+            return std::make_shared<LazyCounter>(&counter);
+        },
+        100,
+        extension::DeferredPolicy::Singleton);
+
+    constexpr int kThreads = 16;
+    std::vector<std::thread> threads;
+    std::vector<std::shared_ptr<IGreeter>> results(kThreads);
+    threads.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        threads.emplace_back([&, i] {
+            auto list  = ep->extensions(); // 第一次访问：所有线程几乎同时竞争 resolve()
+            results[i] = list.empty() ? nullptr : list[0];
+        });
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    EXPECT_EQ(factoryCalls.load(), 1) << "工厂应该只被调用一次，不管有多少线程并发第一次访问";
+    ASSERT_NE(results[0], nullptr);
+    for (int i = 1; i < kThreads; ++i) {
+        EXPECT_EQ(results[i], results[0]) << "所有线程应该拿到同一个 Singleton 实例";
+    }
+}
+
 TEST_F(LazyFactoryTest, NewInstanceFactory_CreatesEachTime)
 {
     ep->registerFactory([&] { return std::make_shared<LazyCounter>(&counter); },

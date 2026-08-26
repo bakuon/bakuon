@@ -1,5 +1,10 @@
 #include "gui/b_extensionsystem.h"
 
+// std::unique_lock / std::shared_lock —— <shared_mutex> 只保证 std::shared_mutex
+// 本身可用，不保证连带带进 std::unique_lock；MSVC 的实现凑巧传递包含了，
+// GCC/Clang 下必须显式 include，否则编译不过。
+#include <mutex>
+
 namespace bakuon::gui {
 
 bool ExtensionSystem::registerExtensionPoint(std::shared_ptr<ExtensionPointBase> point)
