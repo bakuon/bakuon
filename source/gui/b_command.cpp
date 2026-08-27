@@ -1,11 +1,11 @@
 #include "gui/b_command.h"
-#include "gui/b_commandmanager.h"
+#include "gui/b_contexttracker.h"
 
 namespace bakuon::gui {
 
-Command::Command(const CommandId& id, QString defaultText, CommandManager& mgr)
+Command::Command(const CommandId& id, QString defaultText, ContextTracker& tracker)
     : QObject(nullptr) // note: it is a std::unique_ptr<Command>
-    , m_mgr(mgr)
+    , m_tracker(tracker)
     , m_id(id)
     , m_defaultText(std::move(defaultText))
     , m_defaultCheckable(false)
@@ -20,27 +20,11 @@ Command::Command(const CommandId& id, QString defaultText, CommandManager& mgr)
 
     // 上下文集合一变化就重新仲裁权威绑定；每个 Command 独立订阅，
     // 不需要 CommandSystem 集中遍历全部命令做批量刷新。
-    connect(&m_mgr, &CommandManager::contextChanged, this, &Command::resyncAuthoritativeBinding);
+    connect(&m_tracker, &ContextTracker::contextChanged, this, &Command::resyncAuthoritativeBinding);
 }
 
 QAction* Command::action()
 {
-    // 不要惰性创建，否则注册时设置的默认快捷键无法起作用
-    // if (!m_proxyAction) {
-    //     m_proxyAction = new QAction(m_defaultText, this);
-    //     if (!m_defaultIcon.isNull()) {
-    //         m_proxyAction->setIcon(m_defaultIcon);
-    //     }
-    //     if (!m_defaultShortcuts.isEmpty()) {
-    //         m_proxyAction->setShortcuts(m_defaultShortcuts);
-    //     }
-    //     m_proxyAction->setCheckable(m_defaultCheckable);
-    //     if (m_attributes.testFlag(Attribute::UpdateEnabled)) {
-    //         // 初始无权威绑定，禁用；一旦有已激活上下文的绑定会立即刷新
-    //         m_proxyAction->setEnabled(false);
-    //     }
-    //     resyncAuthoritativeBinding();
-    // }
     return m_proxyAction;
 }
 
@@ -85,12 +69,12 @@ void Command::setDefaultShortcut(const QKeySequence& shortcut)
 
 QList<QKeySequence> Command::shortcuts() const
 {
-    return m_proxyAction ? m_proxyAction->shortcuts() : QList<QKeySequence>();
+    return m_proxyAction ? m_proxyAction->shortcuts() : QList<QKeySequence>{};
 }
 
 QKeySequence Command::shortcut() const
 {
-    return m_proxyAction ? m_proxyAction->shortcut() : QKeySequence();
+    return m_proxyAction ? m_proxyAction->shortcut() : QKeySequence{};
 }
 
 void Command::setShortcuts(const QList<QKeySequence>& shortcuts)
@@ -220,12 +204,12 @@ int Command::findAuthoritativeIndex() const
 
     for (int i = 0; i < static_cast<int>(m_bindings.size()); ++i) {
         const ContextBinding& binding = m_bindings[i];
-        if (binding.realAction.isNull() || !m_mgr.isActiveContext(binding.context)) {
+        if (binding.realAction.isNull() || !m_tracker.isActiveContext(binding.context)) {
             continue; // 只在"已注册且其上下文当前激活"的绑定里挑选
         }
 
-        const ContextTier tier = m_mgr.effectiveTier(binding.context);
-        const uint64_t order   = m_mgr.activationOrder(binding.context);
+        const ContextTier tier = m_tracker.effectiveTier(binding.context);
+        const uint64_t order   = m_tracker.activationOrder(binding.context);
 
         // 仲裁优先级：层级 > 优先级 > 时序，层级比较严格占先——
         // 即便某个候选的 priority/order 再高，只要层级更低就不可能胜出，

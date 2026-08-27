@@ -24,7 +24,8 @@ const CommandId kCmdC{"test.c"};
 
 TEST(CommandSystem, CommandLayout)
 {
-    CommandManager mgr;
+    ContextTracker tracker;
+    CommandManager mgr(tracker);
     mgr.registerCommand(kCmdA, QStringLiteral("命令A"));
     mgr.registerCommand(kCmdB, QStringLiteral("命令B"));
     mgr.registerCommand(kCmdC, QStringLiteral("命令C"));
@@ -133,7 +134,8 @@ TEST(CommandSystem, CommandModel)
 
 TEST(CommandSystem, CommandContext)
 {
-    CommandManager mgr;
+    ContextTracker tracker;
+    CommandManager mgr(tracker);
 
     // addContextAction 在上下文"已经激活"之后才调用，
     // 且 action() 是"之后才第一次被创建"——这个时序曾经导致转发连接
@@ -142,8 +144,8 @@ TEST(CommandSystem, CommandContext)
         const ContextId ctxAlreadyActive{"regression.alreadyActive"};
         const void* regressionSource = &ctxAlreadyActive; // 任意一个稳定地址即可
 
-        mgr.pushContext(ctxAlreadyActive, regressionSource);
-        EXPECT_TRUE(mgr.isActiveContext(ctxAlreadyActive)) << "上下文已提前激活";
+        tracker.pushContext(ctxAlreadyActive, regressionSource);
+        EXPECT_TRUE(tracker.isActiveContext(ctxAlreadyActive)) << "上下文已提前激活";
 
         auto& regressionCmd = mgr.registerCommand(CommandId{"regression.cmd1"},
                                                   QStringLiteral("命令1"));
@@ -164,7 +166,7 @@ TEST(CommandSystem, CommandContext)
         proxy->trigger(); // 模拟用户点击代理
         EXPECT_TRUE(realTriggered) << "点击代理未能如实转发触发真实动作";
 
-        mgr.popContext(ctxAlreadyActive, regressionSource);
+        tracker.popContext(ctxAlreadyActive, regressionSource);
     }
 
     // 验证同时绑定新旧两个上下文的 Command，在旧上下文尚未失活前就已经正确切换到
@@ -182,21 +184,21 @@ TEST(CommandSystem, CommandContext)
         regressionCmd2.addContextAction(realOld, ctxOld);
         regressionCmd2.addContextAction(realNew, ctxNew);
 
-        mgr.pushContext(ctxOld, widgetOld); // 模拟旧编辑器已获得焦点
+        tracker.pushContext(ctxOld, widgetOld); // 模拟旧编辑器已获得焦点
         QAction* proxy2 = regressionCmd2.action();
         EXPECT_TRUE(proxy2->text() == realOld->text()) << "初始状态代理未能正常镜像旧编辑器的动作";
 
         // 先 push 新的……
-        mgr.pushContext(ctxNew, widgetNew);
+        tracker.pushContext(ctxNew, widgetNew);
         EXPECT_TRUE(proxy2->text() == realNew->text())
             << "push 新上下文后（旧的还未 pop），代理未能切换到新编辑器的动作";
         // ……再 pop 旧的
-        mgr.popContext(ctxOld, widgetOld);
+        tracker.popContext(ctxOld, widgetOld);
         EXPECT_TRUE(proxy2->text() == realNew->text())
             << "pop 旧上下文后代理未能正确停留在新编辑器的动作";
         EXPECT_TRUE(proxy2->isEnabled()) << "全程代理都应保持 enabled（不应出现中间的无权威源态）";
 
-        mgr.popContext(ctxNew, widgetNew);
+        tracker.popContext(ctxNew, widgetNew);
     }
 }
 
@@ -217,9 +219,9 @@ inline ContextId widgetContext(const QObject* widget)
 class FocusContextWatcher final : public QObject
 {
 public:
-    explicit FocusContextWatcher(CommandManager& manager, QObject* parent = nullptr)
+    explicit FocusContextWatcher(ContextTracker& tracker, QObject* parent = nullptr)
         : QObject(parent)
-        , m_cmdManager(manager)
+        , m_ctxTracker(tracker)
     {
     }
 
@@ -256,10 +258,10 @@ protected:
         const ContextId oldContext = m_focusedContext;
 
         if (providerWidget) {
-            m_cmdManager.pushContext(foundContext, providerWidget);
+            m_ctxTracker.pushContext(foundContext, providerWidget);
         }
         if (oldWidget) {
-            m_cmdManager.popContext(oldContext, oldWidget);
+            m_ctxTracker.popContext(oldContext, oldWidget);
         }
 
         m_focusedProviderWidget = providerWidget; // 为 nullptr 表示焦点完全离开了所有已标记部件
@@ -269,7 +271,7 @@ protected:
     }
 
 private:
-    CommandManager& m_cmdManager;
+    ContextTracker& m_ctxTracker;
     // 当前因焦点而处于激活状态的 (widget, context)，焦点转移时用于精确 pop 掉旧的引用
     QPointer<QWidget> m_focusedProviderWidget;
     ContextId m_focusedContext;
@@ -285,11 +287,11 @@ TEST(CommandSystem, ContextFocus)
     //       是实际压垮过这个修复第一版的场景）；
     //   (2) focusPolicy() == Qt::NoFocus 的 QWidget（典型如 QMainWindow 自身），
     //       用下面的合成事件直接、确定性地复现。
-    CommandManager mgr;
+    ContextTracker ctxTracker;
 
     const ContextId ctxProvider{"regression.nofocusguard.provider"};
 
-    auto* watcher = new FocusContextWatcher(mgr, QApplication::instance());
+    auto* watcher = new FocusContextWatcher(ctxTracker, QApplication::instance());
     QApplication::instance()->installEventFilter(watcher);
 
     // 用一个顶层容器窗口承载两个子部件——在 offscreen 平台下，孤立的顶层
@@ -309,7 +311,7 @@ TEST(CommandSystem, ContextFocus)
 
     providerWidget->setFocus(Qt::MouseFocusReason); // 真实的焦点转移：应当 push ctxProvider
     QCoreApplication::processEvents();
-    EXPECT_TRUE(mgr.isActiveContext(ctxProvider)) << "获得焦点后上下文未能正确激活";
+    EXPECT_TRUE(ctxTracker.isActiveContext(ctxProvider)) << "获得焦点后上下文未能正确激活";
 
     // 直接向 adminWidget 发送一个合成的 FocusIn——模拟 Qt 内部补发的噪声事件，
     // 不经过真正的 setFocus() 流程（那样对一个 NoFocus 部件通常也不会生效），
@@ -317,11 +319,11 @@ TEST(CommandSystem, ContextFocus)
     QFocusEvent noiseEvent(QEvent::FocusIn, Qt::ActiveWindowFocusReason);
     QCoreApplication::sendEvent(adminWidget, &noiseEvent);
 
-    EXPECT_TRUE(mgr.isActiveContext(ctxProvider))
+    EXPECT_TRUE(ctxTracker.isActiveContext(ctxProvider))
         << "NoFocus 部件的噪声 FocusIn 不应把刚激活的上下文 pop 掉";
 
     QApplication::instance()->removeEventFilter(watcher);
-    mgr.releaseContext(providerWidget);
+    ctxTracker.releaseContext(providerWidget);
     delete container;
     delete watcher;
 }

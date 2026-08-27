@@ -6,6 +6,7 @@
 #include "gui/b_commandlayout.h"
 #include "gui/b_commandmanager.h"
 #include "gui/b_context.h"
+#include "gui/b_contexttracker.h"
 #include "gui/b_shortcutmanager.h"
 #include "gui/b_types.h"
 
@@ -70,10 +71,10 @@ public:
     /// 命令上下文注册表
 
     // 显式登记一个上下文 id（owner 必填，通常传入模块/插件的唯一标识），
-    // 详细的冲突判定规则见 CommandManager::registerContext() 的注释。
+    // 详细的冲突判定规则见 ContextTracker::registerContext() 的注释。
     static bool registerContext(const ContextId& id, const QString& owner,
                                 const QString& description);
-    static std::optional<CommandManager::ContextInfo> contextInfo(const ContextId& id);
+    static std::optional<ContextTracker::ContextInfo> contextInfo(const ContextId& id);
     static std::vector<ContextId> registeredContexts();
     /**
      * declareContext：注册 + 取得 ContextId 的一步到位版本，专为"模块级常量

@@ -3,6 +3,8 @@
 #include <QtCore/QFile>
 #include <QtCore/QJsonDocument>
 
+#include "gui/b_contexttracker.h"
+
 namespace bakuon::gui {
 
 namespace {
@@ -16,11 +18,13 @@ class CommandSystemPrivate
 {
 public:
     CommandSystemPrivate()
-        : cmdManager()
+        : ctxTracker()
+        , cmdManager(ctxTracker)
         , shortcutManager(cmdManager)
     {
     }
 
+    ContextTracker ctxTracker;
     CommandManager cmdManager;
     ShortcutManager shortcutManager;
 };
@@ -139,55 +143,55 @@ bool CommandSystem::loadLayout(const QString& path)
 bool CommandSystem::registerContext(const ContextId& id, const QString& owner,
                                     const QString& description)
 {
-    return get().cmdManager.registerContext(id, owner, description);
+    return get().ctxTracker.registerContext(id, owner, description);
 }
 
-std::optional<CommandManager::ContextInfo> CommandSystem::contextInfo(const ContextId& id)
+std::optional<ContextTracker::ContextInfo> CommandSystem::contextInfo(const ContextId& id)
 {
-    return get().cmdManager.contextInfo(id);
+    return get().ctxTracker.contextInfo(id);
 }
 
 std::vector<ContextId> CommandSystem::registeredContexts()
 {
-    return get().cmdManager.registeredContexts();
+    return get().ctxTracker.registeredContexts();
 }
 
 ContextId CommandSystem::declareContext(const QString& idString, const QString& owner,
                                         const QString& description)
 {
     ContextId id{idString};
-    get().cmdManager.registerContext(id, owner, description);
+    get().ctxTracker.registerContext(id, owner, description);
     return id;
 }
 
 void CommandSystem::pushContext(const ContextId& context, const void* source, ContextTier tier)
 {
-    get().cmdManager.pushContext(context, source, tier);
+    get().ctxTracker.pushContext(context, source, tier);
 }
 
 void CommandSystem::popContext(const ContextId& context, const void* source, ContextTier tier)
 {
-    get().cmdManager.popContext(context, source, tier);
+    get().ctxTracker.popContext(context, source, tier);
 }
 
 void CommandSystem::releaseContext(const void* source)
 {
-    get().cmdManager.releaseContext(source);
+    get().ctxTracker.releaseContext(source);
 }
 
 std::unordered_set<ContextId> CommandSystem::activeContexts()
 {
-    return get().cmdManager.activeContexts();
+    return get().ctxTracker.activeContexts();
 }
 
 bool CommandSystem::isActiveContext(const ContextId& context) noexcept
 {
-    return get().cmdManager.isActiveContext(context);
+    return get().ctxTracker.isActiveContext(context);
 }
 
 uint64_t CommandSystem::activationOrder(const ContextId& context) noexcept
 {
-    return get().cmdManager.activationOrder(context);
+    return get().ctxTracker.activationOrder(context);
 }
 
 void CommandSystem::setProviderContexts(QObject* widget, const Context& context)

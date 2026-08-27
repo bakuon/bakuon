@@ -11,51 +11,11 @@
 
 namespace bakuon::gui {
 
-// C++20 concepts：约束"可作为命令执行体"的可调用对象——必须无参可调用且返回 void
-template<typename F>
-concept ExecuteCallable = std::invocable<F> && std::same_as<std::invoke_result_t<F>, void>;
-
-// 约束："可作为可执行性判定"的可调用对象——无参可调用且返回值可转换为 bool
-template<typename F>
-concept PredicateCallable = std::invocable<F> && std::convertible_to<std::invoke_result_t<F>, bool>;
-
-// CommandSlot: 某个 Command 在某个 ContextId 下的具体响应行为绑定。
-// 三个字段互相独立，使同一个 execute 逻辑可以搭配不同的可执行性判断与撤销逻辑复用。
-struct CommandSlot
-{
-    std::function<void()> execute;    // 必需：命令被触发时执行的动作
-    std::function<bool()> canExecute; // 可选：为空则视为恒可执行
-    std::function<void()> undo;       // 可选：为空表示该 handler 不支持撤销
-
-    [[nodiscard]] bool isValid() const noexcept { return static_cast<bool>(execute); }
-    [[nodiscard]] bool supportsUndo() const noexcept { return static_cast<bool>(undo); }
-
-    // 便捷工厂函数：约束参数类型必须满足对应 concept，编译期即可发现类型不匹配的绑定错误
-    template<ExecuteCallable Exec>
-    static CommandSlot make(Exec&& exec)
-    {
-        return CommandSlot{.execute = std::forward<Exec>(exec), .canExecute = {}, .undo = {}};
-    }
-
-    template<ExecuteCallable Exec, PredicateCallable Pred>
-    static CommandSlot make(Exec&& exec, Pred&& pred)
-    {
-        return CommandSlot{.execute    = std::forward<Exec>(exec),
-                           .canExecute = std::forward<Pred>(pred),
-                           .undo       = {}};
-    }
-};
-
-class CommandManager;
+class ContextTracker;
 
 /**
  * @brief Command：一个“命令”的逻辑身份（例如“删除”“旋转”“另存为”）。
  *
- * 关键设计：一个 Command 可以在多个上下文（ContextId）中分别绑定不同的
- * CommandSlot（响应行为），并且可以在多处 UI（菜单 / 工具栏 / 右键菜单）
- * 各自创建独立的 QAction 实例——这些 QAction 共享同一份命令语义（文本、图标、快捷键），
- * 但每个实例的 enabled 状态由其所属上下文当前是否激活、以及该上下文对应
- * CommandSlot::canExecute() 共同决定，由 ContextManager 的状态变化驱动自动刷新。
  */
 class Command : public QObject
 {
@@ -79,7 +39,7 @@ public:
     };
     Q_DECLARE_FLAGS(Attributes, Attribute)
 
-    Command(const CommandId& id, QString defaultText, CommandManager& mgr);
+    Command(const CommandId& id, QString defaultText, ContextTracker& tracker);
 
     const CommandId& id() const noexcept { return m_id; }
 
@@ -128,11 +88,11 @@ public:
 private:
     int findAuthoritativeIndex() const;
 
-    // 根据 CommandManager 的上下文管理当前激活集合重新计算"权威绑定"，如发生变化则：
+    // 根据 ContextTracker 的上下文管理当前激活集合重新计算"权威绑定"，如发生变化则：
     //  1) 断开旧的 proxy -> 旧权威 realAction 转发连接
     //  2) 按 Attributes 策略同步代理的可见性/禁用状态与展示属性
     //  3) 若有新权威源，建立 proxy -> 新权威 realAction 的转发连接
-    // 订阅 CommandManager::contextChanged 后自动调用；addContextAction /
+    // 订阅 ContextTracker::contextChanged 后自动调用；addContextAction /
     // removeContextAction / realAction 销毁时也会主动调用一次。
     void resyncAuthoritativeBinding();
 
@@ -148,7 +108,7 @@ private:
         QMetaObject::Connection destroyedConn;
     };
 
-    CommandManager& m_mgr;
+    ContextTracker& m_tracker;
     CommandId m_id;
     QString m_defaultText;
     QIcon m_defaultIcon;

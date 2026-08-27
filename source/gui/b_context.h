@@ -10,11 +10,6 @@
 
 namespace bakuon::gui {
 
-struct ContextHelp
-{
-    // TODO: IMPLEMENT ME
-};
-
 class Context
 {
 public:
