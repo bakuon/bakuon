@@ -12,8 +12,6 @@
 
 namespace bakuon::gui {
 
-class ContextTracker;
-
 /**
  * CommandManager (命令目录/行为)
  *         │  查询
@@ -32,7 +30,7 @@ class CommandManager : public QObject
 {
     Q_OBJECT
 public:
-    explicit CommandManager(ContextTracker& tracker, QObject* parent = nullptr);
+    explicit CommandManager(IContextArbiter& arbiter, QObject* parent = nullptr);
     ~CommandManager() override = default;
 
     // 注册一个新命令；若 id 已存在则直接返回已有实例（幂等），不会用新的 text 覆盖旧配置
@@ -43,6 +41,18 @@ public:
     // 枚举全部已注册命令，例如用于生成"自定义快捷键"设置面板
     std::vector<Command*> allCommands() const;
     std::vector<CommandId> allCommandIds() const;
+
+    /**
+     * @brief 对全部已注册命令统一触发一次重新仲裁。
+     *
+     * CommandManager 本身不认识具体的 ContextTracker 类型、也不 connect 它的
+     * contextChanged 信号——上下文集合何时变化由持有具体 ContextTracker 的上层
+     * （通常是 CommandSystem）感知，感知到之后调用这个方法即可，不需要自己遍历
+     * allCommands() 逐个调 Command::resyncAuthoritativeBinding()。
+     * 这样 CommandManager 的单元测试可以用一个最小假 IContextArbiter 实现构造，
+     * 不需要依赖真正的 ContextTracker/QObject 信号机制。
+     */
+    void resyncAllCommands();
 
     /// Command Layout Render 布局渲染
 
@@ -67,7 +77,7 @@ public:
     void renderToolBar(CommandLayout::Item* parent, QToolBar* toolbar) const;
 
 private:
-    ContextTracker& m_ctxTracker;
+    IContextArbiter& m_arbiter;
 
     // 默认菜单栏/工具栏布局
     std::unique_ptr<CommandLayout> m_menubarLayout;

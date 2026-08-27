@@ -1,11 +1,10 @@
 #include "gui/b_commandmanager.h"
-#include "gui/b_contexttracker.h"
 
 namespace bakuon::gui {
 
-CommandManager::CommandManager(ContextTracker& tracker, QObject* parent)
+CommandManager::CommandManager(IContextArbiter& arbiter, QObject* parent)
     : QObject(parent)
-    , m_ctxTracker(tracker)
+    , m_arbiter(arbiter)
     , m_menubarLayout(std::make_unique<CommandLayout>())
     , m_toolbarLayout(std::make_unique<CommandLayout>())
 {
@@ -16,7 +15,7 @@ Command& CommandManager::registerCommand(const CommandId& id, const QString& tex
     if (auto it = m_commands.find(id); it != m_commands.end()) {
         return *it->second;
     }
-    auto command = std::make_unique<Command>(id, text, m_ctxTracker);
+    auto command = std::make_unique<Command>(id, text, m_arbiter);
     Command& ref = *command;
     m_commands.emplace(id, std::move(command));
     return ref;
@@ -54,6 +53,13 @@ std::vector<CommandId> CommandManager::allCommandIds() const
         result.push_back(id);
     }
     return result;
+}
+
+void CommandManager::resyncAllCommands()
+{
+    for (auto& [_, command] : m_commands) {
+        command->resyncAuthoritativeBinding();
+    }
 }
 
 CommandLayout* CommandManager::menubarLayout() const

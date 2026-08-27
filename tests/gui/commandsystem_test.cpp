@@ -20,7 +20,88 @@ namespace {
 const CommandId kCmdA{"test.a"};
 const CommandId kCmdB{"test.b"};
 const CommandId kCmdC{"test.c"};
+
+/**
+ * @brief 最小可用的 IContextArbiter 假实现，用于单元测试 Command/CommandManager。
+ *
+ * 不依赖 QObject 信号、不维护任何 tier/激活时序状态——测试直接摆布 winningIndex
+ * 来模拟"仲裁结果变了"，配合 Command::resyncAuthoritativeBinding()（现在是公开方法）
+ * 手动触发重新计算，完全不需要构造一个功能齐全的 ContextTracker。
+ * 这正是本次重构（Command 只依赖 IContextArbiter，不认识具体的 ContextTracker 类型）
+ * 想要达成的效果。
+ */
+class FakeArbiter : public IContextArbiter
+{
+public:
+    [[nodiscard]] int resolveAuthoritative(const std::vector<Candidate>& candidates) const override
+    {
+        if (winningIndex < 0 || winningIndex >= static_cast<int>(candidates.size())) {
+            return -1;
+        }
+        return winningIndex;
+    }
+
+    int winningIndex = -1; // -1 表示"没有任何候选胜出"
+};
+
 } // namespace
+
+TEST(CommandIsolated, ResyncUsesArbiterResultWithoutRealContextTracker)
+{
+    FakeArbiter arbiter;
+    Command cmd(CommandId{"isolated.cmd"}, QStringLiteral("默认文案"), arbiter);
+
+    auto* realA = new QAction(QStringLiteral("动作A"), QApplication::instance());
+    auto* realB = new QAction(QStringLiteral("动作B"), QApplication::instance());
+    cmd.addContextAction(realA, ContextId{"ctx.a"});
+    cmd.addContextAction(realB, ContextId{"ctx.b"});
+
+    // 一开始假仲裁器谁都不选：代理应该处于"无权威源"状态。
+    QAction* proxy = cmd.action();
+    EXPECT_FALSE(proxy->isEnabled()) << "假仲裁器没有选出任何候选时，代理应该保持禁用";
+
+    // 手动摆布仲裁结果为下标 0（对应 realA），再手动触发重新仲裁——
+    // 完全不需要任何 ContextTracker/Qt 信号，直接验证 Command 是否忠实执行了仲裁结果。
+    arbiter.winningIndex = 0;
+    cmd.resyncAuthoritativeBinding();
+    EXPECT_EQ(proxy->text(), realA->text());
+    EXPECT_TRUE(proxy->isEnabled());
+
+    // 切换到下标 1（对应 realB）。
+    arbiter.winningIndex = 1;
+    cmd.resyncAuthoritativeBinding();
+    EXPECT_EQ(proxy->text(), realB->text());
+
+    // 触发点击应该转发到当前权威 realAction（realB），而不是 realA。
+    bool aTriggered = false;
+    bool bTriggered = false;
+    QObject::connect(realA, &QAction::triggered, [&] { aTriggered = true; });
+    QObject::connect(realB, &QAction::triggered, [&] { bTriggered = true; });
+    proxy->trigger();
+    EXPECT_FALSE(aTriggered);
+    EXPECT_TRUE(bTriggered);
+}
+
+TEST(CommandManagerIsolated, ResyncAllCommandsWorksWithoutRealContextTracker)
+{
+    FakeArbiter arbiter;
+    CommandManager mgr(arbiter);
+
+    auto& cmd  = mgr.registerCommand(CommandId{"isolated.mgr.cmd"}, QStringLiteral("默认文案"));
+    auto* real = new QAction(QStringLiteral("真实动作"), QApplication::instance());
+    cmd.addContextAction(real, ContextId{"ctx.only"});
+
+    QAction* proxy = cmd.action();
+    EXPECT_FALSE(proxy->isEnabled());
+
+    arbiter.winningIndex = 0;
+    // 通过 CommandManager 的批量入口触发，而不是直接调 Command 自己的方法——
+    // 验证 CommandManager 摆脱 ContextTracker 依赖之后，resyncAllCommands() 依然
+    // 能正确驱动它名下的每一个 Command。
+    mgr.resyncAllCommands();
+    EXPECT_EQ(proxy->text(), real->text());
+    EXPECT_TRUE(proxy->isEnabled());
+}
 
 TEST(CommandSystem, CommandLayout)
 {
@@ -136,6 +217,15 @@ TEST(CommandSystem, CommandContext)
 {
     ContextTracker tracker;
     CommandManager mgr(tracker);
+    // Command/CommandManager 不再自己认识具体的 ContextTracker 类型、也不会替你 connect
+    // 它的 contextChanged 信号（见 b_command.h/b_commandmanager.h 的重构说明）——这里是
+    // 直接手搭 ContextTracker+CommandManager（不经过 CommandSystem 门面）的测试，
+    // 所以要像 CommandSystemPrivate 的构造函数一样，自己补上这一行装配连线，
+    // 否则 pushContext()/popContext() 不会触发任何命令重新仲裁。
+    QObject::connect(&tracker,
+                     &ContextTracker::contextChanged,
+                     &mgr,
+                     &CommandManager::resyncAllCommands);
 
     // addContextAction 在上下文"已经激活"之后才调用，
     // 且 action() 是"之后才第一次被创建"——这个时序曾经导致转发连接
@@ -156,10 +246,8 @@ TEST(CommandSystem, CommandContext)
                          QApplication::instance(),
                          [&realTriggered]() { realTriggered = true; });
 
-        // 关键：先注册绑定（此时上下文已激活，但代理还不存在）
+        // 关键：先注册绑定（此时上下文已激活）
         regressionCmd.addContextAction(realAction, ctxAlreadyActive);
-        // ……过一会儿才第一次创建代理（模拟"这条命令一直没被拖进任何菜单，直到
-        // 自定义对话框第一次读取它的显示文本才触发 proxyAction() 创建"）
         QAction* proxy = regressionCmd.action();
 
         EXPECT_TRUE(proxy->isEnabled()) << "代理创建后未能正确镜像出已激活上下文的 enabled 状态";

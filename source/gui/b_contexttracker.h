@@ -11,7 +11,7 @@ namespace bakuon::gui {
 /**
  * @brief 上下文激活仲裁/协调 Coordinator
  */
-class ContextTracker : public QObject
+class ContextTracker : public QObject, public IContextArbiter
 {
     Q_OBJECT
 public:
@@ -70,6 +70,15 @@ public:
     // 最近一次被 Foreground 层级 push 时记录下的全局递增序号；
     // 从未被 Foreground 激活过，或当前未激活，则返回 0。
     uint64_t activationOrder(const ContextId& context) const noexcept;
+
+    /**
+     * @brief IContextArbiter 的实现：仲裁规则见该接口的文档。
+     * 具体规则（与之前 Command::findAuthoritativeIndex() 完全一致，只是搬了个家）：
+     * 层级 > 优先级 > 激活时序，层级比较严格占先——即便某个候选的 priority/激活时序
+     * 再高，只要层级更低就不可能胜出，这正是防止"后台任务反复刷新时序、压过真正的
+     * 交互上下文"的关键（见 ContextTier 的文档）。
+     */
+    [[nodiscard]] int resolveAuthoritative(const std::vector<Candidate>& candidates) const override;
 
 signals:
     // 激活集合发生变化（有上下文从"无引用"变为"有引用"，或反之）时发出

@@ -1,11 +1,10 @@
 #include "gui/b_command.h"
-#include "gui/b_contexttracker.h"
 
 namespace bakuon::gui {
 
-Command::Command(const CommandId& id, QString defaultText, ContextTracker& tracker)
+Command::Command(const CommandId& id, QString defaultText, IContextArbiter& arbiter)
     : QObject(nullptr) // note: it is a std::unique_ptr<Command>
-    , m_tracker(tracker)
+    , m_arbiter(arbiter)
     , m_id(id)
     , m_defaultText(std::move(defaultText))
     , m_defaultCheckable(false)
@@ -18,9 +17,11 @@ Command::Command(const CommandId& id, QString defaultText, ContextTracker& track
     m_attributes = Attribute::UpdateText | Attribute::UpdateIcon | Attribute::UpdateToolTip
                    | Attribute::UpdateChecked | Attribute::UpdateEnabled;
 
-    // 上下文集合一变化就重新仲裁权威绑定；每个 Command 独立订阅，
-    // 不需要 CommandSystem 集中遍历全部命令做批量刷新。
-    connect(&m_tracker, &ContextTracker::contextChanged, this, &Command::resyncAuthoritativeBinding);
+    // 注意：这里不再自己 connect 具体 ContextTracker::contextChanged 信号——
+    // Command 现在只认识 IContextArbiter 这个纯接口，不知道"谁在什么时候通知我
+    // 上下文变了"。上下文集合何时变化、要不要触发 resyncAuthoritativeBinding()，
+    // 交给持有具体 ContextTracker 的上层（CommandManager/CommandSystem）在
+    // 装配阶段自行 connect，见 resyncAuthoritativeBinding() 的文档注释。
 }
 
 QAction* Command::action()
@@ -183,47 +184,28 @@ bool Command::hasContextAction(const ContextId& context) const noexcept
     });
 }
 
-std::vector<ContextId> Command::contexts() const
+std::vector<Candidate> Command::contexts() const
 {
-    std::vector<ContextId> result;
-    const auto size = m_bindings.size();
-    result.reserve(size);
-    for (size_t i = 0; i < size; ++i) {
-        const ContextBinding& binding = m_bindings[i];
-        result.push_back(binding.context);
+    std::vector<Candidate> candidates;
+    candidates.reserve(m_bindings.size());
+    for (const auto& binding : m_bindings) {
+        candidates.push_back({binding.context, binding.priority});
     }
-    return result;
+    return candidates;
 }
 
 int Command::findAuthoritativeIndex() const
 {
-    ContextTier bestTier = ContextTier::Foreground; // 会被第一个候选无条件覆盖，初值不重要
-    int bestIndex        = -1;
-    int bestPriority     = std::numeric_limits<int>::min();
-    uint64_t bestOrder   = 0;
-
-    for (int i = 0; i < static_cast<int>(m_bindings.size()); ++i) {
-        const ContextBinding& binding = m_bindings[i];
-        if (binding.realAction.isNull() || !m_tracker.isActiveContext(binding.context)) {
-            continue; // 只在"已注册且其上下文当前激活"的绑定里挑选
-        }
-
-        const ContextTier tier = m_tracker.effectiveTier(binding.context);
-        const uint64_t order   = m_tracker.activationOrder(binding.context);
-
-        // 仲裁优先级：层级 > 优先级 > 时序，层级比较严格占先——
-        // 即便某个候选的 priority/order 再高，只要层级更低就不可能胜出，
-        // 这正是防止"后台任务反复刷新时序、压过真正的交互上下文"的关键。
-        if (bestIndex < 0 || tier > bestTier
-            || (tier == bestTier && binding.priority > bestPriority)
-            || (tier == bestTier && binding.priority == bestPriority && order > bestOrder)) {
-            bestIndex    = i;
-            bestTier     = tier;
-            bestPriority = binding.priority;
-            bestOrder    = order;
-        }
+    // 仲裁规则本身已经搬进 IContextArbiter::resolveAuthoritative()（通常由 ContextTracker
+    // 实现），这里只负责把 m_bindings 转换成候选列表——调用者（resyncAuthoritativeBinding）
+    // 已经在此之前 erase_if 过 realAction 为空的绑定，所以这里 candidates 和 m_bindings
+    // 是严格一一对应的，返回下标可以直接用来索引 m_bindings，不需要额外的映射表。
+    std::vector<Candidate> candidates;
+    candidates.reserve(m_bindings.size());
+    for (const auto& binding : m_bindings) {
+        candidates.push_back({binding.context, binding.priority});
     }
-    return bestIndex;
+    return m_arbiter.resolveAuthoritative(candidates);
 }
 
 void Command::resyncAuthoritativeBinding()

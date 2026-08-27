@@ -11,8 +11,6 @@
 
 namespace bakuon::gui {
 
-class ContextTracker;
-
 /**
  * @brief Command：一个“命令”的逻辑身份（例如“删除”“旋转”“另存为”）。
  *
@@ -39,7 +37,7 @@ public:
     };
     Q_DECLARE_FLAGS(Attributes, Attribute)
 
-    Command(const CommandId& id, QString defaultText, ContextTracker& tracker);
+    Command(const CommandId& id, QString defaultText, IContextArbiter& arbiter);
 
     const CommandId& id() const noexcept { return m_id; }
 
@@ -83,19 +81,24 @@ public:
     void addContextAction(QAction* action, const ContextId& context, int priority = 0);
     void removeContextAction(const ContextId& context);
     bool hasContextAction(const ContextId& context) const noexcept;
-    std::vector<ContextId> contexts() const;
+    std::vector<Candidate> contexts() const;
 
-private:
-    int findAuthoritativeIndex() const;
-
-    // 根据 ContextTracker 的上下文管理当前激活集合重新计算"权威绑定"，如发生变化则：
+    // 根据 IContextArbiter 仲裁结果重新计算"权威绑定"，如发生变化则：
     //  1) 断开旧的 proxy -> 旧权威 realAction 转发连接
     //  2) 按 Attributes 策略同步代理的可见性/禁用状态与展示属性
     //  3) 若有新权威源，建立 proxy -> 新权威 realAction 的转发连接
-    // 订阅 ContextTracker::contextChanged 后自动调用；addContextAction /
-    // removeContextAction / realAction 销毁时也会主动调用一次。
+    //
+    // 公开方法（不是内部私有槽）：Command 不再自己认识 ContextTracker 这个具体类型、
+    // 也不在构造函数里 connect 它的 contextChanged 信号——上下文集合何时发生变化、
+    // 要不要触发重新仲裁，交给持有具体 ContextTracker 的上层（通常是 CommandManager
+    // 或更上层的 CommandSystem）在装配阶段自行 connect 到这个方法。这样 Command 的
+    // 单元测试可以用一个不依赖 QObject 信号的最小假 IContextArbiter 实现，构造 Command
+    // 后手动调用这个方法模拟"上下文变了"，不需要真的驱动一个 ContextTracker。
+    // addContextAction/removeContextAction/realAction 销毁时也会主动调用一次。
     void resyncAuthoritativeBinding();
 
+private:
+    int findAuthoritativeIndex() const;
     void mirrorProperties(const QAction* from, QAction* to);
 
 private:
@@ -108,7 +111,7 @@ private:
         QMetaObject::Connection destroyedConn;
     };
 
-    ContextTracker& m_tracker;
+    IContextArbiter& m_arbiter;
     CommandId m_id;
     QString m_defaultText;
     QIcon m_defaultIcon;

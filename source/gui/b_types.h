@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "gui/b_id.h"
 
 namespace bakuon::gui {
@@ -41,6 +43,45 @@ enum class ContextTier : uint8_t {
                     // pushContext() 的默认参数就是这个值。
 
     TierCount // tier 数量，不要在这之后添加枚举值。
+};
+
+struct Candidate
+{
+    ContextId context;
+    int priority = 0;
+};
+
+/**
+ * @brief 上下文仲裁接口：给定一组 (context, priority) 候选，决定哪一个当前应该生效。
+ *
+ * 引入动机：Command 原本直接依赖 ContextTracker 这个具体类型，自己拿
+ * isActiveContext()/effectiveTier()/activationOrder() 三个底层查询做仲裁循环——
+ * ContextTracker 的内部数据模型（tier 计数、激活时序）和"仲裁规则"这两件事被拆到了
+ * 两个类里，Command 里散落着一份仲裁逻辑的复制。现在把仲裁规则整体收进
+ * ContextTracker（它本来就拥有全部相关状态，是更自然的归属），Command 只需要
+ * 认识这一个方法，不需要知道 ContextTier/activationOrder 这些实现细节。
+ *
+ * 好处是可测试性：单元测试 Command 时，可以用一个不依赖 QObject/Qt 信号、
+ * 不需要真的维护激活集合的最小假实现（比如固定返回某个下标）来驱动它，
+ * 不需要构造一个功能齐全的 ContextTracker。
+ */
+class IContextArbiter
+{
+public:
+    virtual ~IContextArbiter() = default;
+
+    /**
+     * @brief 从候选集合里选出当前应该生效的一个。
+     * @param candidates 调用方（通常是 Command）提供的候选列表，下标顺序由调用方决定，
+     *                   实现方（通常是 ContextTracker）不关心候选来自哪里，只按
+     *                   (是否激活, tier, priority, 激活时序) 的规则挑选。
+     * @return candidates 里胜出者的下标；没有任何候选当前处于激活状态则返回 -1。
+     * @todo 仲裁结果不再返回"m_bindings 的下标"，而是直接返回"胜出的 ContextId"——
+     *       Command 收到后自己 setAuthoritativeContext(ContextId) 即可，下标是
+     *       Command 自己的内部实现细节。然后 m_bindings 以 Context 为 key 的无序表存储结构。
+     */
+    [[nodiscard]] virtual int resolveAuthoritative(
+        const std::vector<Candidate>& candidates) const = 0;
 };
 
 } // namespace bakuon::gui

@@ -1,5 +1,7 @@
 #include "gui/b_contexttracker.h"
 
+#include <limits> // std::numeric_limits，resolveAuthoritative() 用到
+
 namespace bakuon::gui {
 
 ContextTracker::ContextTracker(QObject* parent)
@@ -191,6 +193,36 @@ uint64_t ContextTracker::activationOrder(const ContextId& context) const noexcep
     }
     auto it = m_activationOrder.find(context);
     return it != m_activationOrder.end() ? it->second : 0;
+}
+
+int ContextTracker::resolveAuthoritative(const std::vector<Candidate>& candidates) const
+{
+    ContextTier bestTier = ContextTier::Foreground; // 会被第一个候选无条件覆盖，初值不重要
+    int bestIndex        = -1;
+    int bestPriority     = std::numeric_limits<int>::min();
+    uint64_t bestOrder   = 0;
+
+    for (int i = 0; i < static_cast<int>(candidates.size()); ++i) {
+        const Candidate& c = candidates[i];
+        if (!isActiveContext(c.context)) {
+            continue; // 只在"当前激活"的候选里挑选
+        }
+
+        const ContextTier tier = effectiveTier(c.context);
+        const uint64_t order   = activationOrder(c.context);
+
+        const bool betterTier            = tier > bestTier;
+        const bool sameTierBetterPrio    = (tier == bestTier) && (c.priority > bestPriority);
+        const bool sameTierSamePrioNewer = (tier == bestTier) && (c.priority == bestPriority)
+                                           && (order > bestOrder);
+        if (betterTier || sameTierBetterPrio || sameTierSamePrioNewer) {
+            bestIndex    = i;
+            bestTier     = tier;
+            bestPriority = c.priority;
+            bestOrder    = order;
+        }
+    }
+    return bestIndex;
 }
 
 bool ContextTracker::anyTierActive(const TierCounts& counts) noexcept

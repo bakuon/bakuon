@@ -89,8 +89,8 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
             if (index.column() == 2) {
                 if (Command* cmd = CommandSystem::command(v.commandId)) {
                     QStringList list;
-                    for (const auto& ctx : cmd->contexts()) {
-                        list.append(ctx.name());
+                    for (const auto& c : cmd->contexts()) {
+                        list.append(c.context.name());
                     }
                     return list.join(" | ");
                 }
@@ -122,8 +122,8 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
     case CommandContextRole: {
         if (Command* cmd = CommandSystem::command(v.commandId)) {
             QStringList list;
-            for (const auto& ctx : cmd->contexts()) {
-                list.append(ctx.name());
+            for (const auto& c : cmd->contexts()) {
+                list.append(c.context.name());
             }
             return list.join(" | ");
         }

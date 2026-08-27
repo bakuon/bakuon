@@ -22,6 +22,14 @@ public:
         , cmdManager(ctxTracker)
         , shortcutManager(cmdManager)
     {
+        // Command/CommandManager 不再自己认识具体的 ContextTracker 类型（只依赖
+        // IContextArbiter 这个纯接口做仲裁查询），"上下文集合变了该找谁重新仲裁"
+        // 这条连线因此要在这里、由真正同时持有两者的一方来接——这是 Command/
+        // CommandManager 摆脱 ContextTracker 具体依赖之后，唯一新增的装配工作。
+        QObject::connect(&ctxTracker,
+                         &ContextTracker::contextChanged,
+                         &cmdManager,
+                         &CommandManager::resyncAllCommands);
     }
 
     ContextTracker ctxTracker;
