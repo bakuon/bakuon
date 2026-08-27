@@ -86,3 +86,11 @@ bakuon_add_test(
     "gui/extensionpoint_test.cpp"
     DEPENDS
     bakuon::gui)
+
+bakuon_add_test(
+    NAME
+    test_gui_result_status
+    SOURCES
+    "gui/result_status_test.cpp"
+    DEPENDS
+    bakuon::gui)
