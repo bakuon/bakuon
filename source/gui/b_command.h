@@ -12,8 +12,14 @@
 namespace bakuon::gui {
 
 /**
- * @brief Command：一个“命令”的逻辑身份（例如“删除”“旋转”“另存为”）。
+ * @brief Command：一个"命令"的逻辑身份（例如"删除""旋转""另存为"）。
  *
+ * 这一版彻底移除了 Command 对上下文/仲裁的任何认知——它从头到尾只关心两件事：
+ * 一个供外部（菜单/工具栏）使用的代理 QAction，和"当前谁是权威 realAction"。
+ * "该用哪个 realAction"这个问题完全由外部（通常是 ContextArbiter）算好之后通过
+ * setRealAction() 直接告诉它，Command 不查询任何东西、不认识 ContextState/
+ * ContextArbiter 这些类型。单元测试因此不需要任何上下文/仲裁基础设施，
+ * 构造一个 Command，手动 new 几个 QAction，直接调 setRealAction() 断言镜像结果即可。
  */
 class Command : public QObject
 {
@@ -37,7 +43,7 @@ public:
     };
     Q_DECLARE_FLAGS(Attributes, Attribute)
 
-    Command(const CommandId& id, QString defaultText, IContextArbiter& arbiter);
+    Command(const CommandId& id, QString defaultText, QObject* parent = nullptr);
 
     const CommandId& id() const noexcept { return m_id; }
 
@@ -67,7 +73,7 @@ public:
     void setShortcut(const QKeySequence& shortcut);
 
     bool isActive() const { return m_active; }
-    void setActive(bool active) { m_active = active; }
+    void setActive(bool active);
 
     // 声明式配置镜像策略；默认值为全部 Update* 开启、HideWhenIdle 关闭
     // （即：全量镜像 realAction 的展示属性，无权威源时仅禁用、保留最后的文案）。
@@ -75,43 +81,26 @@ public:
     void setAttributes(Attributes attributes);
     void setAttribute(Attributes attribute, bool on = true);
 
-    // 为该命令注册某个上下文下的真实 QAction。realAction 的生命周期由调用方（编辑器）管理，
-    // Command 只持有 QPointer 弱引用；realAction 销毁时会自动从 Command 中摘除并触发重新仲裁。
-    // 同一个 context 重复注册视为替换旧绑定。priority 越大越优先，默认 0。
-    void addContextAction(QAction* action, const ContextId& context, int priority = 0);
-    void removeContextAction(const ContextId& context);
-    bool hasContextAction(const ContextId& context) const noexcept;
-    std::vector<Candidate> contexts() const;
+    /**
+     * @brief 唯一的外部驱动入口：由 ContextArbiter（仲裁结果变化时）或测试代码直接调用。
+     * activeAction 为 nullptr 表示"当前没有任何激活上下文为它注册了动作"。
+     * 与旧值相同时是no-op（不会重复断开/重建转发连接）。
+     */
+    void setRealAction(QAction* activeAction);
+    /**
+     * @brief 当前权威 realAction（可能为 nullptr）；供调试/UI 展示使用，不参与仲裁逻辑。
+     */
+    QAction* realAction() const noexcept { return m_realAction.data(); }
 
-    // 根据 IContextArbiter 仲裁结果重新计算"权威绑定"，如发生变化则：
-    //  1) 断开旧的 proxy -> 旧权威 realAction 转发连接
-    //  2) 按 Attributes 策略同步代理的可见性/禁用状态与展示属性
-    //  3) 若有新权威源，建立 proxy -> 新权威 realAction 的转发连接
-    //
-    // 公开方法（不是内部私有槽）：Command 不再自己认识 ContextTracker 这个具体类型、
-    // 也不在构造函数里 connect 它的 contextChanged 信号——上下文集合何时发生变化、
-    // 要不要触发重新仲裁，交给持有具体 ContextTracker 的上层（通常是 CommandManager
-    // 或更上层的 CommandSystem）在装配阶段自行 connect 到这个方法。这样 Command 的
-    // 单元测试可以用一个不依赖 QObject 信号的最小假 IContextArbiter 实现，构造 Command
-    // 后手动调用这个方法模拟"上下文变了"，不需要真的驱动一个 ContextTracker。
-    // addContextAction/removeContextAction/realAction 销毁时也会主动调用一次。
-    void resyncAuthoritativeBinding();
+Q_SIGNALS:
+    /// 代理是否处于“可交互权威源已就绪”状态发生变化时发出（菜单启用态、快捷键是否应响应等）
+    void activeChanged(bool active);
 
 private:
-    int findAuthoritativeIndex() const;
+    void syncCurrentState();
     void mirrorProperties(const QAction* from, QAction* to);
 
 private:
-    struct ContextBinding
-    {
-        ContextId context;
-        QPointer<QAction> realAction;
-        int priority = 0;
-        QMetaObject::Connection changedConn;
-        QMetaObject::Connection destroyedConn;
-    };
-
-    IContextArbiter& m_arbiter;
     CommandId m_id;
     QString m_defaultText;
     QIcon m_defaultIcon;
@@ -122,11 +111,10 @@ private:
     Attributes m_attributes;
 
     QAction* m_proxyAction{};
+    QPointer<QAction> m_realAction; // 当前权威源；nullptr 表示当前无权威源
 
-    int m_authoritativeIndex = -1;           // m_bindings 中当前权威绑定的下标，-1 表示当前无权威源
+    QMetaObject::Connection m_changedConn;   // realAction::changed -> 镜像到 proxyAction
     QMetaObject::Connection m_triggeredConn; // proxyAction::triggered -> 权威 realAction::trigger
-    QMetaObject::Connection m_toggledConn;   // proxyAction::toggled -> 权威 realAction::toggled
-    std::vector<ContextBinding> m_bindings;
 };
 
 } // namespace bakuon::gui

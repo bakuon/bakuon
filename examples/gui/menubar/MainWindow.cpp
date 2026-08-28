@@ -54,6 +54,7 @@ void MainWindow::registerCommands()
     auto& del = gui::CommandSystem::registerCommand(kCmdDelete, QStringLiteral("删除"));
     del.setShortcut(QKeySequence::Delete);
     del.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditDelete));
+    del.setAttribute(gui::Command::Attribute::UpdateEnabled);
 
     auto& dup = gui::CommandSystem::registerCommand(kCmdDuplicate, QStringLiteral("复制"));
     dup.setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
@@ -82,8 +83,8 @@ void MainWindow::registerCommands()
         dlg.exec();
     });
 
-    save.addContextAction(m_saveRealAction, kCtxGlobal);
-    customize.addContextAction(m_customizeAction, kCtxGlobal);
+    gui::CommandSystem::context(kCtxGlobal)->addAction(save.id(), m_saveRealAction);
+    gui::CommandSystem::context(kCtxGlobal)->addAction(customize.id(), m_customizeAction);
 }
 
 void MainWindow::buildDefaultMenuLayout()

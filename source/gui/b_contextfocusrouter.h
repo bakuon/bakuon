@@ -1,8 +1,11 @@
 #pragma once
 
+#include <unordered_map>
+
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDebug>
 #include <QtCore/QEvent>
+#include <QtCore/QPointer>
 #include <QtWidgets/QWidget>
 
 #include "gui/b_context.h"
@@ -31,6 +34,7 @@ protected:
 private:
     void handleFocusIn(QObject* gainer);
     QObject* findContextProvider(QObject* object) const;
+    void popCurrent();
 
 private:
     bool m_installed = false;

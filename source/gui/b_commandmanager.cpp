@@ -2,37 +2,43 @@
 
 namespace bakuon::gui {
 
-CommandManager::CommandManager(IContextArbiter& arbiter, QObject* parent)
+CommandManager::CommandManager(QObject* parent)
     : QObject(parent)
-    , m_arbiter(arbiter)
     , m_menubarLayout(std::make_unique<CommandLayout>())
     , m_toolbarLayout(std::make_unique<CommandLayout>())
 {
 }
 
-Command& CommandManager::registerCommand(const CommandId& id, const QString& text)
+Command* CommandManager::registerCommand(const CommandId& id, const QString& text)
 {
     if (auto it = m_commands.find(id); it != m_commands.end()) {
-        return *it->second;
+        return it->second;
     }
-    auto command = std::make_unique<Command>(id, text, m_arbiter);
-    Command& ref = *command;
-    m_commands.emplace(id, std::move(command));
-    return ref;
+    auto command = new Command(id, text, this);
+    // Command& ref = *command;
+    // m_commands.emplace(id, std::move(command));
+    m_commands.emplace(id, command);
+    return command;
 }
 
 void CommandManager::unregisterCommand(const CommandId& id)
 {
     auto it = m_commands.find(id);
-    if (it != m_commands.end()) {
-        m_commands.erase(it);
+    if (it == m_commands.end()) {
+        return;
     }
+    // Command 以 this 为 QObject 父对象；从目录移除时同步销毁，避免：
+    // 1) 残留不可达的 Command/QAction 继续占用内存；
+    // 2) 已渲染到菜单/工具栏的代理在命令注销后仍可被触发。
+    Command* cmd = it->second;
+    m_commands.erase(it);
+    delete cmd;
 }
 
 Command* CommandManager::command(const CommandId& id) const
 {
     auto it = m_commands.find(id);
-    return it != m_commands.end() ? it->second.get() : nullptr;
+    return it != m_commands.end() ? it->second : nullptr;
 }
 
 std::vector<Command*> CommandManager::allCommands() const
@@ -40,7 +46,7 @@ std::vector<Command*> CommandManager::allCommands() const
     std::vector<Command*> result;
     result.reserve(m_commands.size());
     for (auto& [_, command] : m_commands) {
-        result.push_back(command.get());
+        result.push_back(command);
     }
     return result;
 }
@@ -53,13 +59,6 @@ std::vector<CommandId> CommandManager::allCommandIds() const
         result.push_back(id);
     }
     return result;
-}
-
-void CommandManager::resyncAllCommands()
-{
-    for (auto& [_, command] : m_commands) {
-        command->resyncAuthoritativeBinding();
-    }
 }
 
 CommandLayout* CommandManager::menubarLayout() const

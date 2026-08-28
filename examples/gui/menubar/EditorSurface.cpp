@@ -87,17 +87,17 @@ void EditorSurface::setupRealActions(const QString& label)
     });
 
     // kCmdDelete 只受 ContextSelectionRouter 选中对象路由影响，完全不受 ContextFocusRouter 焦点路由影响。
-    gui::CommandSystem::command(kCmdDelete)->addContextAction(m_deleteAction, m_selectedContext);
+    gui::CommandSystem::context(m_selectedContext)->addAction(kCmdDelete, m_deleteAction);
 
     // kCmdPaste 只受 ContextFocusRouter 焦点路由影响，完全不受 ContextSelectionRouter 选中对象路由影响（实际应用受剪贴板数据上下文影响）。
-    gui::CommandSystem::command(kCmdPaste)->addContextAction(m_pasteAction, m_focusContext);
+    gui::CommandSystem::context(m_focusContext)->addAction(kCmdPaste, m_pasteAction);
 
     // test focus 1: 当 m_selectedContext 激活时 kCmdDuplicate 命令无论当前部件是否有焦点都可用，
     // 因为 m_selectedContext 未受 ContextFocusRouter 焦点路由控制。
-    gui::CommandSystem::command(kCmdDuplicate)
-        ->addContextAction(m_duplicateAction, m_selectedContext);
+    gui::CommandSystem::context(m_selectedContext)->addAction(kCmdDuplicate, m_duplicateAction);
+
     // test focus 2: 当 m_selectedContext 未激活时，ContextFocusRouter 才能路由 m_focusContext 焦点控制 kCmdDuplicate 命令的状态。
-    gui::CommandSystem::command(kCmdDuplicate)->addContextAction(m_duplicateAction, m_focusContext);
+    gui::CommandSystem::context(m_focusContext)->addAction(kCmdDuplicate, m_duplicateAction);
 
     // test focus 结论：
     // S用户---需要焦点外，还需要一堆各种各样的条件上下文才能用，或者无视焦点但需要一堆条件上下文（复杂型）。

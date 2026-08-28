@@ -52,12 +52,34 @@ uint32_t lookupId(QString original)
         return 0;
     }
     IdData d(std::move(original));
-    auto id = lookup().left().find(d);
-    if (!id.has_value()) {
-        id = d.hash;
-        lookup().insert(d, id.value());
+    if (auto existing = lookup().left().find(d); existing.has_value()) {
+        return existing.value();
     }
-    return id.value();
+
+    // BUGFIX: 使用单调递增的 raw id，而不是直接把 hash 当作 id。
+    // 原先用 d.hash 作 id：一旦两个不同字符串碰撞到同一 uint32_t hash，
+    // Bimap::insert 会因 right 侧冲突失败，后续 lookupName 也会返回错误名字。
+    // 从 1 起分配（0 保留给 invalid），并在极端冲突时线性探测。
+    static uint32_t nextId = 1;
+    uint32_t candidate     = nextId;
+    // 保证 right 侧唯一；正常路径几乎不会进入循环
+    while (lookup().containsRight(candidate) || candidate == 0) {
+        ++candidate;
+        if (candidate == 0) {
+            ++candidate; // 跳过 0
+        }
+    }
+    nextId = candidate + 1;
+    if (nextId == 0) {
+        ++nextId;
+    }
+
+    if (!lookup().insert(d, candidate)) {
+        // 理论上不应发生（left 已检查不存在，right 已探测）；防御性回退
+        qWarning() << "Id::lookupId: unexpected bimap insert failure for" << d.str;
+        return 0;
+    }
+    return candidate;
 }
 
 QString lookupName(uint32_t raw)

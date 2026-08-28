@@ -16,12 +16,15 @@ ContextFocusRouter::~ContextFocusRouter()
 
 void ContextFocusRouter::addProviderWidget(QObject* widget, const Context& context)
 {
-    if (!widget || !context.empty()) {
+    if (!widget || context.empty()) {
         qWarning() << "ContextFocusRouter: Invalid widget or empty context";
         return;
     }
 
     m_providers[widget] = context;
+    // 部件析构时必须摘掉 map 里的裸指针，否则后续查找会读到悬空 key。
+    QObject::disconnect(widget, &QObject::destroyed, this, nullptr);
+    connect(widget, &QObject::destroyed, this, [this, widget]() { removeProviderWidget(widget); });
 }
 
 void ContextFocusRouter::removeProviderWidget(QObject* widget)
@@ -32,14 +35,15 @@ void ContextFocusRouter::removeProviderWidget(QObject* widget)
     }
 
     if (m_currentProvider == widget) {
-        m_currentProvider = nullptr;
+        popCurrent();
     }
 }
 
 void ContextFocusRouter::clearProviderWidget()
 {
-    m_currentContext  = {};
-    m_currentProvider = nullptr;
+    if (m_currentProvider) {
+        popCurrent();
+    }
     m_providers.clear();
 }
 
@@ -49,8 +53,6 @@ void ContextFocusRouter::install()
         return;
     if (qApp) {
         qApp->installEventFilter(this);
-        // 或者连接到应用的焦点变化信号
-        // connect(qApp, &QApplication::focusChanged, this, &ContextFocusRouter::updateProvider);
         m_installed = true;
     }
 }
@@ -75,6 +77,11 @@ void ContextFocusRouter::uninstall()
 
     // 主动释放当前持有的引用，避免"卸载路由器"之后遗留一份永远不会再被
     // 更新、也不会再被任何人 pop 掉的激活上下文。
+    popCurrent();
+}
+
+void ContextFocusRouter::popCurrent()
+{
     if (m_currentProvider) {
         for (const ContextId& ctx : m_currentContext) {
             CommandSystem::popContext(ctx, m_currentProvider.data());
@@ -121,7 +128,7 @@ void ContextFocusRouter::handleFocusIn(QObject* gainer)
         }
         // 同时支持使用属性标签的形式
         if (Context ctx = CommandSystem::providerContext(provider); !ctx.empty()) {
-            foundContext.merge(ctx);
+            foundContext.append(ctx);
             break;
         }
         provider = provider->parent(); // 沿着对象树向上冒泡
@@ -167,6 +174,9 @@ QObject* ContextFocusRouter::findContextProvider(QObject* object) const
     QObject* provider = object;
     while (provider) {
         if (auto it = m_providers.find(provider); it != m_providers.end()) {
+            return provider;
+        }
+        if (!CommandSystem::providerContext(provider).empty()) {
             return provider;
         }
         provider = provider->parent(); // 沿着对象树向上冒泡

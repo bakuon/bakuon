@@ -1,18 +1,22 @@
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFocusEvent>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPointer>
 #include <QTimer>
 #include <QWidget>
 
 #include <gtest/gtest.h>
 #include <gui/b_commandmodel.h>
 #include <gui/b_commandsystem.h>
-
-// #include "../shared/focuscontextwatcher.h"
+#include <gui/b_contextfocusrouter.h>
+#include <gui/b_shortcutmanager.h>
 
 using namespace bakuon::gui;
 
@@ -20,93 +24,12 @@ namespace {
 const CommandId kCmdA{"test.a"};
 const CommandId kCmdB{"test.b"};
 const CommandId kCmdC{"test.c"};
-
-/**
- * @brief 最小可用的 IContextArbiter 假实现，用于单元测试 Command/CommandManager。
- *
- * 不依赖 QObject 信号、不维护任何 tier/激活时序状态——测试直接摆布 winningIndex
- * 来模拟"仲裁结果变了"，配合 Command::resyncAuthoritativeBinding()（现在是公开方法）
- * 手动触发重新计算，完全不需要构造一个功能齐全的 ContextTracker。
- * 这正是本次重构（Command 只依赖 IContextArbiter，不认识具体的 ContextTracker 类型）
- * 想要达成的效果。
- */
-class FakeArbiter : public IContextArbiter
-{
-public:
-    [[nodiscard]] int resolveAuthoritative(const std::vector<Candidate>& candidates) const override
-    {
-        if (winningIndex < 0 || winningIndex >= static_cast<int>(candidates.size())) {
-            return -1;
-        }
-        return winningIndex;
-    }
-
-    int winningIndex = -1; // -1 表示"没有任何候选胜出"
-};
-
 } // namespace
-
-TEST(CommandIsolated, ResyncUsesArbiterResultWithoutRealContextTracker)
-{
-    FakeArbiter arbiter;
-    Command cmd(CommandId{"isolated.cmd"}, QStringLiteral("默认文案"), arbiter);
-
-    auto* realA = new QAction(QStringLiteral("动作A"), QApplication::instance());
-    auto* realB = new QAction(QStringLiteral("动作B"), QApplication::instance());
-    cmd.addContextAction(realA, ContextId{"ctx.a"});
-    cmd.addContextAction(realB, ContextId{"ctx.b"});
-
-    // 一开始假仲裁器谁都不选：代理应该处于"无权威源"状态。
-    QAction* proxy = cmd.action();
-    EXPECT_FALSE(proxy->isEnabled()) << "假仲裁器没有选出任何候选时，代理应该保持禁用";
-
-    // 手动摆布仲裁结果为下标 0（对应 realA），再手动触发重新仲裁——
-    // 完全不需要任何 ContextTracker/Qt 信号，直接验证 Command 是否忠实执行了仲裁结果。
-    arbiter.winningIndex = 0;
-    cmd.resyncAuthoritativeBinding();
-    EXPECT_EQ(proxy->text(), realA->text());
-    EXPECT_TRUE(proxy->isEnabled());
-
-    // 切换到下标 1（对应 realB）。
-    arbiter.winningIndex = 1;
-    cmd.resyncAuthoritativeBinding();
-    EXPECT_EQ(proxy->text(), realB->text());
-
-    // 触发点击应该转发到当前权威 realAction（realB），而不是 realA。
-    bool aTriggered = false;
-    bool bTriggered = false;
-    QObject::connect(realA, &QAction::triggered, [&] { aTriggered = true; });
-    QObject::connect(realB, &QAction::triggered, [&] { bTriggered = true; });
-    proxy->trigger();
-    EXPECT_FALSE(aTriggered);
-    EXPECT_TRUE(bTriggered);
-}
-
-TEST(CommandManagerIsolated, ResyncAllCommandsWorksWithoutRealContextTracker)
-{
-    FakeArbiter arbiter;
-    CommandManager mgr(arbiter);
-
-    auto& cmd  = mgr.registerCommand(CommandId{"isolated.mgr.cmd"}, QStringLiteral("默认文案"));
-    auto* real = new QAction(QStringLiteral("真实动作"), QApplication::instance());
-    cmd.addContextAction(real, ContextId{"ctx.only"});
-
-    QAction* proxy = cmd.action();
-    EXPECT_FALSE(proxy->isEnabled());
-
-    arbiter.winningIndex = 0;
-    // 通过 CommandManager 的批量入口触发，而不是直接调 Command 自己的方法——
-    // 验证 CommandManager 摆脱 ContextTracker 依赖之后，resyncAllCommands() 依然
-    // 能正确驱动它名下的每一个 Command。
-    mgr.resyncAllCommands();
-    EXPECT_EQ(proxy->text(), real->text());
-    EXPECT_TRUE(proxy->isEnabled());
-}
 
 TEST(CommandSystem, CommandLayout)
 {
-    ContextTracker tracker;
-    CommandManager mgr(tracker);
+    ContextArbiter arbiter;
+    CommandManager mgr;
     mgr.registerCommand(kCmdA, QStringLiteral("命令A"));
     mgr.registerCommand(kCmdB, QStringLiteral("命令B"));
     mgr.registerCommand(kCmdC, QStringLiteral("命令C"));
@@ -215,46 +138,39 @@ TEST(CommandSystem, CommandModel)
 
 TEST(CommandSystem, CommandContext)
 {
-    ContextTracker tracker;
-    CommandManager mgr(tracker);
-    // Command/CommandManager 不再自己认识具体的 ContextTracker 类型、也不会替你 connect
-    // 它的 contextChanged 信号（见 b_command.h/b_commandmanager.h 的重构说明）——这里是
-    // 直接手搭 ContextTracker+CommandManager（不经过 CommandSystem 门面）的测试，
-    // 所以要像 CommandSystemPrivate 的构造函数一样，自己补上这一行装配连线，
-    // 否则 pushContext()/popContext() 不会触发任何命令重新仲裁。
-    QObject::connect(&tracker,
-                     &ContextTracker::contextChanged,
-                     &mgr,
-                     &CommandManager::resyncAllCommands);
+    ContextArbiter arbiter;
+    CommandManager mgr;
 
-    // addContextAction 在上下文"已经激活"之后才调用，
-    // 且 action() 是"之后才第一次被创建"——这个时序曾经导致转发连接
-    // 从未建立（代理点了没反应），根因是用"权威下标是否变化"判断要不要重连。
+    // arbiter 想要去更新命令必须绑定 CommandManager
+    arbiter.setCommandManager(&mgr);
+
+    // addAction 在上下文"已经激活"之后才调用
     {
         const ContextId ctxAlreadyActive{"regression.alreadyActive"};
         const void* regressionSource = &ctxAlreadyActive; // 任意一个稳定地址即可
 
-        tracker.pushContext(ctxAlreadyActive, regressionSource);
-        EXPECT_TRUE(tracker.isActiveContext(ctxAlreadyActive)) << "上下文已提前激活";
+        auto ctxObject = arbiter.registerContext(ctxAlreadyActive, "AlreadyActive", "");
+        arbiter.pushContext(ctxAlreadyActive, regressionSource);
+        EXPECT_TRUE(arbiter.isActiveContext(ctxAlreadyActive)) << "上下文已提前激活";
 
-        auto& regressionCmd = mgr.registerCommand(CommandId{"regression.cmd1"},
-                                                  QStringLiteral("命令1"));
-        auto* realAction    = new QAction(QStringLiteral("真实动作"), QApplication::instance());
-        bool realTriggered  = false;
+        auto regressionCmd = mgr.registerCommand(CommandId{"regression.cmd1"},
+                                                 QStringLiteral("命令1"));
+        auto* realAction   = new QAction(QStringLiteral("真实动作"), QApplication::instance());
+        bool realTriggered = false;
         QObject::connect(realAction,
                          &QAction::triggered,
                          QApplication::instance(),
                          [&realTriggered]() { realTriggered = true; });
 
         // 关键：先注册绑定（此时上下文已激活）
-        regressionCmd.addContextAction(realAction, ctxAlreadyActive);
-        QAction* proxy = regressionCmd.action();
+        ctxObject->addAction(regressionCmd->id(), realAction);
+        QAction* proxy = regressionCmd->action();
 
         EXPECT_TRUE(proxy->isEnabled()) << "代理创建后未能正确镜像出已激活上下文的 enabled 状态";
         proxy->trigger(); // 模拟用户点击代理
         EXPECT_TRUE(realTriggered) << "点击代理未能如实转发触发真实动作";
 
-        tracker.popContext(ctxAlreadyActive, regressionSource);
+        arbiter.popContext(ctxAlreadyActive, regressionSource);
     }
 
     // 验证同时绑定新旧两个上下文的 Command，在旧上下文尚未失活前就已经正确切换到
@@ -265,28 +181,32 @@ TEST(CommandSystem, CommandContext)
         const void* widgetOld = &ctxOld;
         const void* widgetNew = &ctxNew;
 
-        auto& regressionCmd2 = mgr.registerCommand(CommandId{"regression.cmd2"},
-                                                   QStringLiteral("命令2"));
-        auto* realOld = new QAction(QStringLiteral("旧编辑器动作"), QApplication::instance());
-        auto* realNew = new QAction(QStringLiteral("新编辑器动作"), QApplication::instance());
-        regressionCmd2.addContextAction(realOld, ctxOld);
-        regressionCmd2.addContextAction(realNew, ctxNew);
+        auto regressionCmd2 = mgr.registerCommand(CommandId{"regression.cmd2"},
+                                                  QStringLiteral("命令2"));
+        auto* realOld       = new QAction(QStringLiteral("旧编辑器动作"), QApplication::instance());
+        auto* realNew       = new QAction(QStringLiteral("新编辑器动作"), QApplication::instance());
 
-        tracker.pushContext(ctxOld, widgetOld); // 模拟旧编辑器已获得焦点
-        QAction* proxy2 = regressionCmd2.action();
+        auto oldObject = arbiter.registerContext(ctxOld, "Old", "");
+        auto newObject = arbiter.registerContext(ctxNew, "New", "");
+        oldObject->addAction(regressionCmd2->id(), realOld);
+        newObject->addAction(regressionCmd2->id(), realNew);
+
+        // push 旧的……
+        arbiter.pushContext(ctxOld, widgetOld); // 模拟旧编辑器已获得焦点
+        QAction* proxy2 = regressionCmd2->action();
         EXPECT_TRUE(proxy2->text() == realOld->text()) << "初始状态代理未能正常镜像旧编辑器的动作";
 
         // 先 push 新的……
-        tracker.pushContext(ctxNew, widgetNew);
+        arbiter.pushContext(ctxNew, widgetNew);
         EXPECT_TRUE(proxy2->text() == realNew->text())
             << "push 新上下文后（旧的还未 pop），代理未能切换到新编辑器的动作";
         // ……再 pop 旧的
-        tracker.popContext(ctxOld, widgetOld);
+        arbiter.popContext(ctxOld, widgetOld);
         EXPECT_TRUE(proxy2->text() == realNew->text())
             << "pop 旧上下文后代理未能正确停留在新编辑器的动作";
         EXPECT_TRUE(proxy2->isEnabled()) << "全程代理都应保持 enabled（不应出现中间的无权威源态）";
 
-        tracker.popContext(ctxNew, widgetNew);
+        arbiter.popContext(ctxNew, widgetNew);
     }
 }
 
@@ -307,9 +227,9 @@ inline ContextId widgetContext(const QObject* widget)
 class FocusContextWatcher final : public QObject
 {
 public:
-    explicit FocusContextWatcher(ContextTracker& tracker, QObject* parent = nullptr)
+    explicit FocusContextWatcher(ContextArbiter& arbiter, QObject* parent = nullptr)
         : QObject(parent)
-        , m_ctxTracker(tracker)
+        , m_ctxArbiter(arbiter)
     {
     }
 
@@ -346,10 +266,10 @@ protected:
         const ContextId oldContext = m_focusedContext;
 
         if (providerWidget) {
-            m_ctxTracker.pushContext(foundContext, providerWidget);
+            m_ctxArbiter.pushContext(foundContext, providerWidget);
         }
         if (oldWidget) {
-            m_ctxTracker.popContext(oldContext, oldWidget);
+            m_ctxArbiter.popContext(oldContext, oldWidget);
         }
 
         m_focusedProviderWidget = providerWidget; // 为 nullptr 表示焦点完全离开了所有已标记部件
@@ -359,11 +279,68 @@ protected:
     }
 
 private:
-    ContextTracker& m_ctxTracker;
+    ContextArbiter& m_ctxArbiter;
     // 当前因焦点而处于激活状态的 (widget, context)，焦点转移时用于精确 pop 掉旧的引用
     QPointer<QWidget> m_focusedProviderWidget;
     ContextId m_focusedContext;
 };
+
+TEST(CommandSystem, LoadLayoutToolbarKey)
+{
+    // 回归：loadLayout 曾错误地用 menubar JSON 反序列化 toolbar
+    CommandManager mgr;
+    mgr.registerCommand(kCmdA, QStringLiteral("A"));
+    mgr.registerCommand(kCmdB, QStringLiteral("B"));
+
+    auto* menubar = mgr.menubarLayout();
+    auto* toolbar = mgr.toolbarLayout();
+    menubar->addMenu(nullptr, 0, QStringLiteral("文件"));
+    auto* tb = toolbar->addContainer(nullptr, 0, QStringLiteral("主工具栏"));
+    toolbar->addCommand(tb, 0, kCmdA);
+    toolbar->addCommand(tb, 1, kCmdB);
+
+    const QString path = QDir::temp().filePath(QStringLiteral("bakuon_test_layout_roundtrip.json"));
+    {
+        QFile file(path);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QJsonObject obj;
+        obj[QLatin1String("menubar")] = menubar->serialize();
+        obj[QLatin1String("toolbar")] = toolbar->serialize();
+        file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+    }
+
+    // 通过 CommandSystem 门面加载（覆盖原先的 toolbar 键写错 bug）
+    ASSERT_TRUE(CommandSystem::loadLayout(path));
+    EXPECT_EQ(CommandSystem::menubarLayout()->root()->childCount(), 1u);
+    EXPECT_EQ(CommandSystem::toolbarLayout()->root()->childCount(), 1u);
+    EXPECT_EQ(CommandSystem::toolbarLayout()->root()->childAt(0)->childCount(), 2u)
+        << "toolbar 应保留 2 个命令节点，而非被 menubar 覆盖";
+}
+
+TEST(CommandSystem, MoveTopLevelMenu)
+{
+    CommandLayout layout;
+    auto* fileMenu = layout.addMenu(nullptr, 0, QStringLiteral("文件"));
+    auto* editMenu = layout.addMenu(nullptr, 1, QStringLiteral("编辑"));
+    ASSERT_EQ(layout.root()->childCount(), 2u);
+
+    // 回归：moveItem(srcParent=root, ...) 曾被错误拒绝
+    EXPECT_TRUE(layout.moveItem(layout.root(), 1, layout.root(), 0))
+        << "应允许移动根下的顶层菜单节点";
+    EXPECT_EQ(layout.root()->childAt(0), editMenu);
+    EXPECT_EQ(layout.root()->childAt(1), fileMenu);
+}
+
+TEST(CommandSystem, UnregisterDeletesCommand)
+{
+    CommandManager mgr;
+    Command* cmd = mgr.registerCommand(kCmdA, QStringLiteral("A"));
+    ASSERT_NE(cmd, nullptr);
+    QPointer<Command> weak(cmd);
+    mgr.unregisterCommand(kCmdA);
+    EXPECT_TRUE(weak.isNull()) << "unregisterCommand 应销毁 Command 对象";
+    EXPECT_EQ(mgr.command(kCmdA), nullptr);
+}
 
 TEST(CommandSystem, ContextFocus)
 {
@@ -375,7 +352,7 @@ TEST(CommandSystem, ContextFocus)
     //       是实际压垮过这个修复第一版的场景）；
     //   (2) focusPolicy() == Qt::NoFocus 的 QWidget（典型如 QMainWindow 自身），
     //       用下面的合成事件直接、确定性地复现。
-    ContextTracker ctxTracker;
+    ContextArbiter ctxTracker;
 
     const ContextId ctxProvider{"regression.nofocusguard.provider"};
 
@@ -414,6 +391,114 @@ TEST(CommandSystem, ContextFocus)
     ctxTracker.releaseContext(providerWidget);
     delete container;
     delete watcher;
+}
+
+TEST(CommandSystem, CheckableProxyDoesNotDoubleToggle)
+{
+    Command cmd(CommandId{"checkable.toggle"}, QStringLiteral("Toggle"));
+    auto* real = new QAction(QStringLiteral("RealToggle"), &cmd);
+    real->setCheckable(true);
+    real->setChecked(false);
+    cmd.setRealAction(real);
+
+    EXPECT_FALSE(cmd.action()->isChecked());
+    cmd.action()->trigger();
+    EXPECT_TRUE(real->isChecked()) << "可勾选命令点击代理后 real 应切换一次";
+    EXPECT_TRUE(cmd.action()->isChecked());
+    cmd.action()->trigger();
+    EXPECT_FALSE(real->isChecked())
+        << "再次点击应切回未勾选，而不是被 toggled+triggered 双触发抵消";
+}
+
+TEST(CommandSystem, ShortcutDefaultsFallback)
+{
+    CommandManager mgr;
+    ShortcutManager shortcuts(mgr);
+    Command* cmd = mgr.registerCommand(CommandId{"shortcut.save"}, QStringLiteral("Save"));
+    cmd->setDefaultShortcuts(
+        {QKeySequence(QStringLiteral("Ctrl+S")), QKeySequence(QStringLiteral("Ctrl+Shift+S"))});
+
+    EXPECT_EQ(shortcuts.defaultShortcuts(cmd->id()).size(), 2)
+        << "未调用 initialize() 时也应能从 Command 回落到默认快捷键";
+    EXPECT_EQ(shortcuts.shortcuts(cmd->id()).size(), 2);
+
+    shortcuts.resetToDefaults(cmd->id());
+    EXPECT_EQ(cmd->shortcuts().size(), 2) << "reset 不应把尚未快照的默认快捷键清空";
+    EXPECT_FALSE(shortcuts.isModified(cmd->id()));
+}
+
+TEST(CommandSystem, BackgroundTierDoesNotBeatForeground)
+{
+    ContextArbiter arbiter;
+    CommandManager mgr;
+    arbiter.setCommandManager(&mgr);
+
+    Command* cmd   = mgr.registerCommand(CommandId{"tier.cmd"}, QStringLiteral("X"));
+    auto* fgAction = new QAction(QStringLiteral("FG"), QApplication::instance());
+    auto* bgAction = new QAction(QStringLiteral("BG"), QApplication::instance());
+
+    auto fg = arbiter.registerContext(ContextId{"tier.fg"}, "test", "");
+    auto bg = arbiter.registerContext(ContextId{"tier.bg"}, "test", "");
+    fg->addAction(cmd->id(), fgAction);
+    bg->addAction(cmd->id(), bgAction);
+
+    int fgSrc = 0;
+    int bgSrc = 0;
+    arbiter.pushContext(fg->id(), &fgSrc, ContextTier::Foreground);
+    arbiter.pushContext(bg->id(), &bgSrc, ContextTier::Background);
+    EXPECT_EQ(arbiter.findActiveAction(cmd->id()), fgAction)
+        << "Background 即使更晚激活也不能压过 Foreground";
+
+    arbiter.popContext(fg->id(), &fgSrc, ContextTier::Foreground);
+    EXPECT_EQ(arbiter.findActiveAction(cmd->id()), bgAction)
+        << "Foreground 退出后 Background 仍可作为权威源";
+}
+
+TEST(CommandSystem, CommandWorkspaceIsolation)
+{
+    CommandWorkspace ws;
+    const CommandId id{"workspace.isolated"};
+    ws.commandManager().registerCommand(id, QStringLiteral("Isolated"));
+    EXPECT_NE(ws.commandManager().command(id), nullptr);
+    EXPECT_EQ(CommandSystem::command(id), nullptr) << "独立工作区不应污染进程默认 CommandSystem";
+}
+
+TEST(CommandSystem, FocusRouterAcceptsNonEmptyContext)
+{
+    ContextFocusRouter router;
+    router.install();
+
+    const ContextId ctxId{"focus.router.nonempty"};
+    CommandSystem::declareContext(ctxId.name(), "test", "focus router");
+
+    auto* container = new QWidget();
+    auto* provider  = new QWidget(container);
+    provider->setFocusPolicy(Qt::StrongFocus);
+    router.addProviderWidget(provider, Context{ctxId});
+
+    container->show();
+    container->activateWindow();
+    QCoreApplication::processEvents();
+    provider->setFocus(Qt::MouseFocusReason);
+    QCoreApplication::processEvents();
+
+    EXPECT_TRUE(CommandSystem::isActiveContext(ctxId))
+        << "addProviderWidget 在 context 非空时应登记成功并在获焦时激活";
+
+    router.uninstall();
+    delete container;
+}
+
+TEST(CommandSystem, ContextGuardPopsOnScopeExit)
+{
+    const ContextId ctxId{"guard.scope"};
+    CommandSystem::declareContext(ctxId.name(), "test", "");
+    int source = 0;
+    {
+        ContextGuard guard(ctxId, &source);
+        EXPECT_TRUE(CommandSystem::isActiveContext(ctxId));
+    }
+    EXPECT_FALSE(CommandSystem::isActiveContext(ctxId));
 }
 
 int main(int argc, char* argv[])

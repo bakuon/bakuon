@@ -87,14 +87,13 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
                 return v.commandId.name();
             }
             if (index.column() == 2) {
-                if (Command* cmd = CommandSystem::command(v.commandId)) {
-                    QStringList list;
-                    for (const auto& c : cmd->contexts()) {
-                        list.append(c.context.name());
-                    }
-                    return list.join(" | ");
+                const auto contexts = CommandSystem::contextsForCommand(v.commandId);
+                QStringList list;
+                list.reserve(contexts.size());
+                for (const auto& c : contexts) {
+                    list.append(c.name());
                 }
-                return {};
+                return list.join(" | ");
             }
         }
         Q_FALLTHROUGH();
@@ -120,14 +119,13 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
     case CommandTypeRole   : return static_cast<int>(v.type);
     case CommandIdRole     : return v.commandId.name();
     case CommandContextRole: {
-        if (Command* cmd = CommandSystem::command(v.commandId)) {
-            QStringList list;
-            for (const auto& c : cmd->contexts()) {
-                list.append(c.context.name());
-            }
-            return list.join(" | ");
+        const auto contexts = CommandSystem::contextsForCommand(v.commandId);
+        QStringList list;
+        list.reserve(contexts.size());
+        for (const auto& c : contexts) {
+            list.append(c.name());
         }
-        return {};
+        return list.join(" | ");
     }
     default: break;
     }
@@ -237,6 +235,7 @@ bool CommandModel::dropMimeData(const QMimeData* data, Qt::DropAction action, in
         for (const auto v : payload.value(QLatin1String(kKeyPath)).toArray()) {
             path.push_back(static_cast<std::size_t>(v.toInt()));
         }
+
         // pathNode() 是 TreeNode 自带的方法：按行路径从根出发定位节点，路径失效（比如拖拽
         // 过程中模型发生了其它结构变化）时返回 nullptr，不用再手写逐层校验的循环。
         Item* item = m_layout->root()->pathNode(path);

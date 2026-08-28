@@ -1,9 +1,11 @@
 #include "gui/b_shortcutmanager.h"
 
+#include <QtCore/QDebug>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 
+#include "gui/b_command.h"
 #include "gui/b_commandmanager.h"
 
 namespace bakuon::gui {
@@ -15,34 +17,68 @@ ShortcutManager::ShortcutManager(CommandManager& manager)
 
 void ShortcutManager::initialize()
 {
-    // Load all command shortcuts from registry
     for (const auto& cmd : m_manager.allCommands()) {
-        // Store default shortcut
-        auto defaultShortcuts = cmd->defaultShortcuts();
-        if (!defaultShortcuts.isEmpty()) {
-            m_defaults[cmd->id()] = defaultShortcuts;
-        }
+        observeCommand(cmd->id());
+    }
+    rebuildIndex();
+}
 
-        // Store current shortcuts
-        QList<QKeySequence> currentShortcuts = cmd->shortcuts();
-        if (!currentShortcuts.isEmpty()) {
-            m_shortcuts[cmd->id()] = currentShortcuts;
+void ShortcutManager::observeCommand(const CommandId& id)
+{
+    captureDefaults(id);
+    if (m_shortcuts.find(id) == m_shortcuts.end()) {
+        auto current = commandLiveShortcuts(id);
+        if (!current.isEmpty()) {
+            m_shortcuts[id] = current;
         }
     }
-
     rebuildIndex();
+}
 
-    qDebug() << "ShortcutManager initialized with" << m_shortcuts.size() << "commands";
+void ShortcutManager::forgetCommand(const CommandId& id)
+{
+    m_shortcuts.erase(id);
+    m_defaults.erase(id);
+    m_modified.erase(id);
+    rebuildIndex();
+}
+
+void ShortcutManager::captureDefaults(const CommandId& id)
+{
+    if (m_defaults.find(id) != m_defaults.end()) {
+        return;
+    }
+    auto defaults = commandLiveDefaults(id);
+    if (!defaults.isEmpty()) {
+        m_defaults[id] = defaults;
+    }
+}
+
+QList<QKeySequence> ShortcutManager::commandLiveShortcuts(const CommandId& id) const
+{
+    if (auto* cmd = m_manager.command(id)) {
+        return cmd->shortcuts();
+    }
+    return {};
+}
+
+QList<QKeySequence> ShortcutManager::commandLiveDefaults(const CommandId& id) const
+{
+    if (auto* cmd = m_manager.command(id)) {
+        return cmd->defaultShortcuts();
+    }
+    return {};
 }
 
 void ShortcutManager::rebuildIndex()
 {
     m_shortcutIndex.clear();
 
-    for (const auto& [cmdId, shortcuts] : m_shortcuts) {
-        for (const auto& shortcut : shortcuts) {
+    for (const auto& cmd : m_manager.allCommands()) {
+        const auto seqs = shortcuts(cmd->id());
+        for (const auto& shortcut : seqs) {
             if (!shortcut.isEmpty()) {
-                m_shortcutIndex[shortcut].insert(cmdId);
+                m_shortcutIndex[shortcut].insert(cmd->id());
             }
         }
     }
@@ -51,13 +87,19 @@ void ShortcutManager::rebuildIndex()
 QList<QKeySequence> ShortcutManager::shortcuts(const CommandId& id) const
 {
     auto it = m_shortcuts.find(id);
-    return it != m_shortcuts.end() ? it->second : QList<QKeySequence>();
+    if (it != m_shortcuts.end()) {
+        return it->second;
+    }
+    return commandLiveShortcuts(id);
 }
 
 QList<QKeySequence> ShortcutManager::defaultShortcuts(const CommandId& id) const
 {
     auto it = m_defaults.find(id);
-    return it != m_defaults.end() ? it->second : QList<QKeySequence>();
+    if (it != m_defaults.end()) {
+        return it->second;
+    }
+    return commandLiveDefaults(id);
 }
 
 bool ShortcutManager::setShortcuts(const CommandId& id, const QList<QKeySequence>& shortcuts,
@@ -91,12 +133,12 @@ bool ShortcutManager::setShortcuts(const CommandId& id, const QList<QKeySequence
     }
 
     // Update shortcuts
+    captureDefaults(id);
     m_shortcuts[id] = shortcuts;
     updateCommandShortcuts(id, shortcuts);
 
-    // Track modification
-    bool isDefault = (shortcuts.size() == 1 && shortcuts == defaultShortcuts(id));
-    if (isDefault) {
+    // Track modification: 与默认列表整体比较，允许多个默认快捷键
+    if (shortcuts == defaultShortcuts(id)) {
         m_modified.erase(id);
     } else {
         m_modified.insert(id);
@@ -347,7 +389,7 @@ bool ShortcutManager::loadFromFile(const QString& filePath)
 
     qDebug() << "ShortcutManager: Loaded" << imported << "shortcuts from" << filePath;
 
-    return imported > 0;
+    return true;
 }
 
 QString ShortcutManager::shortcutString(const QKeySequence& shortcut,

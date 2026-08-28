@@ -6,15 +6,48 @@
 #include "gui/b_commandlayout.h"
 #include "gui/b_commandmanager.h"
 #include "gui/b_context.h"
-#include "gui/b_contexttracker.h"
+#include "gui/b_contextarbiter.h"
+#include "gui/b_contextstatus.h"
 #include "gui/b_shortcutmanager.h"
 #include "gui/b_types.h"
 
 namespace bakuon::gui {
 
 /**
+ * @brief 一套独立的命令 / 上下文 / 快捷键工作区。
+ *
+ * CommandSystem 静态门面委托给进程默认实例；多窗口 / 插件沙箱可以各自持有
+ * 一个 CommandWorkspace，彼此的命令注册表和激活集合完全隔离。
+ */
+class CommandWorkspace
+{
+public:
+    CommandWorkspace();
+    CommandWorkspace(const CommandWorkspace&)            = delete;
+    CommandWorkspace& operator=(const CommandWorkspace&) = delete;
+    CommandWorkspace(CommandWorkspace&&)                 = delete;
+    CommandWorkspace& operator=(CommandWorkspace&&)      = delete;
+    ~CommandWorkspace()                                  = default;
+
+    CommandManager& commandManager() noexcept { return m_cmdManager; }
+    const CommandManager& commandManager() const noexcept { return m_cmdManager; }
+
+    ShortcutManager& shortcutManager() noexcept { return m_shortcutManager; }
+    const ShortcutManager& shortcutManager() const noexcept { return m_shortcutManager; }
+
+    ContextArbiter& contextArbiter() noexcept { return m_ctxArbiter; }
+    const ContextArbiter& contextArbiter() const noexcept { return m_ctxArbiter; }
+
+private:
+    ContextArbiter m_ctxArbiter;
+    CommandManager m_cmdManager;
+    ShortcutManager m_shortcutManager;
+};
+
+/**
  * @brief 命令系统门面 Command Facade
  * @todo 未来可能会走向“多个独立的命令系统实例”，
+  * 进程默认工作区的静态入口。需要隔离实例时直接构造 CommandWorkspace。
  * 因为每个插件沙箱都可能有各自隔离的一套命令和上下文，尤其是多文档多窗口的编辑器。
  * 
  * 而使用命名空间的原则是：
@@ -72,9 +105,9 @@ public:
 
     // 显式登记一个上下文 id（owner 必填，通常传入模块/插件的唯一标识），
     // 详细的冲突判定规则见 ContextTracker::registerContext() 的注释。
-    static bool registerContext(const ContextId& id, const QString& owner,
-                                const QString& description);
-    static std::optional<ContextTracker::ContextInfo> contextInfo(const ContextId& id);
+    static std::shared_ptr<ContextState> registerContext(const ContextId& id, const QString& owner,
+                                                         const QString& description);
+    static std::optional<ContextArbiter::ContextInfo> contextInfo(const ContextId& id);
     static std::vector<ContextId> registeredContexts();
     /**
      * declareContext：注册 + 取得 ContextId 的一步到位版本，专为"模块级常量
@@ -98,6 +131,9 @@ public:
      */
     static ContextId declareContext(const QString& id, const QString& owner,
                                     const QString& description);
+
+    static std::shared_ptr<ContextState> context(const ContextId& ctxId);
+    static std::vector<ContextId> contextsForCommand(const CommandId& cmdId);
 
     /// 命令上下文激活/失活
 
@@ -148,35 +184,73 @@ public:
     // 快捷键管理器
     static ShortcutManager& shortcutManager();
 
+    // 进程默认工作区（Construct-On-First-Use）
+    static CommandWorkspace& workspace();
+
 private:
     CommandSystem() = default;
 };
 
-// RAII 生命周期管理器
+// RAII 生命周期管理器：构造时 pushContext，析构时自动 popContext（除非 dismiss）。
+// 不可拷贝；支持移动以便从工厂函数返回。
 class ContextGuard
 {
 public:
-    ContextGuard(const ContextId& context, const void* source)
+    ContextGuard(const ContextId& context, const void* source,
+                 ContextTier tier = ContextTier::Foreground)
         : m_context(context)
         , m_source(source)
+        , m_tier(tier)
         , m_dismissed(false)
     {
-        CommandSystem::pushContext(m_context, m_source);
+        CommandSystem::pushContext(m_context, m_source, m_tier);
+    }
+
+    ContextGuard(const ContextGuard&)            = delete;
+    ContextGuard& operator=(const ContextGuard&) = delete;
+
+    ContextGuard(ContextGuard&& other) noexcept
+        : m_context(other.m_context)
+        , m_source(other.m_source)
+        , m_tier(other.m_tier)
+        , m_dismissed(other.m_dismissed)
+    {
+        other.m_dismissed = true; // 源对象不再负责 pop
+    }
+
+    ContextGuard& operator=(ContextGuard&& other) noexcept
+    {
+        if (this != &other) {
+            if (!m_dismissed) {
+                CommandSystem::popContext(m_context, m_source, m_tier);
+            }
+            m_context         = other.m_context;
+            m_source          = other.m_source;
+            m_tier            = other.m_tier;
+            m_dismissed       = other.m_dismissed;
+            other.m_dismissed = true;
+        }
+        return *this;
     }
 
     ~ContextGuard()
     {
         if (!m_dismissed) {
-            CommandSystem::popContext(m_context, m_source);
+            CommandSystem::popContext(m_context, m_source, m_tier);
         }
     }
 
-    // 允许提前解除或手动控制
-    void dismiss() { m_dismissed = true; }
+    /// 提前解除职责：析构时不再 pop（调用方需自行保证对称的 pop/release）
+    void dismiss() noexcept { m_dismissed = true; }
+
+    bool isActive() const noexcept { return !m_dismissed; }
+    const ContextId& context() const noexcept { return m_context; }
+    ContextTier tier() const noexcept { return m_tier; }
 
 private:
     ContextId m_context;
     const void* m_source;
+    ContextTier m_tier;
     bool m_dismissed;
 };
 

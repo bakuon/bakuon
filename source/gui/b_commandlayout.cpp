@@ -98,7 +98,9 @@ bool CommandLayout::removeItem(Item* item)
 
 bool CommandLayout::moveItem(Item* srcParent, int srcIndex, Item* destParent, int destIndex)
 {
-    if (!srcParent || srcParent->isRoot()) {
+    // BUGFIX: 原先错误地拒绝了 srcParent 为根的情况，导致无法移动顶层菜单/工具栏节点。
+    // 真正禁止移动的是根节点自身，而不是“父节点是根”的子节点。
+    if (!srcParent) {
         return false;
     }
 
@@ -107,6 +109,9 @@ bool CommandLayout::moveItem(Item* srcParent, int srcIndex, Item* destParent, in
     }
 
     auto* srcNode = srcParent->childAt(static_cast<std::size_t>(srcIndex));
+    if (!srcNode || srcNode->isRoot()) {
+        return false; // 禁止移动根节点，或源下标越界
+    }
     if (destParent == srcNode || destParent->isDescendantOf(srcNode)) {
         return false; // 环路保护：不能把节点拖进它自己的子孙里
     }

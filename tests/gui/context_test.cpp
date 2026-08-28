@@ -27,14 +27,16 @@ TEST(ContextTest, StringCaseInsensitive)
 TEST(ContextTest, CollisionDetection)
 {
     const ContextId ctx{"test.collision"};
-    bool r1 = CommandSystem::registerContext(ctx, "moduleA", "first registration");
-    bool r2 = CommandSystem::registerContext(ctx, "moduleA", "duplicate owner call"); // 幂等
-    bool r3 = CommandSystem::registerContext(ctx, "moduleB", "conflicting owner");    // 冲突
-    EXPECT_TRUE(r1 == true) << "上下文发生冲突";
-    EXPECT_TRUE(r2 == true) << "上下文发生冲突";
-    EXPECT_TRUE(r3 == false)
-        << "上下文冲突应该被拒绝"; // 应该被拒绝（下面会有一条 qWarning 输出，属预期行为）
-    qDebug("[OK] registerContext collision detection: r1=%d r2=%d r3=%d\n", r1, r2, r3);
+    auto r1 = CommandSystem::registerContext(ctx, "moduleA", "first registration");
+    auto r2 = CommandSystem::registerContext(ctx, "moduleA", "duplicate owner call"); // 幂等
+    auto r3 = CommandSystem::registerContext(ctx, "moduleB", "conflicting owner");    // 冲突
+    EXPECT_TRUE(r1) << "上下文发生冲突";
+    EXPECT_TRUE(r2) << "上下文发生冲突";
+    EXPECT_TRUE(r3) << "上下文冲突应该被拒绝"; // 应该被拒绝（下面会有一条 qWarning 输出，属预期行为）
+    qDebug("[OK] registerContext collision detection: r1=%s r2=%s r3=%s\n",
+           qPrintable(r1->id().name()),
+           qPrintable(r2->id().name()),
+           qPrintable(r3->id().name()));
 }
 
 TEST(ContextTest, UnregisterContext)

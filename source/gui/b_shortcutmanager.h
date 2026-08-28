@@ -1,5 +1,6 @@
 #pragma once
 
+#include <unordered_map>
 #include <unordered_set>
 
 #include <QtCore/QJsonObject>
@@ -53,17 +54,13 @@ struct ShortcutBinding
     bool isModified = false; // Whether user has customized it
 
     bool hasShortcuts() const { return !shortcuts.isEmpty(); }
-    bool isDefault() const
-    {
-        return !isModified && shortcuts.size() == 1 && shortcuts == defaultShortcuts;
-    }
+    bool isDefault() const { return !isModified && shortcuts == defaultShortcuts; }
 };
 
 class CommandManager;
 
 /**
  * @brief 命令快捷键配置 Shortcut Configure / ShortcutMapper/Mapping
- * @todo 不强依赖 CommandManager，可替换为将 CommandManager 的所有命令以列表的方式传入是否为更优方案。
  */
 class ShortcutManager : public QObject
 {
@@ -171,6 +168,22 @@ public:
     bool loadFromFile(const QString& filePath);
 
     /**
+     * @brief Snapshot defaults/current shortcuts from the command manager.
+     * Safe to call after a batch of registerCommand + setDefaultShortcut.
+     */
+    void initialize();
+
+    /**
+     * @brief Remember a newly registered command (idempotent).
+     */
+    void observeCommand(const CommandId& id);
+
+    /**
+     * @brief Drop cached bindings when a command is unregistered.
+     */
+    void forgetCommand(const CommandId& id);
+
+    /**
      * @brief Get shortcut display string
      * @param shortcut The key sequence
      * @param format Display format (NativeText or PortableText)
@@ -197,9 +210,11 @@ Q_SIGNALS:
     void shortcutsReset();
 
 private:
-    void initialize();
     void rebuildIndex();
     void updateCommandShortcuts(const CommandId& id, const QList<QKeySequence>& shortcuts);
+    void captureDefaults(const CommandId& id);
+    QList<QKeySequence> commandLiveShortcuts(const CommandId& id) const;
+    QList<QKeySequence> commandLiveDefaults(const CommandId& id) const;
 
     CommandManager& m_manager;
 

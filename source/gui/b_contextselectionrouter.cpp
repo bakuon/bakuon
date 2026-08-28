@@ -20,6 +20,7 @@ ContextSelectionRouter::~ContextSelectionRouter()
     // 记得调用一次 setSelected(false)，否则会遗留一份永远不会再被 pop 的引用。
     if (m_selected) {
         CommandSystem::popContext(m_context, this, m_tier);
+        m_selected = false;
     }
 }
 
@@ -51,6 +52,11 @@ void ContextSelectionRouter::route(QItemSelectionModel* selectionModel)
                                     [this, selectionModel] {
                                         setSelected(!selectionModel->selectedIndexes().isEmpty());
                                     });
+    // 选择模型被销毁时视为取消选中，避免遗留激活引用。
+    connect(selectionModel, &QObject::destroyed, this, [this]() {
+        m_selectionConnection = {};
+        setSelected(false);
+    });
 
     setSelected(!selectionModel->selectedIndexes().isEmpty());
 }

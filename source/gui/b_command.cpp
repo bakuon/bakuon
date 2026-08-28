@@ -2,9 +2,8 @@
 
 namespace bakuon::gui {
 
-Command::Command(const CommandId& id, QString defaultText, IContextArbiter& arbiter)
-    : QObject(nullptr) // note: it is a std::unique_ptr<Command>
-    , m_arbiter(arbiter)
+Command::Command(const CommandId& id, QString defaultText, QObject* parent)
+    : QObject(parent)
     , m_id(id)
     , m_defaultText(std::move(defaultText))
     , m_defaultCheckable(false)
@@ -16,12 +15,6 @@ Command::Command(const CommandId& id, QString defaultText, IContextArbiter& arbi
     // （无权威源时仅禁用代理、保留最后一次镜像的文案，不直接从菜单/工具栏消失）。
     m_attributes = Attribute::UpdateText | Attribute::UpdateIcon | Attribute::UpdateToolTip
                    | Attribute::UpdateChecked | Attribute::UpdateEnabled;
-
-    // 注意：这里不再自己 connect 具体 ContextTracker::contextChanged 信号——
-    // Command 现在只认识 IContextArbiter 这个纯接口，不知道"谁在什么时候通知我
-    // 上下文变了"。上下文集合何时变化、要不要触发 resyncAuthoritativeBinding()，
-    // 交给持有具体 ContextTracker 的上层（CommandManager/CommandSystem）在
-    // 装配阶段自行 connect，见 resyncAuthoritativeBinding() 的文档注释。
 }
 
 QAction* Command::action()
@@ -32,15 +25,16 @@ QAction* Command::action()
 void Command::setDefaultText(const QString& text)
 {
     m_defaultText = text;
-    if (m_proxyAction && m_authoritativeIndex < 0) {
-        m_proxyAction->setText(m_defaultText); // 只有在没有权威源接管时，默认值才直接生效
+    // 仅在无权威源时写回代理，避免覆盖正在镜像的 realAction 文案
+    if (m_proxyAction && !m_realAction) {
+        m_proxyAction->setText(m_defaultText);
     }
 }
 
 void Command::setDefaultIcon(const QIcon& icon)
 {
     m_defaultIcon = icon;
-    if (m_proxyAction && m_authoritativeIndex < 0) {
+    if (m_proxyAction && !m_realAction) {
         m_proxyAction->setIcon(m_defaultIcon);
     }
 }
@@ -48,7 +42,7 @@ void Command::setDefaultIcon(const QIcon& icon)
 void Command::setDefaultCheckable(bool checkable)
 {
     m_defaultCheckable = checkable;
-    if (m_proxyAction && m_authoritativeIndex < 0) {
+    if (m_proxyAction && !m_realAction) {
         m_proxyAction->setCheckable(m_defaultCheckable);
     }
 }
@@ -91,10 +85,19 @@ void Command::setShortcut(const QKeySequence& shortcut)
     setShortcuts({shortcut});
 }
 
+void Command::setActive(bool active)
+{
+    if (m_active == active) {
+        return;
+    }
+    m_active = active;
+    Q_EMIT activeChanged(m_active);
+}
+
 void Command::setAttributes(Attributes attributes)
 {
     m_attributes = attributes;
-    resyncAuthoritativeBinding(); // 策略变化可能影响当前代理的可见性/禁用表现，立即按新策略校正一次
+    syncCurrentState(); // 策略变了，哪怕权威源身份没变，也要按新策略重新同步一次
 }
 
 void Command::setAttribute(Attributes attribute, bool on)
@@ -104,142 +107,43 @@ void Command::setAttribute(Attributes attribute, bool on)
     } else {
         m_attributes &= ~Attributes(attribute);
     }
-    resyncAuthoritativeBinding();
+    syncCurrentState();
 }
 
-void Command::addContextAction(QAction* realAction, const ContextId& context, int priority)
+void Command::setRealAction(QAction* activeAction)
 {
-    Q_ASSERT_X(realAction != nullptr, "Command::addContextAction", "realAction is null");
-
-    if (realAction == m_proxyAction) {
-        return;
+    if (m_realAction.data() == activeAction) {
+        return; // 身份没变；状态是否与当前 Attributes 一致由其它入口（setAttributes 等）保证
     }
-
-    // changed()/destroyed() 两条连接的建立逻辑复用；lambda 里都是按下标查
-    // m_bindings[m_authoritativeIndex]，不直接捕获 binding 引用，所以 vector
-    // 扩容/重新分配也不会让这些连接失效，可以安全地在"替换"和"新增"两条路径间共享。
-    auto wireBinding = [this](ContextBinding& binding) {
-        QAction* action       = binding.realAction;
-        binding.changedConn   = connect(action, &QAction::changed, this, [this]() {
-            if (m_authoritativeIndex < 0 || !m_proxyAction) {
-                return;
-            }
-            QObject* changedSender = sender();
-            if (m_bindings[m_authoritativeIndex].realAction.data() != changedSender) {
-                return; // 非当前权威源的属性变化，忽略
-            }
-            mirrorProperties(qobject_cast<QAction*>(changedSender), m_proxyAction);
-        });
-        binding.destroyedConn = connect(action, &QObject::destroyed, this, [this]() {
-            m_authoritativeIndex = -1;
-            resyncAuthoritativeBinding();
-        });
-    };
-
-    // 若该上下文已有旧绑定，原地替换而不是先摘除、重新插入——避免中间产生一次
-    // "该上下文暂时没有绑定"的过渡态，导致 resyncAuthoritativeBinding 被多余地
-    // 触发两次（旧绑定摘除时一次、新绑定插入时又一次），也省掉一次不必要的
-    // disconnect+reconnect 转发连接。
-    auto it = std::find_if(m_bindings.begin(),
-                           m_bindings.end(),
-                           [&context](const ContextBinding& b) { return b.context == context; });
-    if (it != m_bindings.end()) {
-        QObject::disconnect(it->changedConn);
-        QObject::disconnect(it->destroyedConn);
-        it->realAction = realAction;
-        it->priority   = priority;
-        wireBinding(*it);
-    } else {
-        ContextBinding binding;
-        binding.context    = context;
-        binding.realAction = realAction;
-        binding.priority   = priority;
-        wireBinding(binding);
-        m_bindings.push_back(std::move(binding));
-    }
-
-    m_authoritativeIndex = -1; // 绑定关系发生了变化，下标必须重新计算，不能沿用旧值
-    resyncAuthoritativeBinding();
+    m_realAction = activeAction;
+    syncCurrentState();
 }
 
-void Command::removeContextAction(const ContextId& context)
+void Command::syncCurrentState()
 {
-    auto it = std::find_if(m_bindings.begin(),
-                           m_bindings.end(),
-                           [&context](const ContextBinding& b) { return b.context == context; });
-    if (it == m_bindings.end()) {
-        return;
-    }
-    QObject::disconnect(it->changedConn);
-    QObject::disconnect(it->destroyedConn);
-    m_bindings.erase(it);
-    m_authoritativeIndex = -1; // erase 会导致下标整体偏移，统一失效后重新计算最稳妥
-    resyncAuthoritativeBinding();
-}
-
-bool Command::hasContextAction(const ContextId& context) const noexcept
-{
-    return std::any_of(m_bindings.begin(), m_bindings.end(), [&context](const ContextBinding& b) {
-        return b.context == context;
-    });
-}
-
-std::vector<Candidate> Command::contexts() const
-{
-    std::vector<Candidate> candidates;
-    candidates.reserve(m_bindings.size());
-    for (const auto& binding : m_bindings) {
-        candidates.push_back({binding.context, binding.priority});
-    }
-    return candidates;
-}
-
-int Command::findAuthoritativeIndex() const
-{
-    // 仲裁规则本身已经搬进 IContextArbiter::resolveAuthoritative()（通常由 ContextTracker
-    // 实现），这里只负责把 m_bindings 转换成候选列表——调用者（resyncAuthoritativeBinding）
-    // 已经在此之前 erase_if 过 realAction 为空的绑定，所以这里 candidates 和 m_bindings
-    // 是严格一一对应的，返回下标可以直接用来索引 m_bindings，不需要额外的映射表。
-    std::vector<Candidate> candidates;
-    candidates.reserve(m_bindings.size());
-    for (const auto& binding : m_bindings) {
-        candidates.push_back({binding.context, binding.priority});
-    }
-    return m_arbiter.resolveAuthoritative(candidates);
-}
-
-void Command::resyncAuthoritativeBinding()
-{
-    // 清理已失效（realAction 已销毁）的绑定，避免野下标/悬空引用参与后续仲裁
-    std::erase_if(m_bindings, [](const ContextBinding& b) { return b.realAction.isNull(); });
-
-    const int newIndex = findAuthoritativeIndex();
-
-    if (!m_proxyAction) {
-        return; // 尚未有人调用过 action()，无需同步任何 UI 状态
-    }
-
-    // 无需任何更新
-    if (m_authoritativeIndex >= 0 && newIndex == m_authoritativeIndex) {
-        return;
-    }
-
-    // !!! 这里曾经有一个真实的 bug：早期实现用「本次算出的权威下标是否等于上次的值」
-    // 来决定要不要重新连接 proxyAction::triggered -> real->trigger()，试图省掉一次
-    // disconnect+connect。但「下标没变」不代表「转发连接已经建立过」——如果上一次
-    // resync 发生在 m_proxyAction 还不存在的时候（先 registerContextAction、后调用
-    // proxyAction() 是很常见的时序，比如某条命令一直没被拖进任何菜单/工具栏，直到
-    // "自定义菜单"对话框第一次读取它的显示文本才触发 proxyAction() 创建），
-    // 权威下标当时就已经算好了、且从未变化过，但转发连接其实从来没建立过，
-    // 于是这条命令的代理点了没反应。命令数量在几十到百的量级，无条件重连的开销
-    // 完全可以忽略，用一点点确定性换掉这一整类"看似没变化其实没接线"的 bug 完全值得，
-    // 因此这里不再做这个优化，每次都老老实实重新断开、按需重新连接。
+    QObject::disconnect(m_changedConn);
     QObject::disconnect(m_triggeredConn);
-    QObject::disconnect(m_toggledConn);
-    m_authoritativeIndex = newIndex;
+    // QObject::disconnect(m_toggledConn);
 
-    if (m_authoritativeIndex < 0) {
-        // 无权威源：按 HideWhenIdle 策略决定是隐藏还是仅禁用（保留最后一次镜像的文案）
+    if (!m_realAction) {
+        setActive(false);
+        // 无权威源：按 HideWhenIdle 策略决定是隐藏还是仅禁用。
+        // 同时回落到默认展示（text/icon/checkable），避免长期停留在上一个权威源的镜像残影；
+        // 若业务希望“保留最后一次镜像文案”，可关闭对应 Update* 属性后自行通过 action() 摆布。
+        if (m_attributes.testFlag(Attribute::UpdateText)) {
+            m_proxyAction->setText(m_defaultText);
+        }
+        if (m_attributes.testFlag(Attribute::UpdateIcon)) {
+            m_proxyAction->setIcon(m_defaultIcon);
+        }
+        if (m_attributes.testFlag(Attribute::UpdateChecked)) {
+            m_proxyAction->setCheckable(m_defaultCheckable);
+            if (m_defaultCheckable) {
+                const bool wasBlocked = m_proxyAction->blockSignals(true);
+                m_proxyAction->setChecked(false);
+                m_proxyAction->blockSignals(wasBlocked);
+            }
+        }
         m_proxyAction->setVisible(!m_attributes.testFlag(Attribute::HideWhenIdle));
         if (m_attributes.testFlag(Attribute::UpdateEnabled)) {
             m_proxyAction->setEnabled(false);
@@ -247,20 +151,29 @@ void Command::resyncAuthoritativeBinding()
         return;
     }
 
-    QAction* real = m_bindings[static_cast<size_t>(m_authoritativeIndex)].realAction;
+    QAction* real = m_realAction;
     // 先整体同步一次，避免残留旧权威源的状态导致闪烁/不一致
-    mirrorProperties(real, m_proxyAction); // 按当前 Attributes 策略整体同步一次，避免闪烁/不一致
+    mirrorProperties(real, m_proxyAction); // 先整体同步一次，避免残留旧权威源状态导致闪烁
 
     bool shouldBeActive = real && m_proxyAction->isEnabled() && m_proxyAction->isVisible()
                           && !m_proxyAction->isSeparator();
     setActive(shouldBeActive);
 
+    m_changedConn   = connect(real, &QAction::changed, this, [this, real]() {
+        if (m_realAction.data() == real) {
+            mirrorProperties(real, m_proxyAction);
+        }
+    });
+    // 只转发 triggered：checkable 的 QAction 在点击时会先 toggle 再 emit triggered，
+    // 若再连 toggled -> real->toggle()，real 会被切换两次，等于没切。
     m_triggeredConn = connect(m_proxyAction, &QAction::triggered, real, [real](bool) {
         real->trigger();
     });
-    m_toggledConn   = connect(m_proxyAction, &QAction::toggled, real, [real](bool) {
-        real->toggle();
-    });
+
+    // 注意：这里不需要 Command 自己再连一次 real 的 destroyed() ——ContextState 已经监听了
+    // 它注册的每个 action 的 destroyed()，销毁时会 emit actionsChanged()，ContextArbiter
+    // 监听到之后会重新仲裁并调用 setRealAction(新权威源或 nullptr)。m_realAction 是
+    // QPointer，即便这中间有极短暂的窗口，读取它也不会是悬空指针。
 }
 
 void Command::mirrorProperties(const QAction* from, QAction* to)
