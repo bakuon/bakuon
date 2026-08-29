@@ -41,11 +41,29 @@ class PluginContext
 public:
     /**
      * @brief 插件上下文
-     * @todo 注入 IExtensionSystem 引用，让插件初始化时获取到依赖的扩展点，
-     *       供初始化时注册扩展以及启动时 extensionsInitialized() 访问其他插件注册的扩展。
+     * @param arguments       插件启动命令行参数
+     * @param extensionSystem 当前进程内的 IExtensionSystem 实例（可为 nullptr，见下方说明）。
+     *
+     * @note 为什么是指针而不是原来 TODO 里设想的引用：extensionSystem() 允许返回 nullptr——
+     *       并不是所有调用 initialize() 的场景都一定有扩展系统可用（比如未来如果出现极简的
+     *       "纯命令行工具、不需要任何扩展点"的宿主场景）。指针能自然表达"可能没有"，
+     *       引用做不到，插件侧用之前必须判空，这是刻意的、比引用更诚实的接口。
+     *
+     * @note 为什么必须显式注入、不能让插件自己再调一次 ExtensionSystem::instance()：
+     *       ExtensionSystem::instance() 是 Meyers' Singleton，其"进程内唯一"的保证只在
+     *       *同一个* 链接产物内成立——一旦插件是被 dlopen() 进来的独立 .so，且 bakuon::gui
+     *       是以 STATIC 库形式分别静态链接进宿主可执行文件和插件 .so 两份（当前就是这样），
+     *       两边各自持有一份完全独立的 ExtensionSystem::instance() 静态局部对象，
+     *       内存地址不同，插件在自己 .so 里调用 instance() 拿到的是"自己那一份"，
+     *       根本不是宿主进程真正在用的那一份，注册的扩展点对宿主完全不可见。
+     *       把宿主进程手里那份 IExtensionSystem* 显式通过 PluginContext 传进来，
+     *       插件侧只做虚函数指针调用（ABI 兼容、不依赖任何跨 .so 的 ODR 合并），
+     *       是唯一在"bakuon::gui 保持 STATIC 库"这个现状下仍然正确的做法——
+     *       这同时也是这个类之前留的 "@todo 注入 IExtensionSystem 引用" 的正式实现。
      */
-    explicit PluginContext(QStringList arguments = {})
+    explicit PluginContext(QStringList arguments = {}, IExtensionSystem* extensionSystem = nullptr)
         : m_arguments(std::move(arguments))
+        , m_extensionSystem(extensionSystem)
     {
     }
 
@@ -58,8 +76,16 @@ public:
      */
     const QStringList& arguments() const { return m_arguments; }
 
+    /**
+     * @brief 获取当前进程内的 IExtensionSystem 实例，用于注册/查询扩展点。
+     * @return 调用方（宿主 PluginPipeline）注入的实例；理论上不会是 nullptr，
+     *         但插件侧仍应判空后再使用，避免极端场景下的空指针解引用。
+     */
+    IExtensionSystem* extensionSystem() const { return m_extensionSystem; }
+
 private:
     QStringList m_arguments;
+    IExtensionSystem* m_extensionSystem = nullptr;
 };
 
 } // namespace bakuon::gui

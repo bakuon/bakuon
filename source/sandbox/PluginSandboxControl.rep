@@ -1,0 +1,60 @@
+#include <QString>
+#include <QVariantMap>
+
+// ============================================================================
+// PluginSandboxControl —— 进程外插件沙箱的控制平面契约（QtRO .rep）
+//
+// 只承载"控制信令"：初始化/运行/停止/进度/日志/命令分发结果，
+// 不承载任何大块业务数据——大数据（大文本/音视频/点云/图片……）走
+// QSharedMemory（见 b_sharedmemorychannel.h），本契约里只传递一个
+// memoryKey 字符串，双方各自挂载同一块共享内存原地读写。
+//
+// 角色澄清（重要，务必先读 b_sandboxsupervisor.h / b_sandboxruntime.h 顶部注释）：
+// 需求原文是"主程序（Host）作为 QRemoteObjectHost，插件沙箱（Sandbox）作为
+// QRemoteObjectNode"。经过实测验证，QtRO 在不引入 QRemoteObjectRegistryHost
+// 的点对点连接场景下，只有"监听/发布"的一端能把 enableRemoting() 的对象开放
+// 给已连接的对端 acquire()——单纯 QRemoteObjectNode，或"只 connectToNode()
+// 不 setHostUrl() 的 QRemoteObjectHost"，都无法把本地对象发布给对端识别到。
+// 因此本实现里实际的类型分工是：
+//   - Sandbox 子进程 = QRemoteObjectHost（在专属本地地址上监听 + enableRemoting
+//     真正承载业务逻辑的 Source 实现，见 b_sandboxruntime.h）
+//   - Host 主程序   = QRemoteObjectNode（每个沙箱实例一个，只需 connectToNode()
+//     连过去 acquire<Replica>()，见 b_sandboxsupervisor.h）
+// 这仍然完整保留了需求的"控制流全部通过 QtRO 契约自动同步"和"本地命名管道连接"
+// 的核心意图，只是把"谁在管道的哪一端监听/发布"按 QtRO 的实际能力做了修正。
+// ============================================================================
+
+class PluginSandboxControl
+{
+    // 沙箱粗粒度运行阶段：完整的插件生命周期细节仍由 Sandbox 进程内部复用的
+    // gui::PluginPipeline::PluginState 状态机负责（见 b_sandboxruntime.cpp），
+    // 这里只暴露 Host 侧真正需要感知、用于驱动"下一步该调用哪个 slot"的粗粒度阶段。
+    // 警告：枚举内不要使用中文注释，否则抛出 Unknown token encountered 错误，尤其是 'Faulted' 后面。
+    ENUM SandboxPhase{
+        Connecting,
+        Loading,
+        Initializing,
+        Ready,
+        Running,
+        Stopping,
+        Stopped,
+        Faulted
+    }
+
+    PROP(SandboxPhase phase = SandboxPhase::Connecting);
+    PROP(int progress = 0);      // 预留：为长耗时的 Loading/Initializing 阶段提供进度反馈
+    PROP(QString pluginId);      // 插件 metadata().id，Validated 阶段后才有值
+    PROP(qint64 pid = 0);        // 沙箱子进程的 PID，便于 Host 侧诊断/强制终止
+
+    // ── Host → Sandbox：控制指令 ──
+    SLOT(void loadPlugin(QString filePath, QVariantMap arguments));
+    SLOT(void run());
+    SLOT(void stop());
+    SLOT(void shutdownSandbox());
+    SLOT(void executeCommand(QString requestId, QString commandId, QString memoryKey, QVariantMap params));
+
+    // ── Sandbox → Host：事件通知 ──
+    SIGNAL(logMessage(int level, QString message));
+    SIGNAL(commandFinished(QString requestId, bool ok, QString memoryKey, QString errorMessage));
+    SIGNAL(faulted(QString reason));
+};

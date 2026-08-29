@@ -10,6 +10,7 @@
 # ============================================================================
 option(BAKUON_BUILD_CORE "构建 bakuon::core（source/core 当前为空，实现代码就绪前请勿开启）" OFF)
 option(BAKUON_BUILD_PLUGIN "构建 bakuon::plugin（原生插件基础设施静态库）" ON)
+option(BAKUON_BUILD_SANDBOX "构建 bakuon::sandbox（进程外插件沙箱隔离，依赖 Qt RemoteObjects）" ON)
 
 if(BAKUON_BUILD_CORE)
     add_subdirectory(core)
@@ -19,4 +20,8 @@ add_subdirectory(gui)
 
 if(BAKUON_BUILD_PLUGIN)
     add_subdirectory(plugin)
+endif()
+
+if(BAKUON_BUILD_SANDBOX)
+    add_subdirectory(sandbox)
 endif()

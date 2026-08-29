@@ -132,17 +132,17 @@ public:
 
     /**
      * @brief 类型安全地获取指定 T 的扩展点
-     * @note 无需重新定义同名模板函数，调用基类模板函数方法： this->IExtensionSystem::template extensionPoint<T>(id);
+     * @note 需重新定义同名模板函数，或调用基类模板函数： this->IExtensionSystem::template extensionPoint<T>(id);
      * @tparam T 接口类型
      * @param id IID；为空时使用 extension_iid<T>::value()
      * @return 转换成功返回 shared_ptr<IExtensionPoint<T>>；失败返回 nullptr
      */
-    // template<typename T>
-    // std::shared_ptr<IExtensionPoint<T>> extensionPoint(const std::string& id = {}) const
-    // {
-    //     std::string iid = id.empty() ? std::string(extension_iid<T>::value()) : id;
-    //     return std::dynamic_pointer_cast<IExtensionPoint<T>>(extensionPoint(iid));
-    // }
+    template<typename T>
+    std::shared_ptr<IExtensionPoint<T>> extensionPoint(const std::string& id = {}) const
+    {
+        std::string iid = id.empty() ? std::string(extension_iid<T>::value()) : id;
+        return std::dynamic_pointer_cast<IExtensionPoint<T>>(extensionPoint(iid));
+    }
 
     /**
      * @brief 是否存在指定 ID 的扩展点

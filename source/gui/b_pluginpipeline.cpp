@@ -4,6 +4,8 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QLibrary>
 
+#include "gui/b_extensionsystem.h"
+
 namespace bakuon::gui {
 
 QString toString(PluginState state)
@@ -329,7 +331,12 @@ void PluginPipeline::executeInitialize()
     // 筛出属于这个插件的部分（剥掉前缀还原成 "--<rest>"），外加所有不带 "--plugin:" 前缀的全局参数。
     // 单独使用 PluginPipeline（不经过 PluginSystem）时，m_argumentValues 默认空，除非调用方自己
     // 用 setArgumentValues() 传值。
-    PluginContext ctx(m_argumentValues);
+    //
+    // extensionSystem() 注入的是"当前这个链接产物自己那份" ExtensionSystem::instance()——
+    // PluginPipeline 本身就跟插件运行在同一个进程/同一份 bakuon::gui 静态库实例里
+    // （无论是主程序直接静态链接，还是像 SandboxRuntime 那样在独立子进程里静态链接），
+    // 所以这里拿到的地址就是"这个进程里唯一正确"的那一份，见 PluginContext.h 的详细说明。
+    PluginContext ctx(m_argumentValues, &ExtensionSystem::instance());
     if (!m_instance->initialize(ctx)) {
         m_lastError = QStringLiteral("IPlugin::initialize() 返回失败");
         handle(PluginEvent::Fail);

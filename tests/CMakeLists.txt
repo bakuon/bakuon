@@ -94,3 +94,36 @@ bakuon_add_test(
     "gui/result_status_test.cpp"
     DEPENDS
     bakuon::gui)
+
+# ============================================================================
+# sandbox 模块测试
+# ============================================================================
+if(TARGET sandbox)
+    bakuon_add_test(
+        NAME
+        test_sandbox_sharedmemorychannel
+        SOURCES
+        "sandbox/sharedmemorychannel_test.cpp"
+        DEPENDS
+        bakuon::sandbox)
+
+    # 端到端集成测试需要真实的 sandbox_runtime 可执行文件 + sandboxed_example_plugin
+    # 动态库都被构建出来才有意义（分别对应 BAKUON_BUILD_SANDBOX_RUNTIME 和
+    # BAKUON_BUILD_PLUGINS）；任一条件不满足时这个 target 就不存在，整体跳过，
+    # 不影响其余测试正常跑。
+    if(TARGET sandbox_runtime AND TARGET sandboxed_example_plugin)
+        bakuon_add_test(
+            NAME
+            test_sandbox_integration
+            SOURCES
+            "sandbox/sandbox_integration_test.cpp"
+            DEPENDS
+            bakuon::sandbox)
+        target_compile_definitions(
+            test_sandbox_integration
+            PRIVATE
+            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+        add_dependencies(test_sandbox_integration sandbox_runtime sandboxed_example_plugin)
+    endif()
+endif()

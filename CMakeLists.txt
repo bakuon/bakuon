@@ -24,6 +24,8 @@ option(BAKUON_BUILD_TESTS "构建 bakuon 单元测试" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_EXAMPLES "构建 bakuon 示例程序" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_STANDALONE "构建 standalone 主程序" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_PLUGINS "构建 plugins/ 下的运行时插件（MODULE/SHARED）" ${PROJECT_IS_TOP_LEVEL})
+option(BAKUON_BUILD_SANDBOX_RUNTIME "构建 sandbox_runtime/ 下的插件沙箱子进程可执行文件（依赖 BAKUON_BUILD_SANDBOX）"
+       ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_ENABLE_WARNINGS "启用 -Wall -Wextra / W4 等编译警告" ON)
 option(BAKUON_WARNINGS_AS_ERRORS "将编译警告视为错误" OFF)
 option(BAKUON_INSTALL_SDK "安装 core/gui/plugin 的头文件与导出 target（打包方案未定，默认关闭）" OFF)
