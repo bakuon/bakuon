@@ -39,8 +39,8 @@ bakuon_add_module(
 # ============================================================================
 # QtRO 契约代码生成：本模块同时包含 Host 侧（用到 Replica）和 Sandbox 侧
 # （用到 Source）逻辑，因此对同一个 target 同时生成两份头文件——
-# 分别由 b_sandboxsupervisor.cpp（#include "rep_PluginSandboxControl_replica.h"）
-# 和 b_sandboxruntime.cpp（#include "rep_PluginSandboxControl_source.h"）使用。
+# 分别由 b_sandboxsupervisor.cpp（#include "rep_pluginsandboxcontrol_replica.h"）
+# 和 b_sandboxruntime.cpp（#include "rep_pluginsandboxcontrol_source.h"）使用。
 # 生成的头文件落在 CMAKE_CURRENT_BINARY_DIR，需要额外加进 include 路径
 # （bakuon_add_module() 默认不知道这个目录，PUBLIC 是因为 sandbox_runtime/
 # 可执行文件不直接使用这些生成头，只有链接了 bakuon::sandbox 的目标间接需要，
@@ -48,13 +48,13 @@ bakuon_add_module(
 # ----------------------------------------------------------------------------
 #
 # 生成产物（构建目录）：
-#   rep_PluginSandboxControl_source.h   → PluginSandboxControlSource / PluginSandboxControlSimpleSource
-#   rep_PluginSandboxControl_replica.h  → PluginSandboxControlReplica
+#   rep_pluginsandboxcontrol_source.h   → PluginSandboxControlSource / PluginSandboxControlSimpleSource
+#   rep_pluginsandboxcontrol_replica.h  → PluginSandboxControlReplica
 #
 # 必须在 bakuon_add_module 之后调用，以便挂到已存在的 target `sandbox` 上。
 # qt6_add_repc_* 会把生成头加入 target 的 include 路径，并注册 moc。
 # ============================================================================
-set(BAKUON_SANDBOX_REP "${CMAKE_CURRENT_SOURCE_DIR}/PluginSandboxControl.rep")
+set(BAKUON_SANDBOX_REP "${CMAKE_CURRENT_SOURCE_DIR}/b_pluginsandboxcontrol.rep")
 
 qt6_add_repc_sources(${PROJECT_NAME} ${BAKUON_SANDBOX_REP})
 qt6_add_repc_replicas(${PROJECT_NAME} ${BAKUON_SANDBOX_REP})

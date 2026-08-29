@@ -17,7 +17,7 @@ class PluginSandboxControlReplica;
 
 namespace bakuon::sandbox {
 
-/// 与 PluginSandboxControl.rep 里的 SandboxPhase 一一对应，见该文件顶部注释。
+/// 与 pluginsandboxcontrol.rep 里的 SandboxPhase 一一对应，见该文件顶部注释。
 enum class SandboxPhase {
     Connecting,
     Loading,
@@ -45,7 +45,7 @@ QString toString(SandboxPhase phase);
  *     对外屏蔽掉 QtRO/QRemoteObjectReplica 这些实现细节。
  *
  * ## 为什么本类持有的是 QRemoteObjectNode 而不是 QRemoteObjectHost
- * 见 PluginSandboxControl.rep 顶部注释的架构说明：真正 enableRemoting()
+ * 见 pluginsandboxcontrol.rep 顶部注释的架构说明：真正 enableRemoting()
  * 发布 Source 对象的是 Sandbox 子进程（见 SandboxRuntime），Host 侧只需要
  * 连接过去 acquire，一个轻量 QRemoteObjectNode 就够用，不需要自己监听。
  *

@@ -9,7 +9,7 @@
 #include "sandbox/b_sharedmemorychannel.h"
 
 // repc 生成的 Replica 端头文件，由 CMakeLists.txt 里的 qt6_add_repc_replicas() 驱动生成。
-#include "rep_PluginSandboxControl_replica.h"
+#include "rep_b_pluginsandboxcontrol_replica.h"
 
 namespace bakuon::sandbox {
 

@@ -21,7 +21,7 @@ namespace bakuon::sandbox {
  *
  * 真正的大数据搬运走 QSharedMemory：Host 和 Sandbox 两个进程把同一块共享
  * 内存映射进各自地址空间，数据本身"原地"可见，不需要跨进程拷贝或序列化——
- * QtRO 契约里只传递一个字符串 key（见 PluginSandboxControl.rep 的
+ * QtRO 契约里只传递一个字符串 key（见 pluginsandboxcontrol.rep 的
  * executeCommand(requestId, commandId, memoryKey, params)），Sandbox 收到
  * key 后自己挂载对应的共享内存块，直接在原地读写。
  *

@@ -15,7 +15,7 @@
 
 // repc 生成的 Source 端头文件，由 CMakeLists.txt 里的 qt6_add_repc_sources() 驱动生成，
 // 落在本 target 的 CMAKE_CURRENT_BINARY_DIR 下（源码里看不到这个文件是正常的）。
-#include "rep_PluginSandboxControl_source.h"
+#include "rep_b_pluginsandboxcontrol_source.h"
 
 namespace bakuon::sandbox {
 

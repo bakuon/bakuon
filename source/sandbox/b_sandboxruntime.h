@@ -19,7 +19,7 @@ namespace bakuon::sandbox {
  *        逻辑的一端。
  *
  * ## 为什么这里是 QRemoteObjectHost 而不是需求原文里的 QRemoteObjectNode
- * 见 PluginSandboxControl.rep 顶部注释——经实测验证，QtRO 点对点连接下只有
+ * 见 pluginsandboxcontrol.rep 顶部注释——经实测验证，QtRO 点对点连接下只有
  * 监听/发布（enableRemoting）的一端才能把对象开放给已连接的对端 acquire()。
  * 真正执行 loadPlugin()/run()/executeCommand() 等业务逻辑的一端必须是
  * enableRemoting() 的那一端，所以 Sandbox 子进程实际构造的是

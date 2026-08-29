@@ -11,7 +11,7 @@ namespace bakuon::sandbox {
  */
 namespace cli {
 /// 沙箱进程应当监听（setHostUrl）的本地地址，如 "local:bakuon-sandbox-<uuid>"。
-/// 见 PluginSandboxControl.rep 顶部注释：Sandbox 是监听/发布端，Host 是连接/acquire 端。
+/// 见 pluginsandboxcontrol.rep 顶部注释：Sandbox 是监听/发布端，Host 是连接/acquire 端。
 inline constexpr auto kListen    = "--sandbox-listen";
 /// Host 分配的沙箱实例 id（纯诊断/日志用途，不参与寻址）。
 inline constexpr auto kSandboxId = "--sandbox-id";
