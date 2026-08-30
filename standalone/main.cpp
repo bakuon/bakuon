@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     // 第二条腿：进程外沙箱插件（sandbox::SandboxSystem）—— 基础启动流程演示
     // ------------------------------------------------------------------
-    bakuon::sandbox::SandboxSystem sandboxSystem;
+    bakuon::sandbox::SandboxSystem sandboxSystem(&app);
     QObject::connect(&sandboxSystem,
                      &bakuon::sandbox::SandboxSystem::sandboxPhaseChanged,
                      &sandboxSystem,

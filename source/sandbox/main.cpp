@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     const QString sandboxId = parser.isSet(sandboxIdOption) ? parser.value(sandboxIdOption)
                                                             : QStringLiteral("unknown");
 
-    bakuon::sandbox::SandboxRuntime runtime(sandboxId);
+    bakuon::sandbox::SandboxRuntime runtime(sandboxId, &app);
     QObject::connect(&runtime,
                      &bakuon::sandbox::SandboxRuntime::shutdownRequested,
                      &app,
