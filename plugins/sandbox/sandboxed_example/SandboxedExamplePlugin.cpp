@@ -75,7 +75,7 @@ bool SandboxedExamplePlugin::initialize(bakuon::gui::PluginContext &ctx)
 
 void SandboxedExamplePlugin::extensionsInitialized()
 {
-    qDebug() << Q_FUNC_INFO;
+    qInfo() << Q_FUNC_INFO;
 }
 
 void SandboxedExamplePlugin::shutdown()

@@ -3,6 +3,7 @@
 #include <QtCore/QDebug>
 #include <QtCore/QJsonObject>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_types.h"
 #include "gui/detail/b_treenode.h"
 
@@ -50,7 +51,7 @@ struct CommandLayoutData
  *   CommandModel 的接口去改（CommandModel 内部会转调 CommandLayout 并补上信号）。
  *   只读操作（exportToJson/saveToFile）任何时候直接调用都是安全的。
  */
-class CommandLayout
+class BAKUON_GUI_EXPORT CommandLayout
 {
 public:
     using Item = TreeNode<CommandLayoutData>;

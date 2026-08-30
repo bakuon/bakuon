@@ -4,6 +4,7 @@
 #include <QtCore/QJsonObject>
 
 #include "gui/b_commandlayout.h"
+#include "gui/b_gui_export.h"
 
 namespace bakuon::gui {
 
@@ -21,7 +22,7 @@ namespace bakuon::gui {
 // 一旦某个 CommandLayout 已经被某个 CommandModel 包裹，后续所有结构性编辑都应该
 // 通过这个 CommandModel 进行，不要绕开它直接调用 CommandLayout 的编辑方法
 // ——详见 CommandLayout.h 头部的生命周期约束说明。
-class CommandModel final : public QAbstractItemModel
+class BAKUON_GUI_EXPORT CommandModel final : public QAbstractItemModel
 {
     Q_OBJECT
 public:

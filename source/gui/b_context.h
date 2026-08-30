@@ -6,11 +6,12 @@
 #include <QtCore/QPointer>
 #include <QtWidgets/QWidget>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_types.h"
 
 namespace bakuon::gui {
 
-class Context
+class BAKUON_GUI_EXPORT Context
 {
 public:
     Context() = default;

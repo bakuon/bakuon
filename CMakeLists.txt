@@ -24,7 +24,7 @@ option(BAKUON_BUILD_TESTS "构建 bakuon 单元测试" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_EXAMPLES "构建 bakuon 示例程序" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_STANDALONE "构建 standalone 主程序" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_PLUGINS "构建 plugins/ 下的运行时插件（MODULE/SHARED）" ${PROJECT_IS_TOP_LEVEL})
-option(BAKUON_BUILD_SANDBOX_RUNTIME "构建 sandbox_runtime/ 下的插件沙箱子进程可执行文件（依赖 BAKUON_BUILD_SANDBOX）"
+option(BAKUON_BUILD_SANDBOX_RUNTIME "构建 source/sandbox/ 下的插件沙箱子进程可执行文件（依赖 BAKUON_BUILD_SANDBOX）"
        ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_ENABLE_WARNINGS "启用 -Wall -Wextra / W4 等编译警告" ON)
 option(BAKUON_WARNINGS_AS_ERRORS "将编译警告视为错误" OFF)
@@ -42,6 +42,38 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 框架内所有静态库都以位置无关代码编译，
 # 以便未来被链接进以共享库/插件形式加载的模块（plugins/ 下的运行时插件）。
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# ============================================================================
+# 统一产物输出目录
+#
+# bakuon::gui 现在是 SHARED 库（见 cmake/BakuonUtils.cmake 的 bakuon_add_module(SHARED)
+# 和 source/gui/CMakeLists.txt），任何直接链接它的可执行文件在启动时都必须能找到
+# 对应的 .dll/.so，因此把所有可执行文件和"运行期"产物统一收拢到同一个 bin/ 目录：
+#
+#   - Windows：SHARED 库的 .dll 和 .exe 都由 RUNTIME_OUTPUT_DIRECTORY 控制，
+#     统一到 bin/ 后，Windows 默认 DLL 搜索顺序里的"应用程序所在目录"就能直接命中，
+#     不需要额外拷贝或修改 PATH。
+#   - Linux/macOS：.so 由 LIBRARY_OUTPUT_DIRECTORY 控制。可执行文件启动时如何定位
+#     "构建目录里的" .so 是 CMake 的默认行为——只要没有显式设置 CMAKE_SKIP_BUILD_RPATH，
+#     CMake 会自动为链接了该 .so 的目标写入指向其构建位置的 RPATH，构建树内直接运行
+#     天然可用，这里不需要再手动摆弄 RPATH（真正 install() 打包时的 RPATH 策略留给
+#     BAKUON_INSTALL_SDK 相关 TODO，见 cmake/BakuonUtils.cmake）。
+#
+# plugins/ 下用 bakuon_add_plugin() 产出的 MODULE 插件不受这里影响，仍然按分类落在
+# ${CMAKE_BINARY_DIR}/plugins/<CATEGORY>/（调试期更容易找到）：插件运行时对 gui 的依赖
+# 不需要额外处理——宿主进程（standalone/sandbox_runtime）在 QPluginLoader 加载插件之前
+# 已经直接链接并加载过同一份 bakuon::gui，操作系统的动态库加载器在解析插件的隐式依赖时，
+# 会按库名/SONAME 复用进程里已加载的那一份，不会再单独去插件所在目录搜索。
+# ============================================================================
+if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
+if(NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
+if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+endif()
 
 # 必须在 add_subdirectory() 之前设置，否则 add_compile_options 是目录属性，
 # 不会回溯应用到之前已经 add_subdirectory 进来的目标。

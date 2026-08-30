@@ -7,6 +7,7 @@
 #include <QtGui/QIcon>
 #include <QtGui/QKeySequence>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_types.h"
 
 namespace bakuon::gui {
@@ -21,7 +22,7 @@ namespace bakuon::gui {
  * ContextArbiter 这些类型。单元测试因此不需要任何上下文/仲裁基础设施，
  * 构造一个 Command，手动 new 几个 QAction，直接调 setRealAction() 断言镜像结果即可。
  */
-class Command : public QObject
+class BAKUON_GUI_EXPORT Command : public QObject
 {
     Q_OBJECT
 public:

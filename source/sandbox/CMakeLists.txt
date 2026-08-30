@@ -65,9 +65,17 @@ target_include_directories(${PROJECT_NAME} PRIVATE $<BUILD_INTERFACE:${CMAKE_CUR
 
 # ============================================================================
 # SandBox Runtime 可执行文件构建配置
+#
+# 修正：根 CMakeLists.txt 里声明的 BAKUON_BUILD_SANDBOX_RUNTIME 选项此前从未被
+# 实际读取，sandbox_runtime 可执行文件一直是无条件构建的——选项形同虚设、和它的
+# 描述文本（"依赖 BAKUON_BUILD_SANDBOX"）也对不上。这里补上真正的开关判断，
+# 并且需要 BAKUON_BUILD_SANDBOX 打开（本文件能被 add_subdirectory 到，就已经隐含
+# BAKUON_BUILD_SANDBOX=ON，见 source/CMakeLists.txt）。
 # ============================================================================
-set(SANDBOX_RUNTIME "sandbox_runtime")
-add_executable(${SANDBOX_RUNTIME} main.cpp)
-target_link_libraries(${SANDBOX_RUNTIME} PRIVATE bakuon::sandbox Qt6::Core Qt6::RemoteObjects)
-target_compile_features(${SANDBOX_RUNTIME} PRIVATE cxx_std_20)
-bakuon_apply_warnings(${SANDBOX_RUNTIME})
+if(BAKUON_BUILD_SANDBOX_RUNTIME)
+    set(SANDBOX_RUNTIME "sandbox_runtime")
+    add_executable(${SANDBOX_RUNTIME} main.cpp)
+    target_link_libraries(${SANDBOX_RUNTIME} PRIVATE bakuon::sandbox Qt6::Core Qt6::RemoteObjects)
+    target_compile_features(${SANDBOX_RUNTIME} PRIVATE cxx_std_20)
+    bakuon_apply_warnings(${SANDBOX_RUNTIME})
+endif()

@@ -7,6 +7,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPointer>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_types.h"
 
 QT_BEGIN_NAMESPACE
@@ -33,7 +34,7 @@ namespace bakuon::gui {
  * ContextArbiter 调用，因为它涉及全局递增的 activationOrder 时钟，需要
  * ContextArbiter 统一分配。
  */
-class ContextState : public QObject
+class BAKUON_GUI_EXPORT ContextState : public QObject
 {
     Q_OBJECT
 public:

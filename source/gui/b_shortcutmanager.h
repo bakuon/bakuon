@@ -7,7 +7,9 @@
 #include <QtCore/QObject>
 #include <QtGui/QKeySequence>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_types.h"
+
 
 // QKeySequence hash support for unordered containers
 namespace std {
@@ -62,7 +64,7 @@ class CommandManager;
 /**
  * @brief 命令快捷键配置 Shortcut Configure / ShortcutMapper/Mapping
  */
-class ShortcutManager : public QObject
+class BAKUON_GUI_EXPORT ShortcutManager : public QObject
 {
     Q_OBJECT
 

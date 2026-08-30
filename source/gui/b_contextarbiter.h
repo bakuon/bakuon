@@ -7,6 +7,7 @@
 #include <QtCore/QObject>
 
 #include "gui/b_contextstatus.h"
+#include "gui/b_gui_export.h"
 
 namespace bakuon::gui {
 
@@ -35,7 +36,7 @@ class CommandManager;
  * 注册动作等任何可能改变路由结果的操作都会自动对 CommandManager::allCommands()
  * 里的每一个 Command 调用 setRealAction()。
  */
-class ContextArbiter : public QObject
+class BAKUON_GUI_EXPORT ContextArbiter : public QObject
 {
     Q_OBJECT
 public:

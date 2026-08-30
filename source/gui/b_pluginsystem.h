@@ -12,6 +12,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QVector>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_pluginpipeline.h"
 
 namespace bakuon::gui {
@@ -52,7 +53,7 @@ class IPlugin;
  * 收全了当前批次里所有插件的 id（哪怕它们自己的 resolve 失败了，Validated 阶段已经把 id
  * 登记进去了），这时候重试一次 resolve 就有充分信息了。详见 launchAll() 实现里的注释。
  */
-class PluginSystem : public QObject
+class BAKUON_GUI_EXPORT PluginSystem : public QObject
 {
     Q_OBJECT
 public:

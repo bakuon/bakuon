@@ -8,6 +8,7 @@
 #include "gui/b_context.h"
 #include "gui/b_contextarbiter.h"
 #include "gui/b_contextstatus.h"
+#include "gui/b_gui_export.h"
 #include "gui/b_shortcutmanager.h"
 #include "gui/b_types.h"
 
@@ -19,7 +20,7 @@ namespace bakuon::gui {
  * CommandSystem 静态门面委托给进程默认实例；多窗口 / 插件沙箱可以各自持有
  * 一个 CommandWorkspace，彼此的命令注册表和激活集合完全隔离。
  */
-class CommandWorkspace
+class BAKUON_GUI_EXPORT CommandWorkspace
 {
 public:
     CommandWorkspace();
@@ -78,7 +79,7 @@ private:
  * 例化的类"是渐进式改动;而从"命名空间自由函数"演进到那一步,是结构性重写。
  * 给定是 IDE/工业软件编辑器这种有可能走向多文档、多窗口架构的项目,这确实是一个不能忽略的伏笔。
  */
-class CommandSystem
+class BAKUON_GUI_EXPORT CommandSystem
 {
 public:
     /// 命令管理
@@ -193,7 +194,7 @@ private:
 
 // RAII 生命周期管理器：构造时 pushContext，析构时自动 popContext（除非 dismiss）。
 // 不可拷贝；支持移动以便从工厂函数返回。
-class ContextGuard
+class BAKUON_GUI_EXPORT ContextGuard
 {
 public:
     ContextGuard(const ContextId& context, const void* source,

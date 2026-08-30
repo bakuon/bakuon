@@ -15,6 +15,7 @@
 #include <bakuon/gui/IPlugin.h>
 #include <bakuon/gui/PluginContext.h>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_pluginmetadata.h"
 
 namespace bakuon::gui {
@@ -276,7 +277,7 @@ struct PluginLifecycleRules
 };
 
 /// 供日志/UI/测试使用；不参与状态机逻辑本身。
-QString toString(PluginState state);
+BAKUON_GUI_EXPORT QString toString(PluginState state);
 
 /**
  * @brief 单个插件从发现到卸载的完整生命周期管道。
@@ -300,7 +301,7 @@ QString toString(PluginState state);
  * 单独使用本类完全不需要 PluginSystem——setResolveHook() 不设置时，Resolving 阶段永远直接通过，
  * 适合脚本/测试场景只想跑单个插件、不关心跨插件依赖的情况。
  */
-class PluginPipeline : public QObject
+class BAKUON_GUI_EXPORT PluginPipeline : public QObject
 {
     Q_OBJECT
 public:

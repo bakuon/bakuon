@@ -3,13 +3,14 @@
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
 
+#include "gui/b_gui_export.h"
 #include "gui/b_types.h"
 
 class QItemSelectionModel;
 
 namespace bakuon::gui {
 
-class ContextSelectionRouter : public QObject
+class BAKUON_GUI_EXPORT ContextSelectionRouter : public QObject
 {
     Q_OBJECT
 public:

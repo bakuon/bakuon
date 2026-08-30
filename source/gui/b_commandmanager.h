@@ -13,6 +13,7 @@
 
 #include "gui/b_command.h"
 #include "gui/b_commandlayout.h"
+#include "gui/b_gui_export.h"
 
 namespace bakuon::gui {
 
@@ -30,7 +31,7 @@ namespace bakuon::gui {
  *      QMenuBar                     自定义菜单对话框
  */
 
-class CommandManager : public QObject
+class BAKUON_GUI_EXPORT CommandManager : public QObject
 {
     Q_OBJECT
 public:

@@ -9,6 +9,7 @@ include(BakuonUtils)
 include(CMakeParseArguments)
 include(CPM)
 include(GNUInstallDirs) # 为将来的 install()/export() 预留，当前不强制使用
+include(GenerateExportHeader) # bakuon_add_module(... SHARED) 用它生成 dllexport/dllimport 导出宏
 
 # ============================================================================
 # third_party cmake modules

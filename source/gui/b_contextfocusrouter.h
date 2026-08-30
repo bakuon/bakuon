@@ -9,11 +9,12 @@
 #include <QtWidgets/QWidget>
 
 #include "gui/b_context.h"
+#include "gui/b_gui_export.h"
 
 namespace bakuon::gui {
 
 // focus context provider
-class ContextFocusRouter : public QObject
+class BAKUON_GUI_EXPORT ContextFocusRouter : public QObject
 {
     Q_OBJECT
 public:

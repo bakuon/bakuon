@@ -4,11 +4,17 @@
 #include <QtCore/QHash>
 #include <QtCore/QString>
 
+#include "gui/b_gui_export.h"
+
 namespace bakuon::gui {
 
+// Id<Tag> 本身是头文件里的模板，任何消费者（包括跨动态库边界的插件/沙箱代码）在自己的
+// 编译单元里实例化 Id<Tag> 时都会内联调用下面这两个自由函数——它们的定义只存在于
+// b_id.cpp（即只存在于 gui.dll/.so 里），因此必须显式导出，否则 MSVC 上任何用到
+// Id<Tag> 的跨库消费者都会在链接期报 unresolved external symbol。
 namespace internal {
-uint32_t lookupId(QString original);
-QString lookupName(uint32_t raw);
+BAKUON_GUI_EXPORT uint32_t lookupId(QString original);
+BAKUON_GUI_EXPORT QString lookupName(uint32_t raw);
 } // namespace internal
 
 // 通用的“强类型 ID”包装器：CommandId 与 ContextId 底层都是字符串，

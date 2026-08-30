@@ -49,16 +49,28 @@ public:
      *       "纯命令行工具、不需要任何扩展点"的宿主场景）。指针能自然表达"可能没有"，
      *       引用做不到，插件侧用之前必须判空，这是刻意的、比引用更诚实的接口。
      *
-     * @note 为什么必须显式注入、不能让插件自己再调一次 ExtensionSystem::instance()：
+     * @note 为什么仍然显式注入、不直接让插件自己再调一次 ExtensionSystem::instance()：
      *       ExtensionSystem::instance() 是 Meyers' Singleton，其"进程内唯一"的保证只在
-     *       *同一个* 链接产物内成立——一旦插件是被 dlopen() 进来的独立 .so，且 bakuon::gui
-     *       是以 STATIC 库形式分别静态链接进宿主可执行文件和插件 .so 两份（当前就是这样），
-     *       两边各自持有一份完全独立的 ExtensionSystem::instance() 静态局部对象，
-     *       内存地址不同，插件在自己 .so 里调用 instance() 拿到的是"自己那一份"，
-     *       根本不是宿主进程真正在用的那一份，注册的扩展点对宿主完全不可见。
-     *       把宿主进程手里那份 IExtensionSystem* 显式通过 PluginContext 传进来，
-     *       插件侧只做虚函数指针调用（ABI 兼容、不依赖任何跨 .so 的 ODR 合并），
-     *       是唯一在"bakuon::gui 保持 STATIC 库"这个现状下仍然正确的做法——
+     *       *同一份代码* 只被加载一次的前提下成立。早期 bakuon::gui 还是 STATIC 库时，
+     *       它会被分别静态链接进宿主可执行文件和每一个插件 .so，两边各自持有一份完全独立的
+     *       ExtensionSystem::instance() 静态局部对象，内存地址不同，插件在自己 .so 里调用
+     *       instance() 拿到的是"自己那一份"，根本不是宿主进程真正在用的那一份，注册的扩展点
+     *       对宿主完全不可见——这也是当初这份注释重点强调的坑。
+     *
+     *       现在 bakuon::gui 已经改为 SHARED 库（见 source/gui/CMakeLists.txt 的
+     *       bakuon_add_module(... SHARED) 和 b_extensionsystem.h 里 ExtensionSystem 类
+     *       BAKUON_GUI_EXPORT 的说明）：只要插件是动态链接到同一份 gui.dll/.so（而不是
+     *       静态链接各自打包一份），ExtensionSystem::instance() 天然就是进程内唯一的，
+     *       上面那个坑已经从架构上被消除了。尽管如此，这里仍然保留显式注入而不是让插件直接
+     *       调用 instance()，原因是：
+     *        1. 解耦：插件代码不应该硬编码依赖一个具体的全局单例访问路径，PluginContext
+     *           才是插件与宿主之间唯一被明确定义的契约边界，方便未来替换实现（比如某些
+     *           场景需要每个插件拿到经过包装/受限的 IExtensionSystem 视图）。
+     *        2. 可测试性：单元测试可以注入一个假的 IExtensionSystem*，不需要触碰真实的
+     *           全局单例状态。
+     *        3. 防御性：万一将来出现"某个插件被要求以 STATIC 方式链接自己私有的一份
+     *           bakuon::gui"这类特殊场景（比如极端隔离需求），显式注入的代码路径依然正确，
+     *           不会静默退化回本节开头描述的那个坑。
      *       这同时也是这个类之前留的 "@todo 注入 IExtensionSystem 引用" 的正式实现。
      */
     explicit PluginContext(QStringList arguments = {}, IExtensionSystem* extensionSystem = nullptr)

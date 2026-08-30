@@ -99,7 +99,7 @@ endfunction()
 function(bakuon_add_module)
     cmake_parse_arguments(
         ARG
-        ""
+        "SHARED"
         "NAME;PATH"
         "DEPENDS;INCLUDE_DIRS;PUBLIC_INCLUDE_DIRS"
         ${ARGN})
@@ -126,10 +126,20 @@ function(bakuon_add_module)
 
     if(NOT ALL_SOURCES AND NOT PUBLIC_AMALGAM_HEADER)
         message(FATAL_ERROR "bakuon_add_module(${MODULE_NAME}): 在 ${MODULE_PATH} 下没有找到任何 .cpp 文件，"
-                            "无法创建静态库；该模块尚无实现代码前不要 add_subdirectory() 它。")
+                            "无法创建库；该模块尚无实现代码前不要 add_subdirectory() 它。")
     endif()
 
-    add_library(${MODULE_NAME} STATIC)
+    # SHARED（可选开关）：默认仍产出 STATIC 库，与现状保持兼容；传入 SHARED 后改为产出
+    # 动态库（.dll/.so/.dylib）——目前 bakuon::gui 用它，是为了让插件 / 沙箱进程 / Host
+    # 应用程序都能共享同一份 ExtensionSystem::instance() 之类的进程内单例（STATIC 库分别
+    # 静态链接进多个二进制时，每个二进制各自持有一份独立的单例，见
+    # include/bakuon/gui/PluginContext.h 顶部关于这一点的详细说明）。
+    set(_bakuon_lib_type STATIC)
+    if(ARG_SHARED)
+        set(_bakuon_lib_type SHARED)
+    endif()
+
+    add_library(${MODULE_NAME} ${_bakuon_lib_type})
     add_library(bakuon::${MODULE_NAME} ALIAS ${MODULE_NAME})
 
     target_sources(${MODULE_NAME} PRIVATE ${ALL_SOURCES} ${ALL_HEADERS})
@@ -164,9 +174,53 @@ function(bakuon_add_module)
 
     _bakuon_apply_common_target_settings(${MODULE_NAME})
 
+    # ------------------------------------------------------------------------
+    # SHARED 专属收尾：生成导出宏 + 收紧默认符号可见性。
+    #
+    # 1. generate_export_header() 生成 BAKUON_<MODULE>_EXPORT，落在
+    #    "<module>/b_<module>_export.h"，与仓库既有的 "gui/b_xxx.h" 模块前缀 include
+    #    惯例保持一致，跨动态库边界访问的类/自由函数需要在声明处加上这个宏——
+    #    MSVC 上没有 __declspec(dllexport/dllimport) 就是链接错误，这一步不是可选项。
+    # 2. CXX_VISIBILITY_PRESET hidden + VISIBILITY_INLINES_HIDDEN：GCC/Clang 下默认
+    #    所有符号都可见，只有 Windows 才"必须显式导出"，如果不主动收紧 GCC/Clang 的
+    #    默认可见性，很容易出现"本地 Linux 编译一直正常，到 Windows CI 才发现漏标导出宏"
+    #    这种平台特有的返工。提前打开 hidden，让三个工具链用同一套导出宏描述来验证。
+    # ------------------------------------------------------------------------
+    if(ARG_SHARED)
+        string(TOUPPER "${MODULE_NAME}" _bakuon_module_upper)
+        set(_bakuon_export_dir "${CMAKE_CURRENT_BINARY_DIR}/generated_include")
+        set(_bakuon_export_header "${_bakuon_export_dir}/${MODULE_NAME}/b_${MODULE_NAME}_export.h")
+
+        generate_export_header(
+            ${MODULE_NAME}
+            BASE_NAME
+            ${MODULE_NAME}
+            EXPORT_MACRO_NAME
+            BAKUON_${_bakuon_module_upper}_EXPORT
+            EXPORT_FILE_NAME
+            ${_bakuon_export_header}
+            DEPRECATED_MACRO_NAME
+            BAKUON_${_bakuon_module_upper}_DEPRECATED)
+
+        # BUILD_INTERFACE 即可：生成头只在构建这份源码时用得到，装 SDK 包的场景等
+        # BAKUON_INSTALL_SDK 真正打开时再一并处理导出头的安装路径（见 bakuon_install_module()）。
+        target_include_directories(${MODULE_NAME} PUBLIC $<BUILD_INTERFACE:${_bakuon_export_dir}>)
+
+        set_target_properties(
+            ${MODULE_NAME}
+            PROPERTIES CXX_VISIBILITY_PRESET hidden
+                       VISIBILITY_INLINES_HIDDEN ON
+                       # SOVERSION 用于 Linux/macOS 的 SONAME；早期孵化阶段版本号还会频繁
+                       # 变动，先固定在与模块 VERSION 的主版本一致即可。
+                       SOVERSION ${PROJECT_VERSION_MAJOR})
+    endif()
+
     bakuon_install_module(${MODULE_NAME} "${ARG_PUBLIC_INCLUDE_DIRS}")
 
-    message(STATUS "[Build] ${MODULE_NAME} (Non unity build, ${CMAKE_CURRENT_LIST_FILE})")
+    message(
+        STATUS
+            "[Build] ${MODULE_NAME} (${_bakuon_lib_type}, Non unity build, ${CMAKE_CURRENT_LIST_FILE})"
+    )
 endfunction()
 
 # ============================================================================

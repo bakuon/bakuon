@@ -5,6 +5,8 @@
 
 #include <bakuon/gui/IExtensionSystem.h>
 
+#include "gui/b_gui_export.h"
+
 namespace bakuon::gui {
 
 /* ============================================================
@@ -78,11 +80,19 @@ class DefaultExtensionPoint;
  * );
  * editor->open(filePath);
  */
-class ExtensionSystem : public IExtensionSystem
+class BAKUON_GUI_EXPORT ExtensionSystem : public IExtensionSystem
 {
 public:
     /**
      * @brief 获取全局单例（Meyers' Singleton，线程安全、自动析构）
+     *
+     * @note 本类必须带 BAKUON_GUI_EXPORT：instance() 虽然写在类体内、语义上是
+     *       inline，但一旦类被标注导出，MSVC 会把它当成 dllexport/dllimport 的
+     *       "跨 DLL 边界符号"处理，consumer 侧不会各自内联出一份自己的局部静态
+     *       变量 s，而是统一 dllimport 调用 gui.dll 里唯一的那一份实现——这正是
+     *       bakuon::gui 从 STATIC 改为 SHARED 之后，Meyers' Singleton 能在插件 /
+     *       沙箱进程 / Host 应用程序之间天然共享同一个实例的关键前提（另见
+     *       include/bakuon/gui/PluginContext.h 顶部关于这一点的详细说明）。
      */
     static ExtensionSystem& instance()
     {

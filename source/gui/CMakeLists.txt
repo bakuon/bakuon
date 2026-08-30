@@ -14,19 +14,34 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(
     QT
-    NAMES Qt6 Qt5
-    COMPONENTS Core Gui Widgets Concurrent
+    NAMES
+    Qt6
+    Qt5
+    COMPONENTS Core
+               Gui
+               Widgets
+               Concurrent
     REQUIRED)
 find_package(
     Qt${QT_VERSION_MAJOR}
-    COMPONENTS Core Gui Widgets Concurrent
+    COMPONENTS Core
+               Gui
+               Widgets
+               Concurrent
     REQUIRED)
 
+# SHARED：gui 从静态库改为动态库（.dll/.so/.dylib），是插件 / 沙箱进程 / Host 应用程序
+# 三方能"动态连接"到同一份 bakuon::gui 的前提——STATIC 库分别静态链接进多个二进制时，
+# 每个二进制各自持有一份独立的 ExtensionSystem::instance() 之类的进程内单例，见
+# include/bakuon/gui/PluginContext.h 顶部关于这一点的详细说明（那段注释也已同步更新）。
+# 导出宏（BAKUON_GUI_EXPORT）由 bakuon_add_module(SHARED) 自动生成，落在
+# "gui/b_gui_export.h"；哪些类/自由函数需要标注见各自声明处。
 bakuon_add_module(
     NAME
     ${PROJECT_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
+    SHARED
     DEPENDS
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Gui
