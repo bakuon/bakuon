@@ -1,0 +1,107 @@
+name: CI
+
+# 覆盖项目明确要求支持的三个工具链（见根目录 README/CMakeLists.txt 里的
+# "支持编译环境"）：Windows MSVC、Linux GCC、Linux Clang。这次转成 SHARED 库之后
+# 导出宏漏标这类问题只有 MSVC 会在链接期报错，本地 Linux 编译完全看不出来，
+# 所以这条 CI 尤其是 MSVC 这条腿的价值——本地能过不代表跨工具链能过。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 和 QIcon::ThemeIcon（examples/gui/menubar，Qt 6.7+ 才有）保持一致，
+  # 避免 CI 用的 Qt 版本比示例代码要求的还旧，导致这一个 target 在 CI 上又得单独跳过。
+  BAKUON_CI_QT_VERSION: "6.7.*"
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (GCC)
+            os: ubuntu-24.04
+            compiler: gcc
+          - name: Linux (Clang)
+            os: ubuntu-24.04
+            compiler: clang
+          - name: Windows (MSVC)
+            os: windows-latest
+            compiler: msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC dev environment
+        if: matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.BAKUON_CI_QT_VERSION }}
+          # RemoteObjects 是 addon 模块，不在默认组件集合里（Core/Gui/Widgets/Concurrent
+          # 都是默认组件，不需要在这里单列），对应 bakuon::sandbox 的硬依赖，见
+          # source/sandbox/CMakeLists.txt 的 find_package(... COMPONENTS RemoteObjects)。
+          modules: qtremoteobjects
+          cache: true
+
+      - name: Enable ccache (Linux)
+        if: runner.os == 'Linux'
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Configure (GCC/Clang)
+        if: runner.os == 'Linux'
+        env:
+          CC: ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }}
+          CXX: ${{ matrix.compiler == 'clang' && 'clang++' || 'g++' }}
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Configure (MSVC)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        env:
+          # 三个 GUI 相关的 test target（context/commandsystem 等）会真的构造 QWidget
+          # 系的对象；CI runner 没有显示器/X server，offscreen 平台插件让它们不需要
+          # 真实显示环境也能跑——本地在容器里验证过这几个测试必须要这个变量才不会在
+          # "发现测试用例"那一步就直接崩掉（不是测试逻辑本身的问题，是 QPA 平台插件
+          # 选择的问题）。
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-logs-${{ matrix.name }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
