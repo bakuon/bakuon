@@ -75,17 +75,18 @@ if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 endif()
 
-# 必须在 add_subdirectory() 之前设置，否则 add_compile_options 是目录属性，
-# 不会回溯应用到之前已经 add_subdirectory 进来的目标。
-# 注意：
-# 与 gtest-all 或其他第三方库中的 /utf-8 冲突
-# /utf-8 和 /source-charset:utf-8 都用于指定源文件的字符集为 UTF-8，但这两个选项实际上是重复的，
-# 并且在同一个编译命令中同时使用它们会导致冲突。将原有的分开设置的选项替换为单一的
-# /utf-8 选项。/utf-8 等效于同时设置 /source-charset:utf-8 和 /execution-charset:utf-8，且能避免冲突。
+# add_compile_options("/utf-8") 通常不会自动作用于通过 add_subdirectory
+# 或 CPM 引入的第三方 target（因为编译选项有作用域限制）。
+# 使用 link_libraries 强制将 /utf-8 注入到所有子目标，或者通过 CMake 全局变量：
 if(MSVC)
-    add_compile_options("/utf-8")
-    # 可选：如果希望更严格地控制，可以使用 target_compile_options 针对特定目标
-    # target_compile_options(your_target_name PRIVATE "/utf-8")
+    # 强制当前目标程序在运行时将进程代码页（ACP）视为 UTF-8
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")
+
+    # 这会强制后续所有加入的项目（包括 CPM 引入的）在 MSVC 下都带上 /utf-8
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /utf-8")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /utf-8")
+    # 同时针对 Windows 10/11 的 Manifest 注入
+    # ...
 endif()
 
 # ============================================================================
