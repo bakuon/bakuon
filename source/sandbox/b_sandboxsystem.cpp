@@ -1,12 +1,25 @@
 #include "sandbox/b_sandboxsystem.h"
 
+#include <QtRemoteObjects/QRemoteObjectRegistryHost>
+
+#include "sandbox/b_sandboxconstants.h"
 #include "sandbox/b_sandboxsupervisor.h"
 
 namespace bakuon::sandbox {
 
 SandboxSystem::SandboxSystem(QObject *parent)
     : QObject(parent)
+    , m_registry(std::make_unique<QRemoteObjectRegistryHost>(QUrl(registryUrl())))
 {
+    connect(m_registry.get(),
+            &QRemoteObjectNode::error,
+            this,
+            [this](QRemoteObjectNode::ErrorCode code) {
+                Q_EMIT sandboxLogMessage(QStringLiteral("<registry>"),
+                                         1 /*Warning*/,
+                                         QStringLiteral("注册中心 QRemoteObjectNode 错误码：%1")
+                                             .arg(int(code)));
+            });
 }
 
 SandboxSystem::~SandboxSystem() = default;
@@ -20,7 +33,7 @@ QString SandboxSystem::spawn(const QString &pluginFilePath, const QString &sandb
                              QVariantMap pluginArguments)
 {
     const QString id = nextSandboxId();
-    auto supervisor  = std::make_shared<SandboxSupervisor>(id, pluginFilePath, this);
+    auto supervisor  = std::make_shared<SandboxSupervisor>(id, pluginFilePath, *m_registry, this);
 
     connect(supervisor.get(),
             &SandboxSupervisor::phaseChanged,

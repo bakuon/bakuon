@@ -58,10 +58,12 @@ struct SandboxSupervisor::PendingCommand
     SharedMemoryChannel channel;
 };
 
-SandboxSupervisor::SandboxSupervisor(QString sandboxId, QString pluginFilePath, QObject *parent)
+SandboxSupervisor::SandboxSupervisor(QString sandboxId, QString pluginFilePath,
+                                     QRemoteObjectNode &registryNode, QObject *parent)
     : QObject(parent)
     , m_sandboxId(std::move(sandboxId))
     , m_pluginFilePath(std::move(pluginFilePath))
+    , m_registryNode(registryNode)
 {
 }
 
@@ -84,6 +86,9 @@ void SandboxSupervisor::start(const QString &sandboxRuntimeExecutable, QVariantM
 {
     m_pendingPluginArguments = std::move(pluginArguments);
 
+    // 子进程仍然需要自己独立的监听地址（真正的 Replica 数据连接落地点），
+    // 只是不再需要由本类去 connectToNode() 到这个地址——那部分现在由 QtRO 通过
+    // 注册中心在背后完成，本类只需要把地址通过命令行告诉子进程即可。
     const QString listenUrl = makeSandboxListenUrl();
 
     m_process = std::make_unique<QProcess>(this);
@@ -109,19 +114,17 @@ void SandboxSupervisor::start(const QString &sandboxRuntimeExecutable, QVariantM
     m_process->setProgram(sandboxRuntimeExecutable);
     m_process->setArguments({QString::fromLatin1(cli::kListen),
                              listenUrl,
+                             QString::fromLatin1(cli::kRegistry),
+                             registryUrl(),
                              QString::fromLatin1(cli::kSandboxId),
                              m_sandboxId});
     m_process->start();
 
-    m_node = std::make_unique<QRemoteObjectNode>();
-    connect(m_node.get(), &QRemoteObjectNode::error, this, [this](QRemoteObjectNode::ErrorCode code) {
-        Q_EMIT logMessage(1 /*Warning*/,
-                          QStringLiteral("QRemoteObjectNode 错误码：%1").arg(int(code)));
-    });
-    m_node->connectToNode(QUrl(listenUrl));
-
+    // 直接用注入进来的、Host 主程序全局共用的注册中心 Node acquire——不再需要
+    // 自己 connectToNode()（更不需要知道子进程到底监听在哪个地址上，那是子进程和
+    // 注册中心之间的事）。对象名必须带上 sandboxId，见 makeSandboxObjectName()。
     m_replica.reset(
-        m_node->acquire<PluginSandboxControlReplica>(QString::fromLatin1(kSandboxObjectName)));
+        m_registryNode.acquire<PluginSandboxControlReplica>(makeSandboxObjectName(m_sandboxId)));
     connect(m_replica.get(),
             &QRemoteObjectReplica::stateChanged,
             this,
@@ -178,7 +181,7 @@ void SandboxSupervisor::bindReplicaSignals()
                 if (ok) {
                     result = it->second->channel.readPayload();
                 }
-                Q_UNUSED(memoryKey)          // channel 内部已经记住了自己的 key，这里不需要重新挂载
+                Q_UNUSED(memoryKey);         // channel 内部已经记住了自己的 key，这里不需要重新挂载
                 m_pendingCommands.erase(it); // SharedMemoryChannel 析构 -> release() 自动 detach
                 Q_EMIT commandFinished(requestId, ok, result, errorMessage);
             });
@@ -212,9 +215,7 @@ QString SandboxSupervisor::beginCommand(const QString &commandId, const QByteArr
         return {};
     }
 
-    // 不使用 "const QString requestId" 仅为消除
-    // clang warning: `Constness of 'requestId' prevents automatic move`
-    QString requestId       = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString memoryKey = makeSharedMemoryKey(m_sandboxId, requestId);
 
     auto pending = std::make_unique<PendingCommand>();

@@ -47,11 +47,16 @@ public:
 
     /**
      * @brief 在给定地址上监听并发布 PluginSandboxControl 契约的 Source 实现。
-     * @param listenUrl 见 makeSandboxListenUrl()；由 Host 生成、通过命令行
-     *                  参数 cli::kListen 传给本进程（见 sandbox_runtime/main.cpp）。
+     * @param listenUrl  见 makeSandboxListenUrl()；本进程自己的监听地址，
+     *                   供 Replica 的实际数据连接落地（注册中心只负责"告诉对端去哪连"，
+     *                   不代替这个地址本身，所以依然需要）。
+     * @param registryUrl 见 registryUrl()；引入 QRemoteObjectRegistryHost 之后，
+     *                   本进程不再需要知道 Host 主程序的地址，只需要 setRegistryUrl()
+     *                   到这个固定的注册中心地址，Host 侧就能通过注册中心按对象名
+     *                   acquire() 到本进程发布的 Source，不需要双方预先交换地址。
      * @return 成功返回 std::nullopt；失败返回错误描述（典型原因：地址已被占用）。
      */
-    [[nodiscard]] std::optional<QString> start(const QUrl &listenUrl);
+    [[nodiscard]] std::optional<QString> start(const QUrl &listenUrl, const QUrl &registryUrl);
 
 Q_SIGNALS:
     /// Host 调用 shutdownSandbox() 后触发；sandbox_runtime/main.cpp 据此退出事件循环。

@@ -10,6 +10,8 @@
 #include <QtCore/QVariantMap>
 #include <QtCore/QVector>
 
+class QRemoteObjectRegistryHost;
+
 namespace bakuon::sandbox {
 
 class SandboxSupervisor;
@@ -29,6 +31,11 @@ enum class SandboxPhase;
  * 目前也还没有一个"是否需要沙箱隔离"的字段（这是刻意的：先把两条腿都能跑通，
  * 具体哪些插件默认走沙箱、要不要在 PluginMetadata/json 里加 "Sandboxed": true
  * 这类声明式配置，等两条路径都稳定之后再决定，避免过早收窄设计）。
+ *
+ * 本类还额外持有整个主程序生命周期内唯一一份 QRemoteObjectRegistryHost（引入注册中心
+ * 之后：子进程不再需要预先知道 Host 的地址，Host 也不需要为每个沙箱实例单独维护一个
+ * QRemoteObjectNode——所有沙箱实例共用这一个注册中心 Node 做 acquire()，发现关系
+ * 完全由注册中心居中代理，见 b_sandboxconstants.h 的 registryUrl()）。
  */
 class SandboxSystem : public QObject
 {
@@ -73,6 +80,7 @@ private:
 
 private:
     std::atomic<uint64_t> m_nextSeq{1};
+    std::unique_ptr<QRemoteObjectRegistryHost> m_registry;
     std::unordered_map<QString, std::shared_ptr<SandboxSupervisor>> m_entries;
 };
 

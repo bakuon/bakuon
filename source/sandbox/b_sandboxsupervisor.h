@@ -61,7 +61,20 @@ class SandboxSupervisor : public QObject
 {
     Q_OBJECT
 public:
-    explicit SandboxSupervisor(QString sandboxId, QString pluginFilePath, QObject *parent = nullptr);
+    /**
+     * @param sandboxId      本实例 id，同时也是它在注册中心里发布的对象名的一部分
+     *                       （见 b_sandboxconstants.h 的 makeSandboxObjectName()）。
+     * @param pluginFilePath 要在沙箱里加载的插件动态库路径。
+     * @param registryNode   Host 主程序内唯一一份、生命周期跨所有沙箱实例共享的
+     *                       QRemoteObjectRegistryHost（以 QRemoteObjectNode& 传入，
+     *                       本类只需要用它 acquire<Replica>()，注册中心本身的创建/持有
+     *                       是 SandboxSystem 的职责）。引入注册中心之后，本类不再需要
+     *                       为每个沙箱实例单独持有一个 QRemoteObjectNode、也不需要预先
+     *                       知道子进程会监听在哪个地址上——子进程拿到注册中心地址后
+     *                       会自己去注册，acquire() 时的点对点连接由 QtRO 在背后转发建立。
+     */
+    explicit SandboxSupervisor(QString sandboxId, QString pluginFilePath,
+                               QRemoteObjectNode &registryNode, QObject *parent = nullptr);
     ~SandboxSupervisor() override;
 
     SandboxSupervisor(const SandboxSupervisor &)            = delete;
@@ -121,7 +134,8 @@ private:
     QString m_pluginFilePath;
     SandboxPhase m_phase = SandboxPhase::Connecting;
 
-    std::unique_ptr<QRemoteObjectNode> m_node;
+    QRemoteObjectNode &
+        m_registryNode; // 外部注入（通常是 SandboxSystem 持有的注册中心），生命周期由调用方保证长于本对象
     std::unique_ptr<PluginSandboxControlReplica> m_replica;
     std::unique_ptr<QProcess> m_process;
 

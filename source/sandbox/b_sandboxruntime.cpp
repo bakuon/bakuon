@@ -231,12 +231,19 @@ SandboxRuntime::SandboxRuntime(QString sandboxId, QObject *parent)
 
 SandboxRuntime::~SandboxRuntime() = default;
 
-std::optional<QString> SandboxRuntime::start(const QUrl &listenUrl)
+std::optional<QString> SandboxRuntime::start(const QUrl &listenUrl, const QUrl &registryUrl)
 {
     m_host = std::make_unique<QRemoteObjectHost>(listenUrl);
     if (m_host->hostUrl() != listenUrl) {
         return QStringLiteral("QRemoteObjectHost 监听 %1 失败（地址可能已被占用）")
             .arg(listenUrl.toString());
+    }
+
+    // 引入注册中心：本进程不再需要 Host 主程序的地址，只需要向注册中心报到；
+    // Host 侧凭对象名（makeSandboxObjectName(sandboxId)）就能找到本进程发布的 Source，
+    // 具体的实际数据连接地址由注册中心在背后转达，不需要我们自己处理。
+    if (!m_host->setRegistryUrl(registryUrl)) {
+        return QStringLiteral("setRegistryUrl(%1) 失败").arg(registryUrl.toString());
     }
 
     m_source = std::make_unique<SandboxControlSourceImpl>(m_sandboxId);
@@ -245,8 +252,11 @@ std::optional<QString> SandboxRuntime::start(const QUrl &listenUrl)
             this,
             &SandboxRuntime::shutdownRequested);
 
-    if (!m_host->enableRemoting(m_source.get(), QString::fromLatin1(kSandboxObjectName))) {
-        return QStringLiteral("enableRemoting(%1) 失败").arg(QString::fromLatin1(kSandboxObjectName));
+    // 对象名必须带上 sandboxId：同一个注册中心下可能同时挂着多个沙箱实例，
+    // 都发布 PluginSandboxControl 契约，用固定的类名当对象名会互相覆盖。
+    const QString objectName = makeSandboxObjectName(m_sandboxId);
+    if (!m_host->enableRemoting(m_source.get(), objectName)) {
+        return QStringLiteral("enableRemoting(%1) 失败").arg(objectName);
     }
     return std::nullopt;
 }

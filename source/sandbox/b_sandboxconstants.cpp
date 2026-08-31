@@ -13,6 +13,20 @@ QString makeSandboxListenUrl()
     return QStringLiteral("local:bakuon-sandbox-%1").arg(uuid);
 }
 
+QString registryUrl()
+{
+    // 固定地址，进程内常量：main 程序生命周期内只会有一个 QRemoteObjectRegistryHost。
+    // 如果同一台机器上可能同时跑多个 bakuon 主程序实例，需要在这里混入
+    // QCoreApplication::applicationPid() 之类的区分符，避免两个主程序抢同一个注册中心地址
+    // ——本次先不处理这个场景，按单实例假设走，等真的需要多开时再补。
+    return QStringLiteral("local:bakuon-sandbox-registry");
+}
+
+QString makeSandboxObjectName(const QString &sandboxId)
+{
+    return QStringLiteral("%1@%2").arg(QString::fromLatin1(kSandboxObjectName), sandboxId);
+}
+
 QString makeSharedMemoryKey(const QString &sandboxId, const QString &requestId)
 {
     return QStringLiteral("bakuon-cmd-%1-%2").arg(sandboxId, requestId);
