@@ -125,5 +125,19 @@ if(TARGET sandbox)
             BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
             BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
         add_dependencies(test_sandbox_integration sandbox_runtime sandboxed_example_plugin)
+
+        bakuon_add_test(
+            NAME
+            test_sandbox_tabsandboxmanager
+            SOURCES
+            "sandbox/tabsandboxmanager_test.cpp"
+            DEPENDS
+            bakuon::sandbox)
+        target_compile_definitions(
+            test_sandbox_tabsandboxmanager
+            PRIVATE
+            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+        add_dependencies(test_sandbox_tabsandboxmanager sandbox_runtime sandboxed_example_plugin)
     endif()
 endif()
