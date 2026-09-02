@@ -20,18 +20,20 @@ int main(int argc, char *argv[])
     }
 
     bakuon::sandbox::TabSandboxManager manager(QString::fromLocal8Bit(argv[1]));
-    const bakuon::sandbox::TabId tabId = manager.openTab(QString::fromLocal8Bit(argv[2]));
-    if (!tabId.isValid()) {
+    const auto tabId = manager.openTab(QString::fromLocal8Bit(argv[2]));
+    if (tabId != 0) {
         return 2;
     }
 
-    QObject::connect(&manager, &bakuon::sandbox::TabSandboxManager::tabRunning, &manager,
-                      [&](bakuon::sandbox::TabId id) {
-                          if (id == tabId) {
-                              QTextStream(stdout) << "READY\n";
-                              std::fflush(stdout);
-                          }
-                      });
+    QObject::connect(&manager,
+                     &bakuon::sandbox::TabSandboxManager::tabRunning,
+                     &manager,
+                     [&](auto id) {
+                         if (id == tabId) {
+                             QTextStream(stdout) << "READY\n";
+                             std::fflush(stdout);
+                         }
+                     });
 
     return app.exec(); // 一直跑到被外部 kill()，故意不设超时退出
 }

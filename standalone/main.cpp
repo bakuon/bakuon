@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
     // shutdown 细节和 TabId <-> sandboxId 映射都封装掉了，standalone 这里只管
     // 打开一个"演示标签"、订阅按 Tab 归类的事件、退出时统一 closeAll()）。
     // ------------------------------------------------------------------
-    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString appDir            = QCoreApplication::applicationDirPath();
     // sandbox_runtime 和 standalone 一样落在统一的 bin/ 输出目录下（见根 CMakeLists.txt），
     // 因此直接在自己所在目录里找即可，不需要额外的候选路径。
     const QString sandboxRuntimeExe = firstExistingFile(appDir, {sandboxRuntimeExecutableName()});
@@ -185,37 +185,37 @@ int main(int argc, char *argv[])
     QObject::connect(&tabManager,
                      &bakuon::sandbox::TabSandboxManager::tabLaunching,
                      &tabManager,
-                     [](bakuon::sandbox::TabId tabId) {
+                     [](uint64_t tabId) {
                          qCInfo(lcStandalone).noquote()
-                             << QStringLiteral("Tab[%1] 启动中").arg(tabId.name());
+                             << QStringLiteral("Tab[%1] 启动中").arg(tabId);
                      });
     QObject::connect(&tabManager,
                      &bakuon::sandbox::TabSandboxManager::tabRunning,
                      &tabManager,
-                     [](bakuon::sandbox::TabId tabId) {
+                     [](uint64_t tabId) {
                          qCInfo(lcStandalone).noquote()
-                             << QStringLiteral("Tab[%1] 已进入 Running").arg(tabId.name());
+                             << QStringLiteral("Tab[%1] 已进入 Running").arg(tabId);
                      });
     QObject::connect(&tabManager,
                      &bakuon::sandbox::TabSandboxManager::tabFaulted,
                      &tabManager,
-                     [](bakuon::sandbox::TabId tabId, const QString &reason) {
+                     [](uint64_t tabId, const QString &reason) {
                          qCWarning(lcStandalone).noquote()
-                             << QStringLiteral("Tab[%1] 异常: %2").arg(tabId.name(), reason);
+                             << QStringLiteral("Tab[%1] 异常: %2").arg(tabId).arg(reason);
                      });
     QObject::connect(&tabManager,
                      &bakuon::sandbox::TabSandboxManager::tabClosed,
                      &tabManager,
-                     [](bakuon::sandbox::TabId tabId) {
+                     [](uint64_t tabId) {
                          qCInfo(lcStandalone).noquote()
-                             << QStringLiteral("Tab[%1] 已关闭").arg(tabId.name());
+                             << QStringLiteral("Tab[%1] 已关闭").arg(tabId);
                      });
     QObject::connect(&tabManager,
                      &bakuon::sandbox::TabSandboxManager::tabLogMessage,
                      &tabManager,
-                     [](bakuon::sandbox::TabId tabId, int level, const QString &message) {
+                     [](uint64_t tabId, int level, const QString &message) {
                          qCInfo(lcStandalone).noquote() << QStringLiteral("Tab[%1] (level=%2) %3")
-                                                               .arg(tabId.name())
+                                                               .arg(tabId)
                                                                .arg(level)
                                                                .arg(message);
                      });
@@ -236,8 +236,8 @@ int main(int argc, char *argv[])
     } else {
         qCInfo(lcStandalone).noquote() << QStringLiteral("沙箱子进程: %1").arg(sandboxRuntimeExe);
         qCInfo(lcStandalone).noquote() << QStringLiteral("沙箱化插件: %1").arg(sandboxedPluginFile);
-        const bakuon::sandbox::TabId demoTabId = tabManager.openTab(sandboxedPluginFile);
-        if (!demoTabId.isValid()) {
+        const auto demoTabId = tabManager.openTab(sandboxedPluginFile);
+        if (demoTabId != 0) {
             qCWarning(lcStandalone) << "openTab() 失败（未拿到有效 TabId）";
         }
     }

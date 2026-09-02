@@ -154,11 +154,12 @@ private:
 private:
     QString m_sandboxId;
     QString m_pluginFilePath;
-    SandboxPhase m_phase = SandboxPhase::Connecting;
+    SandboxPhase m_phase     = SandboxPhase::Connecting;
     /// true（默认，对应 start()）：Replica 变 Valid 后调用一次 loadPlugin()。
     /// false（对应 attach()）：跳过 loadPlugin()，只把当前 Replica 属性同步一次，
     /// 见 onReplicaStateChanged() 的实现。
-    bool m_needsLoadPlugin = true;
+    bool m_needsLoadPlugin   = true;
+    bool m_phaseForwardBound = false;
 
     QRemoteObjectNode &
         m_registryNode; // 外部注入（通常是 SandboxSystem 持有的注册中心），生命周期由调用方保证长于本对象

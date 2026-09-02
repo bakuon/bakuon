@@ -12,17 +12,36 @@
 #include <QtCore/QVariantMap>
 #include <QtCore/QVector>
 
-#include "gui/b_id.h"
-
 namespace bakuon::sandbox {
 
 class SandboxSystem;
 enum class SandboxPhase;
 
-/// Tab 的强类型 ID，复用 gui::Id<Tag> 的编译期区分机制（同一套模式已经用在
-/// CommandId/ContextId 上），避免和 sandboxId（SandboxSystem 里的裸 QString）
-/// 混用出现只有运行时才暴露的错误。
-using TabId = bakuon::gui::Id<struct TabIdTag>;
+/**
+ * @brief Host 侧一个"标签页/会话"的稳定身份，与底层 sandboxId 解耦。
+ *
+ * restartTab() 会换新的 sandboxId，但 TabId 保持不变——这是本类存在的理由：
+ * UI 层只认 Tab，不认沙箱进程。
+ */
+// struct TabId
+// {
+//     quint64 value = 0;
+
+//     [[nodiscard]] bool isValid() const noexcept { return value != 0; }
+//     [[nodiscard]] friend bool operator==(TabId a, TabId b) noexcept { return a.value == b.value; }
+//     [[nodiscard]] friend bool operator!=(TabId a, TabId b) noexcept { return a.value != b.value; }
+// };
+
+/// Tab 的生命周期状态机，比 SandboxPhase 粗一个粒度——TabSandboxManager 只关心
+/// "这个 Tab 现在处于哪个对 Host/UI 有意义的阶段"，SandboxPhase 里 Connecting/
+/// Loading/Initializing 这些子阶段细节被折叠进 Launching。
+enum class TabState {
+    Queued,    // 已分配 TabId，因并发上限暂未真正 spawn() 底层沙箱进程
+    Launching, // 已 spawn()，尚未到达 Running（对应 SandboxPhase 的 Connecting..Ready）
+    Running,
+    Closing, // 已调用 shutdown()，等待子进程真正退出
+    Faulted, // 沙箱异常（子进程可能还没退出，也可能已经退出，见 sandboxId() 是否非空）
+};
 
 /**
  * @brief 单个 Tab 对应的沙箱会话描述：足够重新 spawn() 一次同样的沙箱实例。
@@ -34,28 +53,19 @@ using TabId = bakuon::gui::Id<struct TabIdTag>;
  */
 struct TabSession
 {
+    uint64_t tabId;
+    QString sandboxId;
     QString pluginFilePath;
     QString sandboxRuntimeExecutable;
+    TabState state = TabState::Queued;
     QVariantMap pluginArguments;
 };
-
-/// Tab 的生命周期状态机，比 SandboxPhase 粗一个粒度——TabSandboxManager 只关心
-/// "这个 Tab 现在处于哪个对 Host/UI 有意义的阶段"，SandboxPhase 里 Connecting/
-/// Loading/Initializing 这些子阶段细节被折叠进 Launching。
-enum class TabState {
-    Queued,    // 已分配 TabId，因并发上限暂未真正 spawn() 底层沙箱进程
-    Launching, // 已 spawn()，尚未到达 Running（对应 SandboxPhase 的 Connecting..Ready）
-    Running,
-    Faulted,   // 沙箱异常（子进程可能还没退出，也可能已经退出，见 sandboxId() 是否非空）
-    Closing,   // 已调用 shutdown()，等待子进程真正退出
-    Closed,    // 终态，仅在 tabIds() 返回前的极短窗口内可观察到，随后 entry 即被移除
-};
-
-[[nodiscard]] QString toString(TabState state);
 
 /**
  * @brief Host 侧"一个标签一个进程"的编排层：把 TabId（UI/Tab 概念）与
  * sandbox::SandboxSystem 的 sandboxId（进程/IPC 概念）绑定在一起。
+ * @details 面向"多标签页"宿主的编排层：在 SandboxSystem 之上做并发节流、排队、
+ *          重启、孤儿收编。不重复实现单个沙箱的生命周期（那是 SandboxSupervisor）。
  *
  * 与 gui::PluginSystem 之于 gui::PluginPipeline、SandboxSystem 之于
  * SandboxSupervisor 的关系类似：本类不重新实现任何单个沙箱实例的启动/通信逻辑，
@@ -90,10 +100,10 @@ class TabSandboxManager : public QObject
     Q_OBJECT
 public:
     /**
-     * @param defaultSandboxRuntimeExecutable openTab() 不显式指定时使用的
+     * @param sandboxRuntimeExecutable openTab() 不显式指定时使用的
      *        sandbox_runtime 可执行文件路径；也可以留空，每次 openTab() 单独指定。
      */
-    explicit TabSandboxManager(QString defaultSandboxRuntimeExecutable = {}, QObject *parent = nullptr);
+    explicit TabSandboxManager(QString sandboxRuntimeExecutable = {}, QObject *parent = nullptr);
     ~TabSandboxManager() override;
 
     TabSandboxManager(const TabSandboxManager &)            = delete;
@@ -112,29 +122,28 @@ public:
      * @param pluginFilePath 要在沙箱里加载的插件动态库路径
      * @param pluginArguments 透传给插件 initialize() 的启动参数
      * @param sandboxRuntimeExecutable 留空则使用 defaultSandboxRuntimeExecutable()
-     * @return 新分配的 TabId；若既没有 defaultSandboxRuntimeExecutable() 也没有显式传入，
+     * @return 新分配的 Tab Id；若既没有 defaultSandboxRuntimeExecutable() 也没有显式传入，
      *         返回一个 isValid()==false 的 TabId（不会创建任何条目），调用方应检查。
      */
-    TabId openTab(const QString &pluginFilePath, QVariantMap pluginArguments = {},
-                  QString sandboxRuntimeExecutable = {});
+    uint64_t openTab(const QString &pluginFilePath, QVariantMap pluginArguments = {},
+                     QString sandboxRuntimeExecutable = {});
 
     /// 请求关闭一个 Tab（对已 spawn 的沙箱是异步优雅关闭，见 SandboxSupervisor::shutdown()）。
     /// 对处于 Queued 的 Tab 是同步的：直接从排队队列移除。
-    bool closeTab(TabId tabId);
+    bool closeTab(uint64_t tabId);
+    /// 对所有仍在注册表里的 Tab 发起 closeTab()；不等待子进程真正退出。
+    void closeAll();
 
     /// 对崩溃（Faulted）或仍在运行的 Tab，用同一份 TabSession 重新 spawn() 一次。
     /// @note 旧沙箱实例的优雅关闭是异步的，短时间内并发数可能超出 maxConcurrentSandboxes()
     ///       一个名额，这是刻意的权衡（restart 语义优先于严格的名额计数），见类注释。
-    bool restartTab(TabId tabId);
+    bool restartTab(uint64_t tabId);
 
-    /// 对所有仍在注册表里的 Tab 发起 closeTab()；不等待子进程真正退出。
-    void closeAll();
-
-    [[nodiscard]] TabState tabState(TabId tabId) const;
-    [[nodiscard]] QString sandboxIdForTab(TabId tabId) const;
-    [[nodiscard]] std::optional<TabId> tabForSandboxId(const QString &sandboxId) const;
-    [[nodiscard]] std::optional<TabSession> sessionForTab(TabId tabId) const;
-    [[nodiscard]] QVector<TabId> tabIds() const;
+    [[nodiscard]] TabState tabState(uint64_t tabId) const;
+    [[nodiscard]] QString sandboxIdForTab(uint64_t tabId) const;
+    [[nodiscard]] std::optional<uint64_t> tabForSandboxId(const QString &sandboxId) const;
+    [[nodiscard]] std::optional<TabSession> sessionForTab(uint64_t tabId) const;
+    [[nodiscard]] QVector<uint64_t> tabIds() const;
     [[nodiscard]] size_t count() const noexcept;
 
     /**
@@ -154,17 +163,17 @@ public:
      * 收编与否不影响它是否消耗系统资源，只影响本类是否知道并追踪它，
      * 因此没有理由为了"节流"而拒绝接管一个已经存在的进程。
      *
-     * @return 本次成功收编、新分配的 TabId 列表；没有待收编的孤儿时返回空列表。
+     * @return 本次成功收编、新分配的 id 列表；没有待收编的孤儿时返回空列表。
      */
-    [[nodiscard]] QVector<TabId> tryAdoptOrphanedSandboxes();
+    [[nodiscard]] QVector<uint64_t> tryAdoptOrphanedSandboxes();
 
 Q_SIGNALS:
-    void tabQueued(TabId tabId);
-    void tabLaunching(TabId tabId);
-    void tabRunning(TabId tabId);
-    void tabFaulted(TabId tabId, const QString &reason);
-    void tabClosed(TabId tabId);
-    void tabLogMessage(TabId tabId, int level, const QString &message);
+    void tabQueued(uint64_t tabId);
+    void tabLaunching(uint64_t tabId);
+    void tabRunning(uint64_t tabId);
+    void tabClosed(uint64_t tabId);
+    void tabFaulted(uint64_t tabId, const QString &reason);
+    void tabLogMessage(uint64_t tabId, int level, const QString &message);
     /// 注册中心里出现了一个尚未被收编的孤儿沙箱（转发自 SandboxSystem::orphanDiscovered），
     /// 调用方可以选择立即/稍后调用 tryAdoptOrphanedSandboxes()，也可以完全不管它
     /// （比如产品决策是"崩溃恢复关掉、宁可留一个不再被任何 Tab 追踪的后台进程"）。
@@ -172,48 +181,42 @@ Q_SIGNALS:
     /// tryAdoptOrphanedSandboxes() 每成功收编一个孤儿就发一次，UI 层可以用它
     /// 区分"这是用户主动 openTab() 打开的"还是"这是恢复回来的孤儿"，展示不同的
     /// 提示（比如"检测到一个恢复的后台任务，文档信息不可用"）。
-    void tabAdopted(TabId tabId, const QString &sandboxId);
+    void tabAdopted(uint64_t tabId, const QString &sandboxId);
 
 private:
-    struct Entry
-    {
-        TabSession session;
-        TabState state = TabState::Queued;
-        QString sandboxId; // Queued/Closed 状态下为空
-    };
+    uint64_t nextTabId();
+    [[nodiscard]] size_t occupyingCount() const noexcept;
+    void spawnSession(TabSession &session);
+    void tryQueued();
+    void finalizeSession(TabSession &session, bool emitClosed);
 
-    TabId nextTabId();
-    [[nodiscard]] size_t activeCount() const noexcept;
-    void spawnEntry(const TabId &tabId, Entry &entry);
-    void trySpawnNextQueued();
-    void finalizeEntry(const TabId &tabId, Entry &entry, bool emitClosed);
-
-    void handlePhaseChanged(const QString &sandboxId, SandboxPhase phase);
-    void handleFaulted(const QString &sandboxId, const QString &reason);
-    void handleLogMessage(const QString &sandboxId, int level, const QString &message);
-    void handleProcessFinished(const QString &sandboxId, int exitCode);
-    void handleOrphanDiscovered(const QString &sandboxId);
+    void onPhaseChanged(const QString &sandboxId, SandboxPhase phase);
+    void onFaulted(const QString &sandboxId, const QString &reason);
+    void onLogMessage(const QString &sandboxId, int level, const QString &message);
+    void onProcessFinished(const QString &sandboxId, int exitCode);
+    void onOrphanDiscovered(const QString &sandboxId);
 
 private:
+    QString m_defaultSandboxRuntimeExecutable;
+    int m_maxConcurrent   = 8;
+    uint64_t m_nextTabSeq = 1;
+
+    std::unordered_map<uint64_t, TabSession> m_tabs;
+    std::unordered_map<QString, uint64_t> m_sandboxIdToTab; // 仅覆盖已 spawn 的条目
+    std::deque<uint64_t> m_pendingQueue;
+    std::vector<QString> m_pendingOrphans; // 已发现、尚未 tryAdoptOrphanedSandboxes() 的孤儿
+
     // 声明顺序即析构顺序（反向）：m_sandboxSystem 必须放在最后声明，确保它是所有成员里
     // 第一个被析构的——它的析构链路（SandboxSystem -> shared_ptr<SandboxSupervisor> ->
     // ~SandboxSupervisor() 内部 waitForFinished() 阻塞等待时会顺带泵一次本地事件循环）
     // 完全可能在 TabSandboxManager 自身还没析构完的当口，同步重入
     // handlePhaseChanged()/handleFaulted() 等槽函数（此时 TabSandboxManager 的 QObject
-    // 基类部分尚未析构，信号连接依然有效）。这些槽函数会访问 m_entries/m_sandboxIdToTab，
+    // 基类部分尚未析构，信号连接依然有效）。这些槽函数会访问 m_tabs/m_sandboxIdToTab，
     // 如果这两个成员先于 m_sandboxSystem 被析构，就是访问已析构对象的悬空内存——
     // 这里的声明顺序就是专门为了避免这个坑，不要因为"看起来更整齐"而调整。
-    std::unordered_map<TabId, Entry> m_entries;
-    std::unordered_map<QString, TabId> m_sandboxIdToTab; // 仅覆盖已 spawn 的条目
-    std::deque<TabId> m_pendingQueue;
-    std::vector<QString> m_pendingOrphanSandboxIds; // 已发现、尚未 tryAdoptOrphanedSandboxes() 的孤儿
-    QString m_defaultSandboxRuntimeExecutable;
-    int m_maxConcurrent  = 8;
-    uint64_t m_nextSeq   = 1;
     std::unique_ptr<SandboxSystem> m_sandboxSystem;
 };
 
 } // namespace bakuon::sandbox
 
-Q_DECLARE_METATYPE(bakuon::sandbox::TabId)
 Q_DECLARE_METATYPE(bakuon::sandbox::TabState)

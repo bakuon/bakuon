@@ -10,7 +10,9 @@
 #include <QtCore/QVariantMap>
 #include <QtCore/QVector>
 
+QT_BEGIN_NAMESPACE
 class QRemoteObjectRegistryHost;
+QT_END_NAMESPACE
 
 namespace bakuon::sandbox {
 
@@ -104,7 +106,10 @@ private:
     QString nextSandboxId();
     /// spawn()/adopt() 共用：把新建的 SandboxSupervisor 的信号转发成带 sandboxId 的
     /// 统一信号，并注册进程退出后的自动 remove()。
-    void wireSupervisorSignals(const QString &sandboxId, const std::shared_ptr<SandboxSupervisor> &supervisor);
+    void wireSupervisorSignals(const QString &sandboxId,
+                               const std::shared_ptr<SandboxSupervisor> &supervisor);
+
+    // void adoptOrphans(const QRemoteObjectSourceLocation &entities);
 
 private:
     std::atomic<uint64_t> m_nextSeq{1};

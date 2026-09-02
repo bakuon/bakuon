@@ -77,7 +77,9 @@ SandboxSupervisor::~SandboxSupervisor()
     // 收编来的实例，必须在析构之前显式调用 shutdown()（通过 SandboxSystem::shutdown()）
     // 并给对方响应的时间；本类没有能力替调用方强制终止一个自己没有 spawn 过的进程。
     if (m_process && m_process->state() != QProcess::NotRunning) {
-        if (m_replica) {
+        // 先断开 finished，避免析构期间二次触发 processFinished → 排队销毁自身。
+        m_process->disconnect(this);
+        if (m_replica && m_replica->isReplicaValid()) {
             m_replica->shutdownSandbox();
         }
         if (!m_process->waitForFinished(2000)) {
@@ -124,6 +126,13 @@ void SandboxSupervisor::start(const QString &sandboxRuntimeExecutable, QVariantM
                              QString::fromLatin1(cli::kSandboxId),
                              m_sandboxId});
     m_process->start();
+    if (!m_process->waitForStarted(5000)) {
+        m_phase = SandboxPhase::Faulted;
+        Q_EMIT phaseChanged(m_phase);
+        Q_EMIT faulted(QStringLiteral("无法启动 sandbox_runtime：%1").arg(m_process->errorString()));
+        Q_EMIT processFinished(-1);
+        return;
+    }
 
     m_needsLoadPlugin = true;
     acquireReplica();
@@ -139,10 +148,22 @@ void SandboxSupervisor::attach()
 void SandboxSupervisor::acquireReplica()
 {
     // 直接用注入进来的、Host 主程序全局共用的注册中心 Node acquire——不再需要
-    // 自己 connectToNode()（更不需要知道子进程到底监听在哪个地址上，那是子进程和
-    // 注册中心之间的事）。对象名必须带上 sandboxId，见 makeSandboxObjectName()。
+    // 自己 connectToNode()。对象名必须带上 sandboxId，见 makeSandboxObjectName()。
+    if (m_replica) {
+        m_replica->disconnect(this);
+        m_replica.reset();
+        m_phaseForwardBound = false;
+    }
     m_replica.reset(
         m_registryNode.acquire<PluginSandboxControlReplica>(makeSandboxObjectName(m_sandboxId)));
+    if (!m_replica) {
+        m_phase = SandboxPhase::Faulted;
+        Q_EMIT phaseChanged(m_phase);
+        Q_EMIT faulted(QStringLiteral("acquire PluginSandboxControlReplica 失败"));
+        return;
+    }
+    // 从 Node 手里拿走 QObject 所有权，避免 Node 析构与 unique_ptr 双删。
+    // m_replica->setParent(this);
     connect(m_replica.get(),
             &QRemoteObjectReplica::stateChanged,
             this,
@@ -165,6 +186,8 @@ void SandboxSupervisor::onReplicaStateChanged()
         // 不在了"的信号，这里补一次 processFinished（退出码未知，用 -1 表示），
         // 让 SandboxSystem/TabSandboxManager 走和正常退出一样的收尾路径。
         if (!m_process) {
+            // m_phase = SandboxPhase::Faulted;
+            // Q_EMIT phaseChanged(m_phase);
             Q_EMIT processFinished(-1);
         }
         return;
@@ -174,15 +197,20 @@ void SandboxSupervisor::onReplicaStateChanged()
     }
     // Replica 刚变为可用（即已经连接上 Sandbox 子进程发布的 Source），此时才能安全调用
     // 契约 slot——过早调用会因为底层连接尚未建立而被 QtRO 静默丢弃。
-    connect(m_replica.get(),
-            &PluginSandboxControlReplica::phaseChanged,
-            this,
-            [this](PluginSandboxControlReplica::SandboxPhase p) {
-                m_phase = fromReplicaPhase(p);
-                Q_EMIT phaseChanged(m_phase);
-            });
+    // phaseChanged 只绑定一次，避免 Valid→Suspect→Valid 重连时重复 connect。
+    if (!m_phaseForwardBound) {
+        connect(m_replica.get(),
+                &PluginSandboxControlReplica::phaseChanged,
+                this,
+                [this](PluginSandboxControlReplica::SandboxPhase p) {
+                    m_phase = fromReplicaPhase(p);
+                    Q_EMIT phaseChanged(m_phase);
+                });
+        m_phaseForwardBound = true;
+    }
 
     if (m_needsLoadPlugin) {
+        m_needsLoadPlugin = false;
         m_replica->loadPlugin(m_pluginFilePath, m_pendingPluginArguments);
     } else {
         // attach() 模式：对方早就跑起来了，Replica 变 Valid 的这一刻 QtRO 已经把
@@ -256,7 +284,7 @@ void SandboxSupervisor::shutdown()
 QString SandboxSupervisor::beginCommand(const QString &commandId, const QByteArray &inputPayload,
                                         quint32 resultCapacity, QVariantMap params)
 {
-    if (!m_replica) {
+    if (!m_replica || !m_replica->isReplicaValid()) {
         return {};
     }
 

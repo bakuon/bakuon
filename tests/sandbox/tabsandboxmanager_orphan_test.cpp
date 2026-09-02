@@ -80,7 +80,7 @@ QString orphanHelperPath()
 // SandboxSupervisor::attach()）的端到端确认，不是重复验证同一件事。
 TEST(TabSandboxManagerOrphanTest, RediscoverAndAdoptOrphanAfterHostCrash)
 {
-    Q_UNUSED(app());
+    Q_UNUSED(app())
 
     QProcess helper;
     helper.setProgram(orphanHelperPath());
@@ -107,23 +107,27 @@ TEST(TabSandboxManagerOrphanTest, RediscoverAndAdoptOrphanAfterHostCrash)
     TabSandboxManager manager(sandboxRuntimePath());
 
     QString discoveredOrphanId;
-    QObject::connect(&manager, &TabSandboxManager::orphanSandboxAvailable, &manager,
-                      [&](const QString &sandboxId) { discoveredOrphanId = sandboxId; });
+    QObject::connect(&manager,
+                     &TabSandboxManager::orphanSandboxAvailable,
+                     &manager,
+                     [&](const QString &sandboxId) { discoveredOrphanId = sandboxId; });
 
     // 孤儿沙箱子进程需要先感知到旧注册中心连接断开、再自动重连到新起的同地址注册中心，
     // 这个过程有内部重试退避，因此这里给了比其他测试更宽松的超时。
     ASSERT_TRUE(waitUntil([&] { return !discoveredOrphanId.isEmpty(); }, 15000))
         << "等待孤儿沙箱被重新发现超时——orphanSandboxAvailable 一直没有触发";
 
-    TabId adoptedTabId;
+    uint64_t adoptedTabId;
     QString adoptedSandboxId;
-    QObject::connect(&manager, &TabSandboxManager::tabAdopted, &manager,
-                      [&](TabId tabId, const QString &sandboxId) {
-                          adoptedTabId    = tabId;
-                          adoptedSandboxId = sandboxId;
-                      });
+    QObject::connect(&manager,
+                     &TabSandboxManager::tabAdopted,
+                     &manager,
+                     [&](uint64_t tabId, const QString &sandboxId) {
+                         adoptedTabId     = tabId;
+                         adoptedSandboxId = sandboxId;
+                     });
 
-    const QVector<TabId> adopted = manager.tryAdoptOrphanedSandboxes();
+    const QVector<uint64_t> adopted = manager.tryAdoptOrphanedSandboxes();
     ASSERT_EQ(adopted.size(), 1);
     EXPECT_EQ(adopted[0], adoptedTabId);
     EXPECT_EQ(adoptedSandboxId, discoveredOrphanId);

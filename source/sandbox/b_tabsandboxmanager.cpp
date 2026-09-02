@@ -9,37 +9,34 @@
 
 namespace bakuon::sandbox {
 
-QString toString(TabState state)
-{
-    switch (state) {
-    case TabState::Queued    : return QStringLiteral("Queued");
-    case TabState::Launching : return QStringLiteral("Launching");
-    case TabState::Running   : return QStringLiteral("Running");
-    case TabState::Faulted   : return QStringLiteral("Faulted");
-    case TabState::Closing   : return QStringLiteral("Closing");
-    case TabState::Closed    : return QStringLiteral("Closed");
-    default                  : break;
-    }
-    return QStringLiteral("<unknown TabState>");
-}
-
-TabSandboxManager::TabSandboxManager(QString defaultSandboxRuntimeExecutable, QObject *parent)
+TabSandboxManager::TabSandboxManager(QString sandboxRuntimeExecutable, QObject *parent)
     : QObject(parent)
-    , m_defaultSandboxRuntimeExecutable(std::move(defaultSandboxRuntimeExecutable))
+    , m_defaultSandboxRuntimeExecutable(std::move(sandboxRuntimeExecutable))
     // 不把 this 传给 SandboxSystem 的构造参数（QObject parent）——本类用
     // std::unique_ptr 独占管理它的生命周期，两套所有权机制叠在同一个对象上
     // 会导致析构时被删两次，这里刻意保持 SandboxSystem 是"无父对象"的。
     , m_sandboxSystem(std::make_unique<SandboxSystem>())
 {
-    connect(m_sandboxSystem.get(), &SandboxSystem::sandboxPhaseChanged, this,
-            &TabSandboxManager::handlePhaseChanged);
-    connect(m_sandboxSystem.get(), &SandboxSystem::sandboxFaulted, this, &TabSandboxManager::handleFaulted);
-    connect(m_sandboxSystem.get(), &SandboxSystem::sandboxLogMessage, this,
-            &TabSandboxManager::handleLogMessage);
-    connect(m_sandboxSystem.get(), &SandboxSystem::sandboxProcessFinished, this,
-            &TabSandboxManager::handleProcessFinished);
-    connect(m_sandboxSystem.get(), &SandboxSystem::orphanDiscovered, this,
-            &TabSandboxManager::handleOrphanDiscovered);
+    connect(m_sandboxSystem.get(),
+            &SandboxSystem::sandboxPhaseChanged,
+            this,
+            &TabSandboxManager::onPhaseChanged);
+    connect(m_sandboxSystem.get(),
+            &SandboxSystem::sandboxFaulted,
+            this,
+            &TabSandboxManager::onFaulted);
+    connect(m_sandboxSystem.get(),
+            &SandboxSystem::sandboxLogMessage,
+            this,
+            &TabSandboxManager::onLogMessage);
+    connect(m_sandboxSystem.get(),
+            &SandboxSystem::sandboxProcessFinished,
+            this,
+            &TabSandboxManager::onProcessFinished);
+    connect(m_sandboxSystem.get(),
+            &SandboxSystem::orphanDiscovered,
+            this,
+            &TabSandboxManager::onOrphanDiscovered);
 }
 
 TabSandboxManager::~TabSandboxManager()
@@ -62,8 +59,8 @@ const QString &TabSandboxManager::defaultSandboxRuntimeExecutable() const noexce
 
 void TabSandboxManager::setMaxConcurrentSandboxes(int max)
 {
-    m_maxConcurrent = max;
-    trySpawnNextQueued();
+    m_maxConcurrent = max < 0 ? 0 : max;
+    tryQueued();
 }
 
 int TabSandboxManager::maxConcurrentSandboxes() const noexcept
@@ -71,25 +68,24 @@ int TabSandboxManager::maxConcurrentSandboxes() const noexcept
     return m_maxConcurrent;
 }
 
-TabId TabSandboxManager::nextTabId()
+uint64_t TabSandboxManager::nextTabId()
 {
-    return TabId(QStringLiteral("tab-%1").arg(m_nextSeq++));
+    return m_nextTabSeq++;
 }
 
-size_t TabSandboxManager::activeCount() const noexcept
+size_t TabSandboxManager::occupyingCount() const noexcept
 {
     size_t n = 0;
-    for (const auto &[id, entry] : m_entries) {
-        if (entry.state == TabState::Launching || entry.state == TabState::Running ||
-            entry.state == TabState::Closing) {
+    for (const auto &[id, session] : m_tabs) {
+        if (session.state != TabState::Queued) {
             ++n;
         }
     }
     return n;
 }
 
-TabId TabSandboxManager::openTab(const QString &pluginFilePath, QVariantMap pluginArguments,
-                                  QString sandboxRuntimeExecutable)
+uint64_t TabSandboxManager::openTab(const QString &pluginFilePath, QVariantMap pluginArguments,
+                                    QString sandboxRuntimeExecutable)
 {
     if (sandboxRuntimeExecutable.isEmpty()) {
         sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
@@ -97,22 +93,23 @@ TabId TabSandboxManager::openTab(const QString &pluginFilePath, QVariantMap plug
     if (sandboxRuntimeExecutable.isEmpty()) {
         qWarning() << "TabSandboxManager::openTab: 未指定 sandboxRuntimeExecutable，"
                       "且 defaultSandboxRuntimeExecutable() 也是空的，拒绝打开新 Tab。";
-        return TabId{}; // isValid() == false
+        return 0;
     }
 
-    const TabId tabId = nextTabId();
-    Entry entry;
-    entry.session.pluginFilePath           = pluginFilePath;
-    entry.session.sandboxRuntimeExecutable = sandboxRuntimeExecutable;
-    entry.session.pluginArguments          = std::move(pluginArguments);
-    entry.state                            = TabState::Queued;
+    const auto tabId = nextTabId();
+    TabSession session;
+    session.tabId                    = tabId;
+    session.pluginFilePath           = pluginFilePath;
+    session.sandboxRuntimeExecutable = sandboxRuntimeExecutable;
+    session.pluginArguments          = std::move(pluginArguments);
+    session.state                    = TabState::Queued;
 
-    auto [it, inserted] = m_entries.emplace(tabId, std::move(entry));
+    auto [it, inserted] = m_tabs.emplace(tabId, std::move(session));
     Q_ASSERT(inserted);
-    Q_UNUSED(inserted);
+    Q_UNUSED(inserted)
 
-    if (m_maxConcurrent <= 0 || activeCount() < static_cast<size_t>(m_maxConcurrent)) {
-        spawnEntry(tabId, it->second);
+    if (m_maxConcurrent <= 0 || occupyingCount() < static_cast<size_t>(m_maxConcurrent)) {
+        spawnSession(it->second);
     } else {
         m_pendingQueue.push_back(tabId);
         Q_EMIT tabQueued(tabId);
@@ -120,152 +117,149 @@ TabId TabSandboxManager::openTab(const QString &pluginFilePath, QVariantMap plug
     return tabId;
 }
 
-void TabSandboxManager::spawnEntry(const TabId &tabId, Entry &entry)
+void TabSandboxManager::spawnSession(TabSession &session)
 {
-    const QString sandboxId =
-        m_sandboxSystem->spawn(entry.session.pluginFilePath, entry.session.sandboxRuntimeExecutable,
-                               entry.session.pluginArguments);
-    entry.sandboxId = sandboxId;
-    entry.state     = TabState::Launching;
-    m_sandboxIdToTab.emplace(sandboxId, tabId);
-    Q_EMIT tabLaunching(tabId);
+    const QString sandboxId = m_sandboxSystem->spawn(session.pluginFilePath,
+                                                     session.sandboxRuntimeExecutable,
+                                                     session.pluginArguments);
+    session.sandboxId       = sandboxId;
+    session.state           = TabState::Launching;
+    m_sandboxIdToTab.emplace(sandboxId, session.tabId);
+    Q_EMIT tabLaunching(session.tabId);
 }
 
-void TabSandboxManager::trySpawnNextQueued()
+void TabSandboxManager::tryQueued()
 {
-    while (!m_pendingQueue.empty() &&
-           (m_maxConcurrent <= 0 || activeCount() < static_cast<size_t>(m_maxConcurrent))) {
-        const TabId tabId = m_pendingQueue.front();
+    while (!m_pendingQueue.empty()
+           && (m_maxConcurrent <= 0 || occupyingCount() < static_cast<size_t>(m_maxConcurrent))) {
+        const auto tabId = m_pendingQueue.front();
         m_pendingQueue.pop_front();
 
-        auto it = m_entries.find(tabId);
-        if (it == m_entries.end() || it->second.state != TabState::Queued) {
+        auto it = m_tabs.find(tabId);
+        if (it == m_tabs.end() || it->second.state != TabState::Queued) {
             // Tab 在排队期间被 closeTab() 掉了，条目已经不在了（见 closeTab 对 Queued 分支
             // 的处理），跳过即可。
             continue;
         }
-        spawnEntry(tabId, it->second);
+        spawnSession(it->second);
     }
 }
 
-bool TabSandboxManager::closeTab(TabId tabId)
+bool TabSandboxManager::closeTab(uint64_t tabId)
 {
-    auto it = m_entries.find(tabId);
-    if (it == m_entries.end()) {
+    auto it = m_tabs.find(tabId);
+    if (it == m_tabs.end()) {
         return false;
     }
-    Entry &entry = it->second;
+    auto &session = it->second;
 
-    switch (entry.state) {
+    switch (session.state) {
     case TabState::Queued: {
         // 还没真正 spawn()，直接从排队队列和条目表里摘掉，没有子进程需要等待退出。
-        auto qit = std::find(m_pendingQueue.begin(), m_pendingQueue.end(), tabId);
-        if (qit != m_pendingQueue.end()) {
-            m_pendingQueue.erase(qit);
-        }
-        m_entries.erase(it);
+        m_pendingQueue.erase(std::remove(m_pendingQueue.begin(), m_pendingQueue.end(), tabId),
+                             m_pendingQueue.end());
+        m_tabs.erase(it);
         Q_EMIT tabClosed(tabId);
-        trySpawnNextQueued();
+        tryQueued();
         return true;
     }
     case TabState::Launching:
-    case TabState::Running: {
-        entry.state = TabState::Closing;
-        m_sandboxSystem->shutdown(entry.sandboxId);
+    case TabState::Running  : {
+        session.state = TabState::Closing;
+        m_sandboxSystem->shutdown(session.sandboxId);
         return true;
     }
     case TabState::Faulted: {
-        if (entry.sandboxId.isEmpty()) {
+        if (session.sandboxId.isEmpty()) {
             // 子进程已经退出（handleProcessFinished 已经跑过、清空了 sandboxId），
             // 直接终结这个条目即可，不需要再等待任何异步事件。
-            finalizeEntry(tabId, entry, /*emitClosed=*/true);
-            trySpawnNextQueued();
+            finalizeSession(session, /*emitClosed=*/true);
+            tryQueued();
         } else {
             // 子进程可能还没真正退出（例如报了 Faulted 但进程还在收尾），
             // 走和 Running 一样的优雅关闭路径，交给 handleProcessFinished 收尾。
-            entry.state = TabState::Closing;
-            m_sandboxSystem->shutdown(entry.sandboxId);
+            session.state = TabState::Closing;
+            m_sandboxSystem->shutdown(session.sandboxId);
         }
         return true;
     }
-    case TabState::Closing:
-    case TabState::Closed:
-        return false; // 已经在关闭/已关闭，重复调用是 no-op
+    case TabState::Closing: return true; // 已经在关闭/已关闭，重复调用是 no-op
+    default               : break;
     }
-    return false;
+    return true;
 }
 
-bool TabSandboxManager::restartTab(TabId tabId)
+void TabSandboxManager::closeAll()
 {
-    auto it = m_entries.find(tabId);
-    if (it == m_entries.end()) {
+    // 复制一份 key 列表再逐个 closeTab()：closeTab() 可能同步修改 m_tabs
+    // （Queued 分支），直接在遍历 m_tabs 的同时改它是未定义行为。
+    QVector<uint64_t> ids;
+    ids.reserve(static_cast<int>(m_tabs.size()));
+    for (const auto &[id, entry] : m_tabs) {
+        Q_UNUSED(entry)
+        ids.push_back(id);
+    }
+    for (const auto &id : ids) {
+        closeTab(id);
+    }
+}
+
+bool TabSandboxManager::restartTab(uint64_t tabId)
+{
+    auto it = m_tabs.find(tabId);
+    if (it == m_tabs.end()) {
         return false;
     }
-    Entry &entry = it->second;
-    if (entry.state == TabState::Closing) {
+    auto &session = it->second;
+    if (session.state == TabState::Queued || session.state == TabState::Closing) {
         return false; // 正在关闭中，语义上不清楚"重启"该指向新旧哪个实例，拒绝
     }
 
-    if (!entry.sandboxId.isEmpty()) {
+    if (!session.sandboxId.isEmpty()) {
         // 旧实例还活着（Launching/Running/Faulted-but-not-yet-exited）：
         // 先摘掉旧的 sandboxId -> tabId 映射再发起 shutdown()，这样旧实例真正退出、
         // 触发 handleProcessFinished 时会因为查不到映射而直接忽略（见该函数实现），
         // 不会覆盖我们即将建立的新映射。
-        m_sandboxIdToTab.erase(entry.sandboxId);
-        m_sandboxSystem->shutdown(entry.sandboxId);
-        entry.sandboxId.clear();
+        m_sandboxIdToTab.erase(session.sandboxId);
+        m_sandboxSystem->shutdown(session.sandboxId);
+        session.sandboxId.clear();
     }
 
     // 立即为同一个 Tab 重新 spawn()。短时间内新旧两个子进程可能同时存在
     // （旧的正在异步收尾、新的已经起来），因此并发计数在这个窗口内可能超出
     // maxConcurrentSandboxes() 一个名额——这是 restart 语义相对严格名额控制的
     // 刻意取舍，见类注释。
-    spawnEntry(tabId, entry);
+    spawnSession(session);
     return true;
 }
 
-void TabSandboxManager::closeAll()
+void TabSandboxManager::finalizeSession(TabSession &session, bool emitClosed)
 {
-    // 复制一份 key 列表再逐个 closeTab()：closeTab() 可能同步修改 m_entries
-    // （Queued 分支），直接在遍历 m_entries 的同时改它是未定义行为。
-    QVector<TabId> ids;
-    ids.reserve(static_cast<int>(m_entries.size()));
-    for (const auto &[id, entry] : m_entries) {
-        Q_UNUSED(entry);
-        ids.push_back(id);
+    session.state = TabState::Faulted;
+    if (!session.sandboxId.isEmpty()) {
+        m_sandboxIdToTab.erase(session.sandboxId);
+        m_sandboxSystem->remove(session.sandboxId);
+        session.sandboxId.clear();
     }
-    for (const TabId &id : ids) {
-        closeTab(id);
-    }
-}
-
-void TabSandboxManager::finalizeEntry(const TabId &tabId, Entry &entry, bool emitClosed)
-{
-    entry.state = TabState::Closed;
-    if (!entry.sandboxId.isEmpty()) {
-        m_sandboxIdToTab.erase(entry.sandboxId);
-        m_sandboxSystem->remove(entry.sandboxId);
-        entry.sandboxId.clear();
-    }
-    m_entries.erase(tabId);
+    m_tabs.erase(session.tabId);
     if (emitClosed) {
-        Q_EMIT tabClosed(tabId);
+        Q_EMIT tabClosed(session.tabId);
     }
 }
 
-TabState TabSandboxManager::tabState(TabId tabId) const
+TabState TabSandboxManager::tabState(uint64_t tabId) const
 {
-    auto it = m_entries.find(tabId);
-    return it != m_entries.end() ? it->second.state : TabState::Closed;
+    auto it = m_tabs.find(tabId);
+    return it != m_tabs.end() ? it->second.state : TabState::Faulted;
 }
 
-QString TabSandboxManager::sandboxIdForTab(TabId tabId) const
+QString TabSandboxManager::sandboxIdForTab(uint64_t tabId) const
 {
-    auto it = m_entries.find(tabId);
-    return it != m_entries.end() ? it->second.sandboxId : QString{};
+    auto it = m_tabs.find(tabId);
+    return it != m_tabs.end() ? it->second.sandboxId : QString{};
 }
 
-std::optional<TabId> TabSandboxManager::tabForSandboxId(const QString &sandboxId) const
+std::optional<uint64_t> TabSandboxManager::tabForSandboxId(const QString &sandboxId) const
 {
     auto it = m_sandboxIdToTab.find(sandboxId);
     if (it == m_sandboxIdToTab.end()) {
@@ -274,21 +268,21 @@ std::optional<TabId> TabSandboxManager::tabForSandboxId(const QString &sandboxId
     return it->second;
 }
 
-std::optional<TabSession> TabSandboxManager::sessionForTab(TabId tabId) const
+std::optional<TabSession> TabSandboxManager::sessionForTab(uint64_t tabId) const
 {
-    auto it = m_entries.find(tabId);
-    if (it == m_entries.end()) {
+    auto it = m_tabs.find(tabId);
+    if (it == m_tabs.end()) {
         return std::nullopt;
     }
-    return it->second.session;
+    return it->second;
 }
 
-QVector<TabId> TabSandboxManager::tabIds() const
+QVector<uint64_t> TabSandboxManager::tabIds() const
 {
-    QVector<TabId> ids;
-    ids.reserve(static_cast<int>(m_entries.size()));
-    for (const auto &[id, entry] : m_entries) {
-        Q_UNUSED(entry);
+    QVector<uint64_t> ids;
+    ids.reserve(static_cast<int>(m_tabs.size()));
+    for (const auto &[id, session] : m_tabs) {
+        Q_UNUSED(session)
         ids.push_back(id);
     }
     return ids;
@@ -296,17 +290,17 @@ QVector<TabId> TabSandboxManager::tabIds() const
 
 size_t TabSandboxManager::count() const noexcept
 {
-    return m_entries.size();
+    return m_tabs.size();
 }
 
-QVector<TabId> TabSandboxManager::tryAdoptOrphanedSandboxes()
+QVector<uint64_t> TabSandboxManager::tryAdoptOrphanedSandboxes()
 {
-    QVector<TabId> adopted;
+    QVector<uint64_t> adopted;
     // 先把待处理列表整体挪出来再遍历：adopt() 内部会同步触发一连串信号
     // （tabAdopted/tabLaunching 等），万一某个槽函数又重入调用了本方法，直接在
-    // m_pendingOrphanSandboxIds 上遍历+修改会是未定义行为，先搬空更安全。
+    // m_pendingOrphans 上遍历+修改会是未定义行为，先搬空更安全。
     std::vector<QString> pending;
-    pending.swap(m_pendingOrphanSandboxIds);
+    pending.swap(m_pendingOrphans);
 
     for (const QString &sandboxId : pending) {
         if (m_sandboxIdToTab.contains(sandboxId)) {
@@ -316,15 +310,16 @@ QVector<TabId> TabSandboxManager::tryAdoptOrphanedSandboxes()
             continue; // SandboxSystem 侧判定它已经不是孤儿了（比如已被别的路径收编）
         }
 
-        const TabId tabId = nextTabId();
-        Entry entry;
-        entry.session.sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
+        const auto tabId = nextTabId();
+        TabSession session;
+        session.tabId                    = tabId;
+        session.sandboxId                = sandboxId;
+        session.sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
         // pluginFilePath 留空：这是"收编孤儿"和"正常 openTab()"在数据完整性上的
         // 本质区别，见类注释和本方法的文档——本进程从未见过它，无从得知。
-        entry.state     = TabState::Launching;
-        entry.sandboxId = sandboxId;
+        session.state                    = TabState::Launching;
 
-        m_entries.emplace(tabId, std::move(entry));
+        m_tabs.emplace(tabId, std::move(session));
         m_sandboxIdToTab.emplace(sandboxId, tabId);
 
         adopted.push_back(tabId);
@@ -334,30 +329,17 @@ QVector<TabId> TabSandboxManager::tryAdoptOrphanedSandboxes()
     return adopted;
 }
 
-void TabSandboxManager::handleOrphanDiscovered(const QString &sandboxId)
+void TabSandboxManager::onPhaseChanged(const QString &sandboxId, SandboxPhase phase)
 {
-    if (m_sandboxIdToTab.contains(sandboxId)) {
-        return; // 理论上不会发生（SandboxSystem 那边已经用 m_entries 过滤过一次），防御性检查
-    }
-    if (std::find(m_pendingOrphanSandboxIds.begin(), m_pendingOrphanSandboxIds.end(), sandboxId) !=
-        m_pendingOrphanSandboxIds.end()) {
-        return; // 已经报告过、还没被 tryAdoptOrphanedSandboxes() 处理掉，不重复入队
-    }
-    m_pendingOrphanSandboxIds.push_back(sandboxId);
-    Q_EMIT orphanSandboxAvailable(sandboxId);
-}
-
-void TabSandboxManager::handlePhaseChanged(const QString &sandboxId, SandboxPhase phase)
-{
-    auto tabIt = m_sandboxIdToTab.find(sandboxId);
-    if (tabIt == m_sandboxIdToTab.end()) {
+    auto it = m_sandboxIdToTab.find(sandboxId);
+    if (it == m_sandboxIdToTab.end()) {
         return; // 不认识的 sandboxId（可能是 restartTab() 里刚摘掉映射的旧实例），忽略
     }
-    auto entryIt = m_entries.find(tabIt->second);
-    if (entryIt == m_entries.end()) {
+    auto tabIt = m_tabs.find(it->second);
+    if (tabIt == m_tabs.end()) {
         return;
     }
-    Entry &entry = entryIt->second;
+    auto &session = tabIt->second;
 
     switch (phase) {
     case SandboxPhase::Ready:
@@ -367,30 +349,32 @@ void TabSandboxManager::handlePhaseChanged(const QString &sandboxId, SandboxPhas
         m_sandboxSystem->run(sandboxId);
         break;
     case SandboxPhase::Running:
-        entry.state = TabState::Running;
-        Q_EMIT tabRunning(tabIt->second);
+        session.state = TabState::Running;
+        Q_EMIT tabRunning(session.tabId);
         break;
     default:
         break; // Connecting/Loading/Initializing/Stopping/Stopped/Faulted 不需要额外动作
-               // （Faulted 由 handleFaulted 单独处理，携带 reason）
+               // （Faulted 由 onFaulted 单独处理，携带 reason）
     }
 }
 
-void TabSandboxManager::handleFaulted(const QString &sandboxId, const QString &reason)
+void TabSandboxManager::onFaulted(const QString &sandboxId, const QString &reason)
 {
-    auto tabIt = m_sandboxIdToTab.find(sandboxId);
-    if (tabIt == m_sandboxIdToTab.end()) {
+    const auto it = m_sandboxIdToTab.find(sandboxId);
+    if (it == m_sandboxIdToTab.end()) {
         return;
     }
-    auto entryIt = m_entries.find(tabIt->second);
-    if (entryIt == m_entries.end()) {
+    auto tabIt = m_tabs.find(it->second);
+    if (tabIt == m_tabs.end()) {
         return;
     }
-    entryIt->second.state = TabState::Faulted;
-    Q_EMIT tabFaulted(tabIt->second, reason);
+
+    auto &session = tabIt->second;
+    session.state = TabState::Faulted;
+    Q_EMIT tabFaulted(session.tabId, reason);
 }
 
-void TabSandboxManager::handleLogMessage(const QString &sandboxId, int level, const QString &message)
+void TabSandboxManager::onLogMessage(const QString &sandboxId, int level, const QString &message)
 {
     auto tabIt = m_sandboxIdToTab.find(sandboxId);
     if (tabIt == m_sandboxIdToTab.end()) {
@@ -399,9 +383,9 @@ void TabSandboxManager::handleLogMessage(const QString &sandboxId, int level, co
     Q_EMIT tabLogMessage(tabIt->second, level, message);
 }
 
-void TabSandboxManager::handleProcessFinished(const QString &sandboxId, int exitCode)
+void TabSandboxManager::onProcessFinished(const QString &sandboxId, int exitCode)
 {
-    Q_UNUSED(exitCode);
+    Q_UNUSED(exitCode)
 
     auto tabIt = m_sandboxIdToTab.find(sandboxId);
     if (tabIt == m_sandboxIdToTab.end()) {
@@ -410,18 +394,17 @@ void TabSandboxManager::handleProcessFinished(const QString &sandboxId, int exit
         m_sandboxSystem->remove(sandboxId);
         return;
     }
-    const TabId tabId = tabIt->second;
-    auto entryIt       = m_entries.find(tabId);
-    if (entryIt == m_entries.end()) {
+    const auto tabId = tabIt->second;
+    auto sessionIt   = m_tabs.find(tabId);
+    if (sessionIt == m_tabs.end()) {
         m_sandboxSystem->remove(sandboxId);
         return;
     }
-    Entry &entry = entryIt->second;
-
-    if (entry.state == TabState::Closing) {
+    auto &session = sessionIt->second;
+    if (session.state == TabState::Closing) {
         // 用户主动要求关闭，子进程也确实退出了：这个 Tab 彻底终结。
-        finalizeEntry(tabId, entry, /*emitClosed=*/true);
-        trySpawnNextQueued();
+        finalizeSession(session, /*emitClosed=*/true);
+        tryQueued();
         return;
     }
 
@@ -430,9 +413,22 @@ void TabSandboxManager::handleProcessFinished(const QString &sandboxId, int exit
     // 这样调用方后续还能用 restartTab() 或者 closeTab() 结束它；同时这个名额已经
     // 空出来了，尝试给排队中的 Tab 补上。
     m_sandboxIdToTab.erase(sandboxId);
-    entry.sandboxId.clear();
-    entry.state = TabState::Faulted;
-    trySpawnNextQueued();
+    session.sandboxId.clear();
+    session.state = TabState::Faulted;
+    tryQueued();
+}
+
+void TabSandboxManager::onOrphanDiscovered(const QString &sandboxId)
+{
+    if (m_sandboxIdToTab.contains(sandboxId)) {
+        return; // 理论上不会发生（SandboxSystem 那边已经用 m_tabs 过滤过一次），防御性检查
+    }
+    if (std::find(m_pendingOrphans.begin(), m_pendingOrphans.end(), sandboxId)
+        != m_pendingOrphans.end()) {
+        return; // 已经报告过、还没被 tryAdoptOrphanedSandboxes() 处理掉，不重复入队
+    }
+    m_pendingOrphans.push_back(sandboxId);
+    Q_EMIT orphanSandboxAvailable(sandboxId);
 }
 
 } // namespace bakuon::sandbox

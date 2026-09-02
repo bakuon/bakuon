@@ -91,11 +91,20 @@ public:
             m_commandHandlers = gui::ExtensionSystem::instance()
                                     .extensionPoint<ISandboxCommandHandler>();
         }
+        setPid(QCoreApplication::applicationPid());
     }
 
     void loadPlugin(QString filePath, QVariantMap arguments) override
     {
+        if (m_pipeline) {
+            Q_EMIT logMessage(1 /*Warning*/,
+                              QStringLiteral("loadPlugin 重复调用，忽略（已加载 %1）")
+                                  .arg(pluginId()));
+            return;
+        }
+
         setPhase(SandboxPhase::Loading);
+        setProgress(10);
 
         m_pipeline = std::make_shared<gui::PluginPipeline>(1, filePath, this);
         connect(m_pipeline.get(),
@@ -119,6 +128,7 @@ public:
         m_pipeline->setArgumentValues(argValues);
 
         setPhase(SandboxPhase::Initializing);
+        setProgress(40);
         if (!m_pipeline->launch()) {
             // launch() 内部失败时上面连的 failed 信号已经把 phase 打到 Faulted 并上报了原因；
             // 这里兜底一次，防止某些非 *Failed 但仍返回 false 的边界情况下 phase 停留在
@@ -130,6 +140,7 @@ public:
         }
 
         setPluginId(m_pipeline->metadata().id);
+        setProgress(100);
         setPhase(SandboxPhase::Ready);
         Q_EMIT logMessage(0 /*Info*/,
                           QStringLiteral("插件 %1 已在沙箱进程中加载完成").arg(pluginId()));

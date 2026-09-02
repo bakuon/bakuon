@@ -3,6 +3,7 @@
 #include <QtCore/QCoreApplication>
 #include <QtRemoteObjects/QRemoteObjectRegistry>
 #include <QtRemoteObjects/QRemoteObjectRegistryHost>
+#include <QtRemoteObjects/QRemoteObjectSourceLocation>
 
 #include "sandbox/b_sandboxconstants.h"
 #include "sandbox/b_sandboxsupervisor.h"
@@ -69,7 +70,9 @@ QString SandboxSystem::nextSandboxId()
     // 混入 PID 后，不同 Host 进程生成的 sandboxId 前缀天然不同，从根上避免这个碰撞
     // （不追求绝对不可能碰撞——同一个 PID 在系统重启后被复用是理论可能的，但那个
     // 时间窗口里孤儿沙箱早就没了，不构成实际风险）。
-    return QStringLiteral("sandbox-%1-%2").arg(QCoreApplication::applicationPid()).arg(m_nextSeq.fetch_add(1));
+    return QStringLiteral("sandbox-%1-%2")
+        .arg(QCoreApplication::applicationPid())
+        .arg(m_nextSeq.fetch_add(1));
 }
 
 QString SandboxSystem::spawn(const QString &pluginFilePath, const QString &sandboxRuntimeExecutable,
@@ -112,15 +115,20 @@ void SandboxSystem::wireSupervisorSignals(const QString &sandboxId,
             [this, sandboxId](int level, const QString &message) {
                 Q_EMIT sandboxLogMessage(sandboxId, level, message);
             });
-    connect(supervisor.get(), &SandboxSupervisor::faulted, this, [this, sandboxId](const QString &reason) {
-        Q_EMIT sandboxFaulted(sandboxId, reason);
-    });
-    connect(supervisor.get(), &SandboxSupervisor::processFinished, this, [this, sandboxId](int exitCode) {
-        Q_EMIT sandboxProcessFinished(sandboxId, exitCode);
-        // 子进程已经真正退出，注册表里的 SandboxSupervisor 不再有存在意义——放到下一个事件循环
-        // tick 再 remove()，避免在 SandboxSupervisor 自己发出的信号处理函数里直接销毁自身。
-        QMetaObject::invokeMethod(this, [this, sandboxId] { remove(sandboxId); }, Qt::QueuedConnection);
-    });
+    connect(supervisor.get(),
+            &SandboxSupervisor::faulted,
+            this,
+            [this, sandboxId](const QString &reason) { Q_EMIT sandboxFaulted(sandboxId, reason); });
+    connect(supervisor.get(),
+            &SandboxSupervisor::processFinished,
+            this,
+            [this, sandboxId](int exitCode) {
+                Q_EMIT sandboxProcessFinished(sandboxId, exitCode);
+                // 子进程已经真正退出，注册表里的 SandboxSupervisor 不再有存在意义——放到下一个事件循环
+                // tick 再 remove()，避免在 SandboxSupervisor 自己发出的信号处理函数里直接销毁自身。
+                QMetaObject::invokeMethod(
+                    this, [this, sandboxId] { remove(sandboxId); }, Qt::QueuedConnection);
+            });
 }
 
 bool SandboxSystem::run(const QString &sandboxId)

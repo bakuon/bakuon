@@ -40,17 +40,19 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(QStringLiteral("bakuon 插件沙箱子进程"));
     parser.addHelpOption();
 
-    QCommandLineOption listenOption(QString::fromLatin1(bakuon::sandbox::cli::kListen
-                                                        + 2), // 去掉前导 "--"
+    auto nameOf = [](const char *flag) {
+        return QString::fromLatin1(flag + 2); // 去掉前导 "--"
+    };
+    QCommandLineOption listenOption(nameOf(bakuon::sandbox::cli::kListen),
                                     QStringLiteral("本进程应监听的本地 QtRO 地址（local: scheme）"),
                                     QStringLiteral("url"));
     QCommandLineOption registryOption(
-        QString::fromLatin1(bakuon::sandbox::cli::kRegistry + 2),
+        nameOf(bakuon::sandbox::cli::kRegistry),
         QStringLiteral("注册中心（QRemoteObjectRegistryHost）地址，见 registryUrl()"),
         QStringLiteral("url"),
         bakuon::sandbox::registryUrl()); // 默认值：与 Host 主程序里创建注册中心时用的地址一致
     QCommandLineOption
-        sandboxIdOption(QString::fromLatin1(bakuon::sandbox::cli::kSandboxId + 2),
+        sandboxIdOption(nameOf(bakuon::sandbox::cli::kSandboxId),
                         QStringLiteral(
                             "宿主分配的沙箱实例 id（同时也是注册中心里对象名的一部分，必需）"),
                         QStringLiteral("id"));
@@ -61,6 +63,10 @@ int main(int argc, char *argv[])
 
     if (!parser.isSet(listenOption)) {
         qCritical() << "缺少必需参数" << bakuon::sandbox::cli::kListen;
+        return 1;
+    }
+    if (!parser.isSet(registryOption)) {
+        qCritical() << "缺少必需参数" << bakuon::sandbox::cli::kRegistry;
         return 1;
     }
     if (!parser.isSet(sandboxIdOption)) {

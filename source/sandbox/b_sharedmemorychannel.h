@@ -6,13 +6,16 @@
 #include <QtCore/QByteArray>
 #include <QtCore/QString>
 
+QT_BEGIN_NAMESPACE
 class QSharedMemory;
+QT_END_NAMESPACE
 
 namespace bakuon::sandbox {
 
 /**
  * @brief 沙箱命令的共享内存数据通道 —— "血肉"部分的核心传输原语。
- *
+ * @details QSharedMemory 数据面：一次 executeCommand 对应一块段。
+ * 
  * ## 设计动机
  * QtRO (.rep) 契约通道只用来传递控制信令（初始化/运行/停止/进度/日志），刻意
  * 不在契约里携带任何大块业务数据——QtRO 的每次属性/信号同步都要经过
@@ -27,12 +30,19 @@ namespace bakuon::sandbox {
  *
  * ## 内存布局
  * Header 定长，Payload 变长，整体位于同一块 QSharedMemory 段里：
+ * magic (u32) | status (u32) | payloadSize (u32) | payloadCapacity (u32) | payload...
  * @code
  *   +------------------+------------------------------------------+
  *   |      Header      |                  Payload                 |
  *   | (sizeof(Header)) |         (capacity() - Header 大小)         |
  *   +------------------+------------------------------------------+
  * @endcode
+ * Host 用 create() 写入输入；Sandbox attach() 后原地计算，writePayload() 覆盖 Payload
+ * 区（不扩大段）。QtRO 契约只传 memoryKey，见 b_pluginsandboxcontrol.rep。
+ *
+ * 段的生命周期由创建方（Host / SharedMemoryChannel 析构 → release()）负责；
+ * 对端只 attach/detach，不要 create 同 key。
+ *
  *
  * ## 就绪/完成的同步策略
  * QSharedMemory 本身只是一块裸内存，不提供"数据是否已就绪"的跨进程通知
@@ -52,18 +62,6 @@ namespace bakuon::sandbox {
 class SharedMemoryChannel
 {
 public:
-    /// 共享内存头部，定长，位于共享内存起始处。
-    struct Header
-    {
-        quint32 magic         = kMagic;   ///< 格式校验魔数，防止误挂载到无关共享内存段
-        quint32 version       = kVersion; ///< 布局版本号，为未来扩展预留
-        quint32 payloadLength = 0;        ///< 当前 Payload 有效字节数（不含 Header）
-        quint32 status        = 0;        ///< 0=待处理 1=处理成功 2=处理失败，调用方可自行扩展约定
-    };
-
-    static constexpr quint32 kMagic   = 0x554B4142; // little-endian 'BAKU'
-    static constexpr quint32 kVersion = 1;
-
     enum Status : quint32 { StatusPending = 0, StatusOk = 1, StatusFailed = 2 };
 
     SharedMemoryChannel();
@@ -71,18 +69,19 @@ public:
 
     SharedMemoryChannel(const SharedMemoryChannel &)            = delete;
     SharedMemoryChannel &operator=(const SharedMemoryChannel &) = delete;
+    SharedMemoryChannel(SharedMemoryChannel &&) noexcept;
+    SharedMemoryChannel &operator=(SharedMemoryChannel &&) noexcept;
 
     /**
      * @brief 创建一块新的共享内存段（通常由 Host 侧调用），写入 Header + 初始 Payload。
      * @param key            共享内存唯一标识，见 makeSharedMemoryKey()
-     * @param initialPayload 写入的初始数据（例如命令输入参数的序列化结果）；可为空
-     * @param extraCapacity  除 initialPayload 外，额外预留的 Payload 容量（供 Sandbox 写回
+     * @param input 写入的初始数据（例如命令输入参数的序列化结果）；可为空
+     * @param extraCapacity  除 input 外，额外预留的 Payload 容量（供 Sandbox 写回
      *                       结果用；结果与输入共用同一块 Payload 区域，Sandbox 处理完毕后原地
      *                       覆写并更新 payloadLength，这里应预留"输入和输出中较大者"的空间）
      * @return 成功返回 std::nullopt；失败返回错误描述
      */
-    [[nodiscard]] std::optional<QString> create(const QString &key,
-                                                const QByteArray &initialPayload,
+    [[nodiscard]] std::optional<QString> create(const QString &key, const QByteArray &input,
                                                 quint32 extraCapacity = 0);
 
     /**
@@ -115,10 +114,12 @@ public:
     void release();
 
 private:
-    [[nodiscard]] Header *headerPtr();
-    [[nodiscard]] const Header *headerPtr() const;
-    [[nodiscard]] uchar *payloadPtr();
-    [[nodiscard]] const uchar *payloadPtr() const;
+    struct Header;
+
+    [[nodiscard]] Header *header();
+    [[nodiscard]] const Header *header() const;
+    [[nodiscard]] uchar *payload();
+    [[nodiscard]] const uchar *payload() const;
 
 private:
     QString m_key;
