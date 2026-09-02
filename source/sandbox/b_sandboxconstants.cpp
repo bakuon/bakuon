@@ -27,6 +27,15 @@ QString makeSandboxObjectName(const QString &sandboxId)
     return QStringLiteral("%1@%2").arg(QString::fromLatin1(kSandboxObjectName), sandboxId);
 }
 
+std::optional<QString> parseSandboxObjectName(const QString &objectName)
+{
+    const QString prefix = QString::fromLatin1(kSandboxObjectName) + QLatin1Char('@');
+    if (!objectName.startsWith(prefix)) {
+        return std::nullopt;
+    }
+    return objectName.mid(prefix.length());
+}
+
 QString makeSharedMemoryKey(const QString &sandboxId, const QString &requestId)
 {
     return QStringLiteral("bakuon-cmd-%1-%2").arg(sandboxId, requestId);

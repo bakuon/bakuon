@@ -89,6 +89,22 @@ public:
      */
     void start(const QString &sandboxRuntimeExecutable, QVariantMap pluginArguments = {});
 
+    /**
+     * @brief 收编一个已经在跑、本进程没有 spawn() 过的沙箱实例：不 spawn 子进程，
+     *        直接用共享的注册中心 Node acquire() 一个 Replica 接上去。
+     *
+     * 与 start() 的关键差异：Replica 变为 Valid 后不会调用 loadPlugin()——对方早就
+     * 跑过这一步了（否则它根本不会处于 Ready/Running 阶段），重新调用要么是没有意义
+     * 的重复操作，要么直接违反契约语义。onReplicaStateChanged() 内部会根据是通过
+     * start() 还是 attach() 走到这里，分别决定要不要调 loadPlugin()。
+     *
+     * @note 因为没有 m_process（本类完全不知道、也无法 kill() 那个子进程），
+     *       processId() 会退化成从 Replica 的 pid 属性读（见该方法实现），
+     *       析构时也无法强制终止对方——只能通过 shutdown() 发送优雅关闭信令，
+     *       对方不响应就没有更进一步的手段了，这是收编模式相对 start() 的已知限制。
+     */
+    void attach();
+
     /// 等价于对 Replica 调用 run()；仅当 phase() == Ready 时有意义。
     void run();
     /// 等价于对 Replica 调用 stop()。
@@ -114,6 +130,10 @@ public:
     [[nodiscard]] const QString &sandboxId() const noexcept { return m_sandboxId; }
     [[nodiscard]] SandboxPhase phase() const noexcept { return m_phase; }
     [[nodiscard]] qint64 processId() const;
+    /// true：start() 路径，本对象拥有并可以 kill() 底层 QProcess。
+    /// false：attach() 路径，底层进程是别的（可能是上一个 Host 进程）spawn 出来的，
+    /// 本对象只有一个 QtRO 连接，探测/终止能力见 attach() 和析构函数的文档。
+    [[nodiscard]] bool hasOwnedProcess() const noexcept { return m_process != nullptr; }
 
 Q_SIGNALS:
     void phaseChanged(SandboxPhase phase);
@@ -128,11 +148,17 @@ Q_SIGNALS:
 private:
     void onReplicaStateChanged();
     void bindReplicaSignals();
+    /// start()/attach() 共用：acquire<Replica>() + 连接 stateChanged + bindReplicaSignals()。
+    void acquireReplica();
 
 private:
     QString m_sandboxId;
     QString m_pluginFilePath;
     SandboxPhase m_phase = SandboxPhase::Connecting;
+    /// true（默认，对应 start()）：Replica 变 Valid 后调用一次 loadPlugin()。
+    /// false（对应 attach()）：跳过 loadPlugin()，只把当前 Replica 属性同步一次，
+    /// 见 onReplicaStateChanged() 的实现。
+    bool m_needsLoadPlugin = true;
 
     QRemoteObjectNode &
         m_registryNode; // 外部注入（通常是 SandboxSystem 持有的注册中心），生命周期由调用方保证长于本对象

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <QtCore/QString>
 
 namespace bakuon::sandbox {
@@ -37,6 +39,12 @@ inline constexpr auto kSandboxObjectName = "PluginSandboxControl";
 /// 每个沙箱实例在注册中心里发布的对象名必须唯一（同一注册中心下会有多个并发
 /// 运行的沙箱实例，都发布同一个契约类型），用 sandboxId 拼出专属名字。
 [[nodiscard]] QString makeSandboxObjectName(const QString &sandboxId);
+
+/// makeSandboxObjectName() 的逆操作：从注册中心汇报的对象名解析回 sandboxId。
+/// 用于孤儿沙箱发现——SandboxSystem 收到 QRemoteObjectRegistry::remoteObjectAdded
+/// 时，只知道对象名字符串，需要反解出 sandboxId 才能判断"这是不是本实例已知的"。
+/// 前缀不匹配（比如注册中心里出现了别的、不属于本契约的对象）时返回 std::nullopt。
+[[nodiscard]] std::optional<QString> parseSandboxObjectName(const QString &objectName);
 
 /**
  * @brief 生成一个每次调用都不同的本地连接地址（local: scheme）。

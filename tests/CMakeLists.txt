@@ -139,5 +139,29 @@ if(TARGET sandbox)
             BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
             BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
         add_dependencies(test_sandbox_tabsandboxmanager sandbox_runtime sandboxed_example_plugin)
+
+        # 孤儿收编测试需要一个真正独立的"第一代 Host"进程可以被 SIGKILL——见
+        # orphan_test_helper.cpp 顶部注释。这是纯测试辅助可执行文件，不是产品代码，
+        # 因此不用 bakuon_add_test()（那是给 gtest 用例用的），普通 add_executable 即可。
+        add_executable(orphan_test_helper "sandbox/orphan_test_helper.cpp")
+        target_link_libraries(orphan_test_helper PRIVATE bakuon::sandbox)
+        target_compile_features(orphan_test_helper PRIVATE cxx_std_20)
+        bakuon_apply_warnings(orphan_test_helper)
+
+        bakuon_add_test(
+            NAME
+            test_sandbox_tabsandboxmanager_orphan
+            SOURCES
+            "sandbox/tabsandboxmanager_orphan_test.cpp"
+            DEPENDS
+            bakuon::sandbox)
+        target_compile_definitions(
+            test_sandbox_tabsandboxmanager_orphan
+            PRIVATE
+            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>"
+            BAKUON_TEST_ORPHAN_HELPER_PATH="$<TARGET_FILE:orphan_test_helper>")
+        add_dependencies(test_sandbox_tabsandboxmanager_orphan sandbox_runtime sandboxed_example_plugin
+                         orphan_test_helper)
     endif()
 endif()

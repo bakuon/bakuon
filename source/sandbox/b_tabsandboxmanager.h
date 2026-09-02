@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 #include <QtCore/QObject>
 #include <QtCore/QString>
@@ -70,12 +71,16 @@ enum class TabState {
  *     见 setMaxConcurrentSandboxes()——超出上限的 openTab() 请求进入排队（Queued），
  *     等有 Tab 关闭/崩溃退出腾出名额后自动补上。
  *
- * @note 关于"Host 崩溃重启后接管孤儿沙箱进程"：这需要 SandboxSystem 内部换成
- *       Registry 拓扑（QRemoteObjectRegistryHost）才能做到——见
- *       source/sandbox/README.md 的选型讨论和 tryAdoptOrphanedSandboxes() 的文档。
- *       在那份改动落地之前，本类按"Host 存活期间管理一批 Tab"的语义实现，
- *       Host 进程本身退出后所有映射关系随之失效（沙箱子进程目前仍然会被
- *       closeAll()/析构级联关闭，不是"孤儿"）。
+ * @note "Host 崩溃重启后接管孤儿沙箱进程"：sandbox 模块已经换成 Registry 拓扑
+ *       （QRemoteObjectRegistryHost，见 source/sandbox/README.md 的选型讨论），
+ *       本类因此能做到"发现并重新接管"仍然存活的孤儿沙箱进程，见
+ *       tryAdoptOrphanedSandboxes()。但这只解决了 QtRO 连接层面的重新发现——
+ *       "这个孤儿原本对应哪个 Tab、是哪个文档"这层业务身份，只存在于上一个 Host
+ *       进程的内存里，没有跨进程持久化，本类目前也没有；因此收编回来的孤儿会作为
+ *       *新* Tab（携带 tabAdopted 信号）出现，而不是"原地恢复"成它崩溃前对应的
+ *       那个 TabId。真正做到原地恢复需要一份跨 Host 进程生命周期的会话持久化
+ *       （TabSession 已经设计成随时可序列化的形状，就是为了给这一步铺路），
+ *       这次不包含落盘逻辑，是有意为之的范围收窄，不是遗漏。
  *
  * @note 线程模型：和 SandboxSystem/gui::PluginSystem 一致，只在主线程使用，
  *       内部没有加锁；跨线程访问需要调用方自己做同步。
@@ -133,20 +138,23 @@ public:
     [[nodiscard]] size_t count() const noexcept;
 
     /**
-     * @brief [占位钩子，等 Registry 拓扑落地后实现] 尝试把当前实例不认识、但已经在
-     *        Registry 上线的沙箱进程重新收编成某个 Tab。
+     * @brief 把当前已经发现、但还没收编的孤儿沙箱（见 orphanSandboxAvailable 信号）
+     *        全部收编成新 Tab。
      *
-     * 目前 SandboxSystem 是点对点直连：sandboxId 对应的本地地址是本进程生成并通过命令行
-     * 传给子进程的，一旦本进程（Host）退出，新启动的 Host 实例并不知道旧地址是什么，
-     * 也就无从"找回"仍然存活的旧沙箱子进程。等 SandboxSystem 换成 Registry 拓扑
-     * （内部持有 QRemoteObjectRegistryHost；SandboxSupervisor 通过共享的
-     * QRemoteObjectNode& 而不是各自独立监听/连接）之后，新 Host 实例可以向 Registry
-     * 查询"当前在线但未被认领"的 PluginSandboxControl 节点，逐个 acquire() 拿到
-     * Replica；届时还需要沙箱侧在上报里带上足够的会话标识（至少是 pluginFilePath，
-     * 理想情况下还有 Host 侧生成的稳定 TabSession 标识)，本类才能反查回对应的
-     * TabSession、重建 TabId <-> sandboxId 映射。这个方法就是那个时机该实现的钩子，
-     * 目前是文档化的空实现，不阻塞本次 TabHost 骨架交付。
-     * @return 本次成功收编的 TabId 列表（目前恒为空）
+     * 每收编一个孤儿：分配一个新 TabId（不是它崩溃前的那个——本类/本进程都不知道
+     * 那个身份是什么，见类注释里对这一点的说明），Entry.session 里 pluginFilePath
+     * 留空、sandboxRuntimeExecutable 用 defaultSandboxRuntimeExecutable()（仅用于
+     * 万一之后 restartTab()——但 restartTab() 用空 pluginFilePath 重新 spawn()
+     * 基本没有意义，调用方如果关心这一点，应该在收到 tabAdopted 后自行用别的渠道
+     * 把 pluginFilePath 补全，见 sessionForTab() 可以读到当前会话），state 直接进
+     * Launching（底层进程其实早就跑起来了，phase 会通过正常的 handlePhaseChanged()
+     * 很快同步过来，不需要特殊处理）。
+     *
+     * 收编不受 maxConcurrentSandboxes() 节流：孤儿进程的资源已经在被占用，
+     * 收编与否不影响它是否消耗系统资源，只影响本类是否知道并追踪它，
+     * 因此没有理由为了"节流"而拒绝接管一个已经存在的进程。
+     *
+     * @return 本次成功收编、新分配的 TabId 列表；没有待收编的孤儿时返回空列表。
      */
     [[nodiscard]] QVector<TabId> tryAdoptOrphanedSandboxes();
 
@@ -157,6 +165,14 @@ Q_SIGNALS:
     void tabFaulted(TabId tabId, const QString &reason);
     void tabClosed(TabId tabId);
     void tabLogMessage(TabId tabId, int level, const QString &message);
+    /// 注册中心里出现了一个尚未被收编的孤儿沙箱（转发自 SandboxSystem::orphanDiscovered），
+    /// 调用方可以选择立即/稍后调用 tryAdoptOrphanedSandboxes()，也可以完全不管它
+    /// （比如产品决策是"崩溃恢复关掉、宁可留一个不再被任何 Tab 追踪的后台进程"）。
+    void orphanSandboxAvailable(const QString &sandboxId);
+    /// tryAdoptOrphanedSandboxes() 每成功收编一个孤儿就发一次，UI 层可以用它
+    /// 区分"这是用户主动 openTab() 打开的"还是"这是恢复回来的孤儿"，展示不同的
+    /// 提示（比如"检测到一个恢复的后台任务，文档信息不可用"）。
+    void tabAdopted(TabId tabId, const QString &sandboxId);
 
 private:
     struct Entry
@@ -176,6 +192,7 @@ private:
     void handleFaulted(const QString &sandboxId, const QString &reason);
     void handleLogMessage(const QString &sandboxId, int level, const QString &message);
     void handleProcessFinished(const QString &sandboxId, int exitCode);
+    void handleOrphanDiscovered(const QString &sandboxId);
 
 private:
     // 声明顺序即析构顺序（反向）：m_sandboxSystem 必须放在最后声明，确保它是所有成员里
@@ -189,6 +206,7 @@ private:
     std::unordered_map<TabId, Entry> m_entries;
     std::unordered_map<QString, TabId> m_sandboxIdToTab; // 仅覆盖已 spawn 的条目
     std::deque<TabId> m_pendingQueue;
+    std::vector<QString> m_pendingOrphanSandboxIds; // 已发现、尚未 tryAdoptOrphanedSandboxes() 的孤儿
     QString m_defaultSandboxRuntimeExecutable;
     int m_maxConcurrent  = 8;
     uint64_t m_nextSeq   = 1;

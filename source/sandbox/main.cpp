@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
     const QUrl registryUrl(parser.value(registryOption));
     const QString sandboxId = parser.value(sandboxIdOption);
 
-    bakuon::sandbox::SandboxRuntime runtime(sandboxId);
+    bakuon::sandbox::SandboxRuntime runtime(sandboxId, &app);
     QObject::connect(&runtime,
                      &bakuon::sandbox::SandboxRuntime::shutdownRequested,
                      &app,

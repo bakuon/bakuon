@@ -71,6 +71,11 @@ SandboxSupervisor::~SandboxSupervisor()
 {
     // 析构时如果子进程还活着，先礼后兵：给一次优雅退出的机会，超时后强制结束，
     // 避免僵尸沙箱进程残留（尤其是插件里可能存在死循环/未响应 shutdownSandbox() 的情况）。
+    // 注意：attach() 模式下 m_process 恒为空（本类没有 spawn 过它，也就没有 QProcess
+    // 句柄可以 kill()）——这个 if 分支天然对收编来的实例整体跳过，意味着析构一个
+    // attach() 来的 SandboxSupervisor 不会做任何优雅关闭尝试。调用方如果想关掉一个
+    // 收编来的实例，必须在析构之前显式调用 shutdown()（通过 SandboxSystem::shutdown()）
+    // 并给对方响应的时间；本类没有能力替调用方强制终止一个自己没有 spawn 过的进程。
     if (m_process && m_process->state() != QProcess::NotRunning) {
         if (m_replica) {
             m_replica->shutdownSandbox();
@@ -120,6 +125,19 @@ void SandboxSupervisor::start(const QString &sandboxRuntimeExecutable, QVariantM
                              m_sandboxId});
     m_process->start();
 
+    m_needsLoadPlugin = true;
+    acquireReplica();
+}
+
+void SandboxSupervisor::attach()
+{
+    // 不 spawn 子进程——对方早就在跑了，本类要做的只是重新把 QtRO 连接接上。
+    m_needsLoadPlugin = false;
+    acquireReplica();
+}
+
+void SandboxSupervisor::acquireReplica()
+{
     // 直接用注入进来的、Host 主程序全局共用的注册中心 Node acquire——不再需要
     // 自己 connectToNode()（更不需要知道子进程到底监听在哪个地址上，那是子进程和
     // 注册中心之间的事）。对象名必须带上 sandboxId，见 makeSandboxObjectName()。
@@ -134,6 +152,23 @@ void SandboxSupervisor::start(const QString &sandboxRuntimeExecutable, QVariantM
 
 void SandboxSupervisor::onReplicaStateChanged()
 {
+    if (m_replica->state() == QRemoteObjectReplica::Suspect) {
+        // 连接彻底丢了（对方进程真的没了，或者出现了别的网络层异常）——见
+        // SandboxSystem 构造函数里对 setHeartbeatInterval() 的说明，没有心跳的话
+        // 这个状态转换可能长期不会发生。
+        //
+        // 对 start() 出来的、本类拥有 QProcess 的实例：这基本只是 QProcess::finished
+        // 的一个先兆，那条路径本身权威、迟早也会到，这里不重复处理，避免
+        // processFinished 信号触发两次。
+        //
+        // 对 attach() 收编来的实例：没有 m_process，Suspect 是唯一能知道"对方已经
+        // 不在了"的信号，这里补一次 processFinished（退出码未知，用 -1 表示），
+        // 让 SandboxSystem/TabSandboxManager 走和正常退出一样的收尾路径。
+        if (!m_process) {
+            Q_EMIT processFinished(-1);
+        }
+        return;
+    }
     if (m_replica->state() != QRemoteObjectReplica::Valid) {
         return;
     }
@@ -146,7 +181,17 @@ void SandboxSupervisor::onReplicaStateChanged()
                 m_phase = fromReplicaPhase(p);
                 Q_EMIT phaseChanged(m_phase);
             });
-    m_replica->loadPlugin(m_pluginFilePath, m_pendingPluginArguments);
+
+    if (m_needsLoadPlugin) {
+        m_replica->loadPlugin(m_pluginFilePath, m_pendingPluginArguments);
+    } else {
+        // attach() 模式：对方早就跑起来了，Replica 变 Valid 的这一刻 QtRO 已经把
+        // Source 当前的完整属性状态同步过来了（phase 等 PROP 字段），直接读出来
+        // 广播一次即可——不能再调用 loadPlugin()，那是"从头初始化"的语义，
+        // 对一个已经在跑的实例重放会违反契约（对方要么忽略、要么状态错乱）。
+        m_phase = fromReplicaPhase(m_replica->phase());
+        Q_EMIT phaseChanged(m_phase);
+    }
 }
 
 void SandboxSupervisor::bindReplicaSignals()
@@ -233,7 +278,13 @@ QString SandboxSupervisor::beginCommand(const QString &commandId, const QByteArr
 
 qint64 SandboxSupervisor::processId() const
 {
-    return m_process ? m_process->processId() : 0;
+    if (m_process) {
+        return m_process->processId();
+    }
+    // attach() 模式没有 m_process（本类没有 spawn 过它，无从持有 QProcess 句柄），
+    // 退而求其次用契约里的 pid 属性（PROP(qint64 pid)，见 .rep）——由沙箱子进程自己
+    // 上报，Replica 变 Valid 后就应该有值。
+    return m_replica ? m_replica->pid() : 0;
 }
 
 } // namespace bakuon::sandbox

@@ -1,5 +1,7 @@
 #include "sandbox/b_tabsandboxmanager.h"
 
+#include <algorithm>
+
 #include <QtCore/QDebug>
 
 #include "sandbox/b_sandboxsupervisor.h"
@@ -36,6 +38,8 @@ TabSandboxManager::TabSandboxManager(QString defaultSandboxRuntimeExecutable, QO
             &TabSandboxManager::handleLogMessage);
     connect(m_sandboxSystem.get(), &SandboxSystem::sandboxProcessFinished, this,
             &TabSandboxManager::handleProcessFinished);
+    connect(m_sandboxSystem.get(), &SandboxSystem::orphanDiscovered, this,
+            &TabSandboxManager::handleOrphanDiscovered);
 }
 
 TabSandboxManager::~TabSandboxManager()
@@ -297,9 +301,50 @@ size_t TabSandboxManager::count() const noexcept
 
 QVector<TabId> TabSandboxManager::tryAdoptOrphanedSandboxes()
 {
-    // 见头文件里的详细说明：需要 SandboxSystem 换成 Registry 拓扑之后才能实现，
-    // 目前故意保持空实现。
-    return {};
+    QVector<TabId> adopted;
+    // 先把待处理列表整体挪出来再遍历：adopt() 内部会同步触发一连串信号
+    // （tabAdopted/tabLaunching 等），万一某个槽函数又重入调用了本方法，直接在
+    // m_pendingOrphanSandboxIds 上遍历+修改会是未定义行为，先搬空更安全。
+    std::vector<QString> pending;
+    pending.swap(m_pendingOrphanSandboxIds);
+
+    for (const QString &sandboxId : pending) {
+        if (m_sandboxIdToTab.contains(sandboxId)) {
+            continue; // 上一轮已经收编过了（理论上不应该出现在这里，防御性检查）
+        }
+        if (!m_sandboxSystem->adopt(sandboxId)) {
+            continue; // SandboxSystem 侧判定它已经不是孤儿了（比如已被别的路径收编）
+        }
+
+        const TabId tabId = nextTabId();
+        Entry entry;
+        entry.session.sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
+        // pluginFilePath 留空：这是"收编孤儿"和"正常 openTab()"在数据完整性上的
+        // 本质区别，见类注释和本方法的文档——本进程从未见过它，无从得知。
+        entry.state     = TabState::Launching;
+        entry.sandboxId = sandboxId;
+
+        m_entries.emplace(tabId, std::move(entry));
+        m_sandboxIdToTab.emplace(sandboxId, tabId);
+
+        adopted.push_back(tabId);
+        Q_EMIT tabAdopted(tabId, sandboxId);
+        Q_EMIT tabLaunching(tabId);
+    }
+    return adopted;
+}
+
+void TabSandboxManager::handleOrphanDiscovered(const QString &sandboxId)
+{
+    if (m_sandboxIdToTab.contains(sandboxId)) {
+        return; // 理论上不会发生（SandboxSystem 那边已经用 m_entries 过滤过一次），防御性检查
+    }
+    if (std::find(m_pendingOrphanSandboxIds.begin(), m_pendingOrphanSandboxIds.end(), sandboxId) !=
+        m_pendingOrphanSandboxIds.end()) {
+        return; // 已经报告过、还没被 tryAdoptOrphanedSandboxes() 处理掉，不重复入队
+    }
+    m_pendingOrphanSandboxIds.push_back(sandboxId);
+    Q_EMIT orphanSandboxAvailable(sandboxId);
 }
 
 void TabSandboxManager::handlePhaseChanged(const QString &sandboxId, SandboxPhase phase)
