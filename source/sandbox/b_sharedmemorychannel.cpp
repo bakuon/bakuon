@@ -138,7 +138,7 @@ QByteArray SharedMemoryChannel::readPayload() const
     m_memory->lock();
     const auto *h = header();
     QByteArray result(reinterpret_cast<const char *>(payload()),
-                      static_cast<qsizetype>(h->payloadCapacity));
+                      static_cast<qsizetype>(h->payloadSize));
     m_memory->unlock();
     return result;
 }
@@ -197,7 +197,11 @@ qsizetype SharedMemoryChannel::capacity() const
         return 0;
     }
 
-    return m_memory->size() - static_cast<qsizetype>(sizeof(Header));
+    m_memory->lock();
+    const auto cap = header() ? static_cast<qsizetype>(header()->payloadCapacity) : 0;
+    m_memory->unlock();
+    return cap;
+    // return m_memory->size() - static_cast<qsizetype>(sizeof(Header));
 }
 
 void SharedMemoryChannel::release()
