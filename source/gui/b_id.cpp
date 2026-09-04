@@ -1,10 +1,3 @@
-// 仅本文件（且仅本文件的“Qt 互操作”那两个自由函数）需要 QString 的完整定义；
-// b_id.h 只做了前置声明。这两行必须放在 #include "gui/b_id.h" 之前——
-// b_id.h 里 Id<Tag>::toQString() 的返回类型是非依赖类型 QString，
-// 模板定义阶段就需要看到它的完整定义。
-#include <QtCore/QByteArray>
-#include <QtCore/QString>
-
 #include "gui/b_id.h"
 
 #include <mutex>
