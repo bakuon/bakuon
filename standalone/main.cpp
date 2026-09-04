@@ -1,10 +1,10 @@
 #include <QtCore/QCommandLineParser>
-#include <QtCore/QCoreApplication>
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QTimer>
+#include <QtWidgets/QApplication>
 
 #include "gui/b_pluginmetadata.h"
 #include "gui/b_pluginpipeline.h"
@@ -97,7 +97,7 @@ void logPluginDiagnostics(const bakuon::gui::PluginSystem &pluginSystem)
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("bakuon-standalone"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
 
@@ -126,6 +126,16 @@ int main(int argc, char *argv[])
                         QStringLiteral("ms"),
                         QStringLiteral("2000"));
     parser.addOption(exitAfterOption);
+
+    QCommandLineOption
+        sessionFileOption(QStringList{QStringLiteral("session-file")},
+                          QStringLiteral(
+                              "启用 Tab 会话持久化（原地恢复），指向记录文件路径；"
+                              "留空/不指定则不持久化（默认行为）。"
+                              "可以先用这个选项跑一次、Ctrl+C 强杀，再用同样的路径重跑一次，"
+                              "观察 Tab 是否原地恢复成同一个 tabId。"),
+                          QStringLiteral("path"));
+    parser.addOption(sessionFileOption);
 
     parser.process(app);
 
@@ -219,6 +229,75 @@ int main(int argc, char *argv[])
                                                                .arg(level)
                                                                .arg(message);
                      });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabRestoring,
+                     &tabManager,
+                     [](uint64_t tabId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 从会话文件里读回来了，等待匹配的孤儿沙箱…")
+                                    .arg(tabId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabRestored,
+                     &tabManager,
+                     [](uint64_t tabId, const QString &sandboxId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 原地恢复成功！接上了 sandboxId=%2")
+                                    .arg(tabId)
+                                    .arg(sandboxId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabAdopted,
+                     &tabManager,
+                     [](uint64_t tabId, const QString &sandboxId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral(
+                                    "Tab[%1] 收编了一个陌生孤儿 sandboxId=%2（文档信息不可用）")
+                                    .arg(tabId)
+                                    .arg(sandboxId);
+                     });
+
+    // ------------------------------------------------------------------
+    // 会话持久化演示（--session-file）：默认不启用，和 TabSandboxManager 本身
+    // "默认不持久化"的设计保持一致。启用后可以体会完整的"原地恢复"流程：
+    //   1. 第一次运行（会话文件还不存在）：restoreSession() 恢复 0 条，照常打开一个
+    //      演示 Tab；正常运行、跑到 Running 后，session 文件里就有它的记录了。
+    //   2. 这时候用 kill -9 强杀本进程（不要用 Ctrl+C——那是优雅退出，
+    //      SIGINT 默认会被 Qt 转成正常退出流程，不会模拟"崩溃"）。
+    //   3. 用同样的 --session-file 路径重新跑一次：restoreSession() 会恢复出 1 条
+    //      Restoring 记录，孤儿沙箱重新被发现后原地接上——tabRestored 里的 tabId
+    //      应该和上一次运行时打开的那个一模一样。
+    // ------------------------------------------------------------------
+    const QString sessionFilePath = parser.value(sessionFileOption);
+    bool skipDemoTabOpen          = false;
+    if (!sessionFilePath.isEmpty()) {
+        tabManager.setSessionFilePath(sessionFilePath);
+        const int restoredCount = tabManager.restoreSession();
+        qCInfo(lcStandalone).noquote() << QStringLiteral("会话文件: %1（恢复了 %2 条记录）")
+                                              .arg(sessionFilePath)
+                                              .arg(restoredCount);
+        if (restoredCount > 0) {
+            // 已经有历史记录了：这次不再额外打开一个新的演示 Tab，专心演示恢复流程，
+            // 避免日志里新旧 Tab 混在一起不好看。
+            skipDemoTabOpen = true;
+
+            // Host 层的"等多久放弃"策略：TabSandboxManager 本身不内置超时，这里给
+            // 一个 5 秒的宽限期，时间到了还停留在 Restoring 就主动放弃等待、
+            // 用持久化下来的 pluginFilePath 重新 spawn()。
+            QTimer::singleShot(5000, &tabManager, [&tabManager] {
+                if (tabManager.pendingRestoreCount() == 0) {
+                    return;
+                }
+                qCInfo(lcStandalone) << "还有" << tabManager.pendingRestoreCount()
+                                     << "个 Tab 没等到匹配的孤儿，放弃等待，改为重新 spawn()";
+                for (const uint64_t tabId : tabManager.tabIds()) {
+                    if (tabManager.tabState(tabId) == bakuon::sandbox::TabState::Restoring) {
+                        tabManager.respawnRestoredTab(tabId);
+                    }
+                }
+            });
+        }
+    }
 
     // 演示用的沙箱化插件复用 plugins/gui 目录下的 sandboxed_example_plugin
     // （见 plugins/sandbox/sandboxed_example/CMakeLists.txt 里的 CATEGORY gui）。
@@ -228,7 +307,9 @@ int main(int argc, char *argv[])
                                                                 {QStringLiteral(
                                                                     "sandboxed_example_plugin")});
 
-    if (sandboxRuntimeExe.isEmpty() || sandboxedPluginFile.isEmpty()) {
+    if (skipDemoTabOpen) {
+        // 上面已经在 restoreSession() 分支里说明了原因，这里什么都不做。
+    } else if (sandboxRuntimeExe.isEmpty() || sandboxedPluginFile.isEmpty()) {
         qCInfo(lcStandalone)
             << "未找到 sandbox_runtime 可执行文件或 sandboxed_example_plugin"
                "（可能 BAKUON_BUILD_SANDBOX_RUNTIME/BAKUON_BUILD_PLUGINS 未开启），"
@@ -237,7 +318,7 @@ int main(int argc, char *argv[])
         qCInfo(lcStandalone).noquote() << QStringLiteral("沙箱子进程: %1").arg(sandboxRuntimeExe);
         qCInfo(lcStandalone).noquote() << QStringLiteral("沙箱化插件: %1").arg(sandboxedPluginFile);
         const auto demoTabId = tabManager.openTab(sandboxedPluginFile);
-        if (demoTabId != 0) {
+        if (demoTabId == 0) {
             qCWarning(lcStandalone) << "openTab() 失败（未拿到有效 TabId）";
         }
     }

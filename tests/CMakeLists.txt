@@ -122,8 +122,8 @@ if(TARGET sandbox)
         target_compile_definitions(
             test_sandbox_integration
             PRIVATE
-            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
-            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+                BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+                BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
         add_dependencies(test_sandbox_integration sandbox_runtime sandboxed_example_plugin)
 
         bakuon_add_test(
@@ -136,8 +136,8 @@ if(TARGET sandbox)
         target_compile_definitions(
             test_sandbox_tabsandboxmanager
             PRIVATE
-            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
-            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+                BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+                BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
         add_dependencies(test_sandbox_tabsandboxmanager sandbox_runtime sandboxed_example_plugin)
 
         # 孤儿收编测试需要一个真正独立的"第一代 Host"进程可以被 SIGKILL——见
@@ -158,10 +158,34 @@ if(TARGET sandbox)
         target_compile_definitions(
             test_sandbox_tabsandboxmanager_orphan
             PRIVATE
-            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
-            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>"
-            BAKUON_TEST_ORPHAN_HELPER_PATH="$<TARGET_FILE:orphan_test_helper>")
-        add_dependencies(test_sandbox_tabsandboxmanager_orphan sandbox_runtime sandboxed_example_plugin
-                         orphan_test_helper)
+                BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+                BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>"
+                BAKUON_TEST_ORPHAN_HELPER_PATH="$<TARGET_FILE:orphan_test_helper>")
+        add_dependencies(
+            test_sandbox_tabsandboxmanager_orphan
+            sandbox_runtime
+            sandboxed_example_plugin
+            orphan_test_helper)
+
+        # 会话持久化（原地恢复成同一个 Tab）测试：复用同一个 orphan_test_helper，
+        # 只是这次多传一个 sessionFilePath 参数（见 orphan_test_helper.cpp）。
+        bakuon_add_test(
+            NAME
+            test_sandbox_tabsandboxmanager_session
+            SOURCES
+            "sandbox/tabsandboxmanager_session_test.cpp"
+            DEPENDS
+            bakuon::sandbox)
+        target_compile_definitions(
+            test_sandbox_tabsandboxmanager_session
+            PRIVATE
+                BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+                BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>"
+                BAKUON_TEST_ORPHAN_HELPER_PATH="$<TARGET_FILE:orphan_test_helper>")
+        add_dependencies(
+            test_sandbox_tabsandboxmanager_session
+            sandbox_runtime
+            sandboxed_example_plugin
+            orphan_test_helper)
     endif()
 endif()

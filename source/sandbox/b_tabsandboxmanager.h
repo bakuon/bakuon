@@ -39,8 +39,11 @@ enum class TabState {
     Queued,    // 已分配 TabId，因并发上限暂未真正 spawn() 底层沙箱进程
     Launching, // 已 spawn()，尚未到达 Running（对应 SandboxPhase 的 Connecting..Ready）
     Running,
-    Closing, // 已调用 shutdown()，等待子进程真正退出
-    Faulted, // 沙箱异常（子进程可能还没退出，也可能已经退出，见 sandboxId() 是否非空）
+    Closing,   // 已调用 shutdown()，等待子进程真正退出
+    Faulted,   // 沙箱异常（子进程可能还没退出，也可能已经退出，见 sandboxId() 是否非空）
+    Restoring, // 从会话文件里读出来的历史记录，还没等到匹配的孤儿沙箱重新出现
+               // （见 restoreSession()/tryAdoptOrphanedSandboxes()），也还没被
+               // respawnRestoredTab() 主动放弃等待、重新 spawn()。
 };
 
 /**
@@ -84,13 +87,22 @@ struct TabSession
  * @note "Host 崩溃重启后接管孤儿沙箱进程"：sandbox 模块已经换成 Registry 拓扑
  *       （QRemoteObjectRegistryHost，见 source/sandbox/README.md 的选型讨论），
  *       本类因此能做到"发现并重新接管"仍然存活的孤儿沙箱进程，见
- *       tryAdoptOrphanedSandboxes()。但这只解决了 QtRO 连接层面的重新发现——
- *       "这个孤儿原本对应哪个 Tab、是哪个文档"这层业务身份，只存在于上一个 Host
- *       进程的内存里，没有跨进程持久化，本类目前也没有；因此收编回来的孤儿会作为
- *       *新* Tab（携带 tabAdopted 信号）出现，而不是"原地恢复"成它崩溃前对应的
- *       那个 TabId。真正做到原地恢复需要一份跨 Host 进程生命周期的会话持久化
- *       （TabSession 已经设计成随时可序列化的形状，就是为了给这一步铺路），
- *       这次不包含落盘逻辑，是有意为之的范围收窄，不是遗漏。
+ *       tryAdoptOrphanedSandboxes()。结合会话持久化（setSessionFilePath()/
+ *       restoreSession()），本类现在能做到"原地恢复成同一个 Tab"：崩溃前把
+ *       tabId/sandboxId/pluginFilePath 等信息写盘，重启后先按 tabId 把这些记录
+ *       原样放回 m_tabs（状态为 Restoring），后续收编到匹配的孤儿 sandboxId 时，
+ *       走的是"就地把 Restoring 状态的旧条目接上"而不是"分配一个全新 tabId"——
+ *       调用方看到的 tabId 前后一致，UI 层不需要做任何特殊的"这其实是同一个东西"
+ *       的映射。没有等到匹配孤儿的 Restoring 条目，调用方可以用
+ *       respawnRestoredTab()（本质是 restartTab() 的别名）主动放弃等待、
+ *       用持久化下来的 pluginFilePath 重新 spawn() 一个全新实例。
+ *
+ * @note 持久化范围：只持久化"重建一个 Tab 需要的最小信息"（tabId、最后已知的
+ *       sandboxId、pluginFilePath、sandboxRuntimeExecutable、pluginArguments），
+ *       不包含插件自己的运行时状态（比如打开的文档内容、光标位置）——那些是插件/
+ *       文档层的职责，本类完全不知道也不应该知道。默认不启用持久化（构造函数不需要
+ *       任何文件路径），必须显式调用 setSessionFilePath() 才会开始写盘，这是刻意的：
+ *       不是所有 Host 场景都需要/想要这个行为（比如短生命周期的命令行工具场景）。
  *
  * @note 线程模型：和 SandboxSystem/gui::PluginSystem 一致，只在主线程使用，
  *       内部没有加锁；跨线程访问需要调用方自己做同步。
@@ -148,24 +160,67 @@ public:
 
     /**
      * @brief 把当前已经发现、但还没收编的孤儿沙箱（见 orphanSandboxAvailable 信号）
-     *        全部收编成新 Tab。
+     *        全部收编。
      *
-     * 每收编一个孤儿：分配一个新 TabId（不是它崩溃前的那个——本类/本进程都不知道
-     * 那个身份是什么，见类注释里对这一点的说明），Entry.session 里 pluginFilePath
-     * 留空、sandboxRuntimeExecutable 用 defaultSandboxRuntimeExecutable()（仅用于
-     * 万一之后 restartTab()——但 restartTab() 用空 pluginFilePath 重新 spawn()
-     * 基本没有意义，调用方如果关心这一点，应该在收到 tabAdopted 后自行用别的渠道
-     * 把 pluginFilePath 补全，见 sessionForTab() 可以读到当前会话），state 直接进
-     * Launching（底层进程其实早就跑起来了，phase 会通过正常的 handlePhaseChanged()
-     * 很快同步过来，不需要特殊处理）。
+     * 每个孤儿先按 sandboxId 在 m_tabs 里找有没有 Restoring 状态、记录着同一个
+     * sandboxId 的旧条目——命中就是"原地恢复"：沿用原来的 tabId，发 tabRestored；
+     * 没命中就是"陌生孤儿"：分配一个全新 tabId，pluginFilePath 留空（本进程从未
+     * 见过它），发 tabAdopted。两种情况 state 都直接进 Launching（底层进程其实
+     * 早就跑起来了，phase 会通过正常的 onPhaseChanged() 很快同步过来）。
      *
      * 收编不受 maxConcurrentSandboxes() 节流：孤儿进程的资源已经在被占用，
      * 收编与否不影响它是否消耗系统资源，只影响本类是否知道并追踪它，
      * 因此没有理由为了"节流"而拒绝接管一个已经存在的进程。
      *
-     * @return 本次成功收编、新分配的 id 列表；没有待收编的孤儿时返回空列表。
+     * @return 本次成功收编（原地恢复 + 陌生收编）的 tabId 列表；没有待收编的孤儿
+     *         时返回空列表。
      */
     [[nodiscard]] QVector<uint64_t> tryAdoptOrphanedSandboxes();
+
+    // ------------------------------------------------------------------
+    // 会话持久化：restoreSession() 之后，Restoring 状态的条目会等着被
+    // tryAdoptOrphanedSandboxes() 就地接上（原地恢复）或者被 respawnRestoredTab()
+    // 主动重新 spawn()。见类注释里对整条链路的说明。
+    // ------------------------------------------------------------------
+
+    /// 默认的会话文件路径建议值（QStandardPaths::AppDataLocation 下的固定文件名），
+    /// 纯粹是给调用方省事的便利函数，不会有任何副作用（不读也不写文件），
+    /// 也不会自动被使用——仍然要调用方自己传给 setSessionFilePath()。
+    [[nodiscard]] static QString defaultSessionFilePath();
+
+    /// 设置会话持久化文件路径。设置后，后续所有会改变 Tab 集合/状态的操作都会
+    /// 自动把当前完整状态重写到这个文件（QSaveFile 原子写入，见 persist() 实现，
+    /// 不会因为写到一半崩溃而留下损坏文件）。留空（默认）表示不持久化。
+    /// @note 只影响"以后"的写入；不会触发读取，读取是 restoreSession() 的职责，
+    ///       两者分开是为了让调用方可以先设置路径、连接完信号，再决定什么时候读。
+    void setSessionFilePath(QString filePath);
+    [[nodiscard]] const QString &sessionFilePath() const noexcept;
+
+    /**
+     * @brief 从 sessionFilePath() 指向的文件读取上一次留下的 Tab 记录，
+     *        以 TabState::Restoring 状态把它们放回 m_tabs（保留原来的 tabId）。
+     *
+     * 只是把记录"摆回来"，不会主动 spawn()/connect 任何东西——真正"接上线"要么
+     * 靠后续的 tryAdoptOrphanedSandboxes() 匹配到同一个 sandboxId（原地恢复），
+     * 要么靠调用方主动调用 respawnRestoredTab()（放弃等待、重新 spawn()）。
+     *
+     * 通常应该在构造完成、连接完 tabRestoring 等信号之后，作为 Host 启动流程里
+     * 很靠前的一步显式调用一次；文件不存在（比如全新安装/上次是正常退出、
+     * 已经被清空）按 0 条记录处理，不是错误。
+     *
+     * @return 成功恢复放回 m_tabs 的记录条数。
+     */
+    int restoreSession();
+
+    /// respawnRestoredTab() 是 restartTab() 的别名——对 Restoring 状态的 Tab 调用，
+    /// 语义是"放弃等待匹配的孤儿，直接用持久化下来的 pluginFilePath 重新 spawn() 一个
+    /// 全新实例"；单独起个名字只是让调用方的意图更清楚，实现完全复用 restartTab()。
+    bool respawnRestoredTab(uint64_t tabId);
+
+    /// 还有多少 Tab 停留在 Restoring 状态（既没等到匹配孤儿、也没被 respawn）。
+    /// 纯只读便利函数，方便调用方实现自己的"等多久就放弃"策略——本类不内置任何
+    /// 超时/自动放弃逻辑，那是 Host 层的产品决策，不是本类的职责。
+    [[nodiscard]] size_t pendingRestoreCount() const noexcept;
 
 Q_SIGNALS:
     void tabQueued(uint64_t tabId);
@@ -178,10 +233,18 @@ Q_SIGNALS:
     /// 调用方可以选择立即/稍后调用 tryAdoptOrphanedSandboxes()，也可以完全不管它
     /// （比如产品决策是"崩溃恢复关掉、宁可留一个不再被任何 Tab 追踪的后台进程"）。
     void orphanSandboxAvailable(const QString &sandboxId);
-    /// tryAdoptOrphanedSandboxes() 每成功收编一个孤儿就发一次，UI 层可以用它
-    /// 区分"这是用户主动 openTab() 打开的"还是"这是恢复回来的孤儿"，展示不同的
-    /// 提示（比如"检测到一个恢复的后台任务，文档信息不可用"）。
+    /// tryAdoptOrphanedSandboxes() 收编了一个*完全陌生*的孤儿（没有匹配上任何
+    /// Restoring 记录）才会发，对应一个全新分配的 tabId。UI 层可以用它展示
+    /// "检测到一个恢复的后台任务，文档信息不可用"这类提示。
     void tabAdopted(uint64_t tabId, const QString &sandboxId);
+    /// restoreSession() 每从文件里放回一条记录就发一次，调用方可以立刻用这个
+    /// tabId 在 UI 上摆一个"正在恢复…"的占位标签页，不需要等到真正接上孤儿。
+    void tabRestoring(uint64_t tabId);
+    /// tryAdoptOrphanedSandboxes() 把一个 Restoring 状态的旧记录*原地*接上了匹配的
+    /// 孤儿——这才是"原地恢复成同一个 Tab"的真正完成时刻，tabId 和崩溃前完全一致。
+    /// 和 tabAdopted 分开发，是为了让 UI 层能区分"恢复成功，内容都在"和
+    /// "捡到一个来路不明的孤儿，内容对不上"这两种截然不同的用户提示。
+    void tabRestored(uint64_t tabId, const QString &sandboxId);
 
 private:
     uint64_t nextTabId();
@@ -195,9 +258,13 @@ private:
     void onLogMessage(const QString &sandboxId, int level, const QString &message);
     void onProcessFinished(const QString &sandboxId, int exitCode);
     void onOrphanDiscovered(const QString &sandboxId);
+    /// 把当前 m_tabs 完整重写到 sessionFilePath()；sessionFilePath() 为空时是 no-op。
+    /// 用 QSaveFile 原子写入，见 .cpp 实现里的说明。
+    void persistSession() const;
 
 private:
     QString m_defaultSandboxRuntimeExecutable;
+    QString m_sessionFilePath; // 空表示不持久化
     int m_maxConcurrent   = 8;
     uint64_t m_nextTabSeq = 1;
 

@@ -3,6 +3,14 @@
 #include <algorithm>
 
 #include <QtCore/QDebug>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QJsonValue>
+#include <QtCore/QSaveFile>
+#include <QtCore/QStandardPaths>
 
 #include "sandbox/b_sandboxsupervisor.h"
 #include "sandbox/b_sandboxsystem.h"
@@ -68,6 +76,141 @@ int TabSandboxManager::maxConcurrentSandboxes() const noexcept
     return m_maxConcurrent;
 }
 
+QString TabSandboxManager::defaultSessionFilePath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return dir.isEmpty() ? QString() : dir + QStringLiteral("/tab-sessions.json");
+}
+
+void TabSandboxManager::setSessionFilePath(QString filePath)
+{
+    m_sessionFilePath = std::move(filePath);
+}
+
+const QString &TabSandboxManager::sessionFilePath() const noexcept
+{
+    return m_sessionFilePath;
+}
+
+void TabSandboxManager::persistSession() const
+{
+    if (m_sessionFilePath.isEmpty()) {
+        return;
+    }
+
+    QJsonArray arr;
+    for (const auto &[id, session] : m_tabs) {
+        Q_UNUSED(id)
+        // 只写重建一个 Tab 需要的最小信息（见类文档"持久化范围"一节）；state 不写——
+        // 恢复的时候统一用 Restoring，是不是真的还活着要靠重新发现孤儿来确认，
+        // 崩溃前的 state 快照参考意义不大。
+        QJsonObject obj;
+        // tabId 用字符串存：JSON 数字在大多数实现里按 double 处理，64 位整数超出
+        // double 精确表示范围（2^53）时会静默失真；字符串没有这个问题。
+        obj[QStringLiteral("tabId")]                    = QString::number(session.tabId);
+        obj[QStringLiteral("sandboxId")]                = session.sandboxId;
+        obj[QStringLiteral("pluginFilePath")]           = session.pluginFilePath;
+        obj[QStringLiteral("sandboxRuntimeExecutable")] = session.sandboxRuntimeExecutable;
+        obj[QStringLiteral("pluginArguments")]          = QJsonObject::fromVariantMap(
+            session.pluginArguments);
+        arr.append(obj);
+    }
+
+    // QSaveFile：先写临时文件，commit() 时原子 rename 过去——这个功能存在的意义就是
+    // 应对"进程随时可能崩溃"，写会话文件这一步本身也不能有"写到一半崩溃留下半份
+    // 损坏文件"的风险，否则下次启动 restoreSession() 直接解析失败，等于白做。
+    QSaveFile file(m_sessionFilePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning() << "TabSandboxManager::persistSession: 无法打开会话文件" << m_sessionFilePath
+                   << file.errorString();
+        return;
+    }
+    file.write(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    if (!file.commit()) {
+        qWarning() << "TabSandboxManager::persistSession: 提交会话文件失败" << m_sessionFilePath
+                   << file.errorString();
+    }
+}
+
+int TabSandboxManager::restoreSession()
+{
+    if (m_sessionFilePath.isEmpty()) {
+        qWarning() << "TabSandboxManager::restoreSession: sessionFilePath 未设置，跳过";
+        return 0;
+    }
+
+    QFile file(m_sessionFilePath);
+    if (!file.exists()) {
+        return 0; // 第一次启动/上次正常退出后被清空，不是错误
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "TabSandboxManager::restoreSession: 无法打开会话文件" << m_sessionFilePath
+                   << file.errorString();
+        return 0;
+    }
+    const QByteArray raw = file.readAll();
+    file.close();
+
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+        qWarning() << "TabSandboxManager::restoreSession: 会话文件解析失败，忽略"
+                   << m_sessionFilePath << parseError.errorString();
+        return 0;
+    }
+
+    int restored           = 0;
+    uint64_t maxRestoredId = 0;
+    for (const QJsonValue v : doc.array()) {
+        if (!v.isObject()) {
+            continue;
+        }
+        const QJsonObject obj = v.toObject();
+        bool ok               = false;
+        const uint64_t tabId  = obj[QStringLiteral("tabId")].toString().toULongLong(&ok);
+        if (!ok || tabId == 0 || m_tabs.contains(tabId)) {
+            continue; // 格式不对/tabId 冲突（理论上不该出现，防御性跳过而不是覆盖）
+        }
+
+        TabSession session;
+        session.tabId          = tabId;
+        session.sandboxId      = obj[QStringLiteral("sandboxId")].toString();
+        session.pluginFilePath = obj[QStringLiteral("pluginFilePath")].toString();
+        session.sandboxRuntimeExecutable = obj[QStringLiteral("sandboxRuntimeExecutable")].toString();
+        session.pluginArguments = obj[QStringLiteral("pluginArguments")].toObject().toVariantMap();
+        session.state           = TabState::Restoring;
+
+        m_tabs.emplace(tabId, std::move(session));
+        maxRestoredId = std::max(maxRestoredId, tabId);
+        ++restored;
+        Q_EMIT tabRestoring(tabId);
+    }
+
+    // 避免后续 openTab() 生成的新 tabId 和刚放回来的旧 tabId 撞车——本进程的
+    // m_nextTabSeq 是从 1 重新数的，如果不追上历史最大值，很快就会撞上。
+    if (maxRestoredId >= m_nextTabSeq) {
+        m_nextTabSeq = maxRestoredId + 1;
+    }
+    return restored;
+}
+
+bool TabSandboxManager::respawnRestoredTab(uint64_t tabId)
+{
+    return restartTab(tabId);
+}
+
+size_t TabSandboxManager::pendingRestoreCount() const noexcept
+{
+    size_t n = 0;
+    for (const auto &[id, session] : m_tabs) {
+        Q_UNUSED(id)
+        if (session.state == TabState::Restoring) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 uint64_t TabSandboxManager::nextTabId()
 {
     return m_nextTabSeq++;
@@ -114,11 +257,22 @@ uint64_t TabSandboxManager::openTab(const QString &pluginFilePath, QVariantMap p
         m_pendingQueue.push_back(tabId);
         Q_EMIT tabQueued(tabId);
     }
+    persistSession();
     return tabId;
 }
 
 void TabSandboxManager::spawnSession(TabSession &session)
 {
+    // 恢复出来的会话（restoreSession()）里 sandboxRuntimeExecutable 理论上不该是空的
+    // （openTab() 当初已经解析过一次），但这里仍然做一次兜底：sandboxRuntimeExecutable
+    // 本质是"这次 Host 安装在哪"这类环境细节，不是 Tab 身份的一部分（pluginFilePath
+    // 才是），换一次安装路径/版本升级之后旧记录里的路径完全可能失效——与其死板地用
+    // 一个可能已经不存在的旧路径去 spawn() 必然失败，不如退回当前进程实际配置的
+    // defaultSandboxRuntimeExecutable()，并把解析结果回填进 session，后续持久化/
+    // 查询看到的就是真实生效的路径。
+    if (session.sandboxRuntimeExecutable.isEmpty()) {
+        session.sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
+    }
     const QString sandboxId = m_sandboxSystem->spawn(session.pluginFilePath,
                                                      session.sandboxRuntimeExecutable,
                                                      session.pluginArguments);
@@ -143,6 +297,7 @@ void TabSandboxManager::tryQueued()
         }
         spawnSession(it->second);
     }
+    persistSession();
 }
 
 bool TabSandboxManager::closeTab(uint64_t tabId)
@@ -154,19 +309,23 @@ bool TabSandboxManager::closeTab(uint64_t tabId)
     auto &session = it->second;
 
     switch (session.state) {
-    case TabState::Queued: {
-        // 还没真正 spawn()，直接从排队队列和条目表里摘掉，没有子进程需要等待退出。
+    case TabState::Queued:
+    case TabState::Restoring: {
+        // 两种情况都还没有真正在跑的子进程——Queued 是排队等 spawn()，Restoring 是
+        // 从会话文件读回来、还没等到匹配孤儿——直接从排队队列（如果在）和条目表里
+        // 摘掉即可，没有子进程需要等待退出。
         m_pendingQueue.erase(std::remove(m_pendingQueue.begin(), m_pendingQueue.end(), tabId),
                              m_pendingQueue.end());
         m_tabs.erase(it);
         Q_EMIT tabClosed(tabId);
-        tryQueued();
+        tryQueued(); // 内部会 persistSession()
         return true;
     }
     case TabState::Launching:
     case TabState::Running  : {
         session.state = TabState::Closing;
         m_sandboxSystem->shutdown(session.sandboxId);
+        persistSession();
         return true;
     }
     case TabState::Faulted: {
@@ -174,12 +333,13 @@ bool TabSandboxManager::closeTab(uint64_t tabId)
             // 子进程已经退出（handleProcessFinished 已经跑过、清空了 sandboxId），
             // 直接终结这个条目即可，不需要再等待任何异步事件。
             finalizeSession(session, /*emitClosed=*/true);
-            tryQueued();
+            tryQueued(); // 内部会 persistSession()
         } else {
             // 子进程可能还没真正退出（例如报了 Faulted 但进程还在收尾），
             // 走和 Running 一样的优雅关闭路径，交给 handleProcessFinished 收尾。
             session.state = TabState::Closing;
             m_sandboxSystem->shutdown(session.sandboxId);
+            persistSession();
         }
         return true;
     }
@@ -230,20 +390,27 @@ bool TabSandboxManager::restartTab(uint64_t tabId)
     // maxConcurrentSandboxes() 一个名额——这是 restart 语义相对严格名额控制的
     // 刻意取舍，见类注释。
     spawnSession(session);
+    persistSession();
     return true;
 }
 
 void TabSandboxManager::finalizeSession(TabSession &session, bool emitClosed)
 {
+    // 先把 tabId 拷贝出来：m_tabs.erase(session.tabId) 之后 session 这个引用就悬空了
+    // （指向的 map 节点已经被销毁），后面不能再碰 session 的任何成员，包括读 tabId 本身——
+    // 这里如果直接在 erase() 之后继续用 session.tabId 是访问已析构对象的未定义行为。
+    const uint64_t tabId = session.tabId;
+
     session.state = TabState::Faulted;
     if (!session.sandboxId.isEmpty()) {
         m_sandboxIdToTab.erase(session.sandboxId);
         m_sandboxSystem->remove(session.sandboxId);
         session.sandboxId.clear();
     }
-    m_tabs.erase(session.tabId);
+    m_tabs.erase(tabId);
+    persistSession();
     if (emitClosed) {
-        Q_EMIT tabClosed(session.tabId);
+        Q_EMIT tabClosed(tabId);
     }
 }
 
@@ -310,21 +477,45 @@ QVector<uint64_t> TabSandboxManager::tryAdoptOrphanedSandboxes()
             continue; // SandboxSystem 侧判定它已经不是孤儿了（比如已被别的路径收编）
         }
 
-        const auto tabId = nextTabId();
-        TabSession session;
-        session.tabId                    = tabId;
-        session.sandboxId                = sandboxId;
-        session.sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
-        // pluginFilePath 留空：这是"收编孤儿"和"正常 openTab()"在数据完整性上的
-        // 本质区别，见类注释和本方法的文档——本进程从未见过它，无从得知。
-        session.state                    = TabState::Launching;
+        // 优先匹配 restoreSession() 放回来的 Restoring 记录——按 sandboxId 精确匹配，
+        // 命中就是"原地恢复成同一个 Tab"，这是本方法结合会话持久化之后真正的目的。
+        // 找不到匹配（真正陌生的孤儿）才走"分配全新 tabId"的老路径。
+        uint64_t restoredTabId = 0;
+        for (auto &[id, session] : m_tabs) {
+            if (session.state == TabState::Restoring && session.sandboxId == sandboxId) {
+                restoredTabId = id;
+                break;
+            }
+        }
 
-        m_tabs.emplace(tabId, std::move(session));
-        m_sandboxIdToTab.emplace(sandboxId, tabId);
+        if (restoredTabId != 0) {
+            TabSession &session = m_tabs.at(restoredTabId);
+            session.state       = TabState::Launching;
+            m_sandboxIdToTab.emplace(sandboxId, restoredTabId);
 
-        adopted.push_back(tabId);
-        Q_EMIT tabAdopted(tabId, sandboxId);
-        Q_EMIT tabLaunching(tabId);
+            adopted.push_back(restoredTabId);
+            Q_EMIT tabRestored(restoredTabId, sandboxId);
+            Q_EMIT tabLaunching(restoredTabId);
+        } else {
+            const auto tabId = nextTabId();
+            TabSession session;
+            session.tabId                    = tabId;
+            session.sandboxId                = sandboxId;
+            session.sandboxRuntimeExecutable = m_defaultSandboxRuntimeExecutable;
+            // pluginFilePath 留空：这是"陌生收编"和"原地恢复"/"正常 openTab()"在数据
+            // 完整性上的本质区别，见类注释——本进程从未见过它，无从得知。
+            session.state                    = TabState::Launching;
+
+            m_tabs.emplace(tabId, std::move(session));
+            m_sandboxIdToTab.emplace(sandboxId, tabId);
+
+            adopted.push_back(tabId);
+            Q_EMIT tabAdopted(tabId, sandboxId);
+            Q_EMIT tabLaunching(tabId);
+        }
+    }
+    if (!adopted.isEmpty()) {
+        persistSession();
     }
     return adopted;
 }
@@ -351,6 +542,7 @@ void TabSandboxManager::onPhaseChanged(const QString &sandboxId, SandboxPhase ph
     case SandboxPhase::Running:
         session.state = TabState::Running;
         Q_EMIT tabRunning(session.tabId);
+        persistSession();
         break;
     default:
         break; // Connecting/Loading/Initializing/Stopping/Stopped/Faulted 不需要额外动作
@@ -372,6 +564,7 @@ void TabSandboxManager::onFaulted(const QString &sandboxId, const QString &reaso
     auto &session = tabIt->second;
     session.state = TabState::Faulted;
     Q_EMIT tabFaulted(session.tabId, reason);
+    persistSession();
 }
 
 void TabSandboxManager::onLogMessage(const QString &sandboxId, int level, const QString &message)
