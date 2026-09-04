@@ -5,7 +5,7 @@
 #include <thread>
 #include <vector>
 
-#include <gui/detail/b_result.h>
+#include <core/b_result.h>
 
 /**
  * @file result_status_test.cpp

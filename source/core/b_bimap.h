@@ -115,7 +115,7 @@ public:
      * @brief 插入一对映射关系（严格不重复）
      *
      * Left 或 Right 任意一方已存在时，返回 false 且不修改容器。
-     * 若需更新已有映射，请先调用 erase_left / erase_right，或使用
+     * 若需更新已有映射，请先调用 eraseLeft / eraseRight，或使用
      * insert_or_replace。
      *
      * @return true: 成功插入；false: 存在冲突，未插入
@@ -311,7 +311,7 @@ private:
         template<bool C = IsConst>
         std::enable_if_t<!C, bool> erase(const Left& key) noexcept
         {
-            return m_bm.erase_left(key);
+            return m_bm.eraseLeft(key);
         }
 
         // 迭代器
@@ -380,7 +380,7 @@ private:
         template<bool C = IsConst>
         std::enable_if_t<!C, bool> erase(const Right& key) noexcept
         {
-            return m_bm.erase_right(key);
+            return m_bm.eraseRight(key);
         }
 
         template<bool C = IsConst>
