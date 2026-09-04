@@ -16,7 +16,7 @@ QStringList Context::toStringList() const
 {
     QStringList names;
     for (const auto &id : m_set) {
-        names.append(id.name());
+        names.append(id.toString());
     }
     return names;
 }

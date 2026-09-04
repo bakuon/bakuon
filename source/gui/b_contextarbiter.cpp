@@ -30,7 +30,7 @@ std::shared_ptr<ContextState> ContextArbiter::registerContext(const ContextId& i
     if (regIt != m_registry.end() && regIt->second.owner != owner) {
         // 两个不相关的调用方争用了同一个上下文字符串——真实的命名冲突，拒绝注册，
         // 不创建/不修改任何 ContextState。
-        qWarning() << "ContextArbiter::registerContext: naming collision on" << id.name()
+        qWarning() << "ContextArbiter::registerContext: naming collision on" << id
                    << "-- already owned by" << regIt->second.owner
                    << ", rejected registration attempt from" << owner;
         return nullptr;
@@ -84,7 +84,7 @@ void ContextArbiter::pushContext(const ContextId& ctxId, const void* source, Con
     Q_ASSERT(source != nullptr);
 
     if (!m_contexts.contains(ctxId)) {
-        qWarning() << "ContextArbiter::pushContext: 上下文" << ctxId.name()
+        qWarning() << "ContextArbiter::pushContext: 上下文" << ctxId
                    << "从未 registerContext()，自动创建一个匿名条目（owner 未知），"
                       "建议改用 registerContext()/CommandSystem::declareContext()";
     }
@@ -108,7 +108,7 @@ void ContextArbiter::popContext(const ContextId& ctxId, const void* source, Cont
     auto it = m_contexts.find(ctxId);
     if (it == m_contexts.end()) {
         qWarning("ContextArbiter::popContext: mismatched pop (context=%s, source=%p)",
-                 qPrintable(ctxId.name()),
+                 qPrintable(ctxId.toString()),
                  source);
         return;
     }

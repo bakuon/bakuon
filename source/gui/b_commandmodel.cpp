@@ -84,14 +84,14 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
     case Qt::DisplayRole:
         if (v.type == CommandLayoutData::Type::Command) {
             if (index.column() == 1) {
-                return v.commandId.name();
+                return v.commandId.toString();
             }
             if (index.column() == 2) {
                 const auto contexts = CommandSystem::contextsForCommand(v.commandId);
                 QStringList list;
                 list.reserve(contexts.size());
                 for (const auto& c : contexts) {
-                    list.append(c.name());
+                    list.append(c.toString());
                 }
                 return list.join(" | ");
             }
@@ -108,7 +108,7 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
                 if (Command* cmd = CommandSystem::command(v.commandId)) {
                     return cmd->action()->text();
                 }
-                return QStringLiteral("<未知命令: %1>").arg(v.commandId.name());
+                return QStringLiteral("<未知命令: %1>").arg(v.commandId.toString());
             }
             case CommandLayoutData::Type::Separator: return QStringLiteral("──────────");
             default                                : break;
@@ -117,13 +117,13 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
         break;
     }
     case CommandTypeRole   : return static_cast<int>(v.type);
-    case CommandIdRole     : return v.commandId.name();
+    case CommandIdRole     : return v.commandId.toString();
     case CommandContextRole: {
         const auto contexts = CommandSystem::contextsForCommand(v.commandId);
         QStringList list;
         list.reserve(contexts.size());
         for (const auto& c : contexts) {
-            list.append(c.name());
+            list.append(c.toString());
         }
         return list.join(" | ");
     }

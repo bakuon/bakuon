@@ -191,7 +191,7 @@ static QJsonObject nodeToJson(const CommandLayout::Item* item)
         break;
     case CommandLayoutData::Type::Command:
         obj[QLatin1String(kKeyType)]    = QStringLiteral("command");
-        obj[QLatin1String(kKeyCommand)] = v.commandId.name();
+        obj[QLatin1String(kKeyCommand)] = v.commandId.toString();
         break;
     case CommandLayoutData::Type::Separator:
         obj[QLatin1String(kKeyType)] = QStringLiteral("separator");

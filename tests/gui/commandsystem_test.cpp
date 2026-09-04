@@ -215,7 +215,7 @@ inline constexpr char kContextIdPropertyName[] = "bakuon_contextId";
 inline void setWidgetContext(QObject* widget, const ContextId& context)
 {
     Q_ASSERT(widget != nullptr);
-    widget->setProperty(kContextIdPropertyName, context.name());
+    widget->setProperty(kContextIdPropertyName, context.toString());
 }
 
 inline ContextId widgetContext(const QObject* widget)
@@ -469,7 +469,7 @@ TEST(CommandSystem, FocusRouterAcceptsNonEmptyContext)
     router.install();
 
     const ContextId ctxId{"focus.router.nonempty"};
-    CommandSystem::declareContext(ctxId.name(), "test", "focus router");
+    CommandSystem::declareContext(ctxId.toString(), "test", "focus router");
 
     auto* container = new QWidget();
     auto* provider  = new QWidget(container);
@@ -492,7 +492,7 @@ TEST(CommandSystem, FocusRouterAcceptsNonEmptyContext)
 TEST(CommandSystem, ContextGuardPopsOnScopeExit)
 {
     const ContextId ctxId{"guard.scope"};
-    CommandSystem::declareContext(ctxId.name(), "test", "");
+    CommandSystem::declareContext(ctxId.toString(), "test", "");
     int source = 0;
     {
         ContextGuard guard(ctxId, &source);
