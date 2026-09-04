@@ -12,24 +12,21 @@ namespace bakuon::sandbox {
 
 SandboxSystem::SandboxSystem(QObject *parent)
     : QObject(parent)
-    , m_registry(std::make_unique<QRemoteObjectRegistryHost>(QUrl(registryUrl())))
+    , m_host(std::make_unique<QRemoteObjectRegistryHost>(QUrl(registryUrl())))
 {
-    connect(m_registry.get(),
-            &QRemoteObjectNode::error,
-            this,
-            [this](QRemoteObjectNode::ErrorCode code) {
-                Q_EMIT sandboxLogMessage(QStringLiteral("<registry>"),
-                                         1 /*Warning*/,
-                                         QStringLiteral("注册中心 QRemoteObjectNode 错误码：%1")
-                                             .arg(int(code)));
-            });
+    connect(m_host.get(), &QRemoteObjectNode::error, this, [this](QRemoteObjectNode::ErrorCode code) {
+        Q_EMIT sandboxLogMessage(QStringLiteral("<registry>"),
+                                 1 /*Warning*/,
+                                 QStringLiteral("注册中心 QRemoteObjectNode 错误码：%1")
+                                     .arg(int(code)));
+    });
 
     // 孤儿发现：任何时候注册中心里出现一个新对象，都检查一下是不是本实例已知的
     // （正常 spawn() 出来的实例，在子进程真正把 Source 发布出来、这个信号触发之前，
     // m_entries 里已经有它的条目了，见 spawn() 的插入顺序），不认识的才当作孤儿上报。
     // 实测验证过这条链路是可行的（旧 Host 进程的注册中心销毁后，仍然存活的沙箱子进程
     // 会自动重连到新起的、同地址的注册中心，重新出现在这里）。
-    connect(m_registry->registry(),
+    connect(m_host->registry(),
             &QRemoteObjectRegistry::remoteObjectAdded,
             this,
             [this](const QRemoteObjectSourceLocation &loc) {
@@ -55,7 +52,7 @@ SandboxSystem::SandboxSystem(QObject *parent)
     // 在尝试发送数据时才会发现服务端不可用"，也就是说不主动探测的话，一个已经
     // 断开的连接可能会无限期停留在 Valid 状态。这里显式打开心跳，让 Suspect 转换
     // 在合理时间内可靠触发。
-    m_registry->setHeartbeatInterval(3000);
+    m_host->setHeartbeatInterval(3000);
 }
 
 SandboxSystem::~SandboxSystem() = default;
@@ -79,7 +76,7 @@ QString SandboxSystem::spawn(const QString &pluginFilePath, const QString &sandb
                              QVariantMap pluginArguments)
 {
     const QString id = nextSandboxId();
-    auto supervisor  = std::make_shared<SandboxSupervisor>(id, pluginFilePath, *m_registry, this);
+    auto supervisor  = std::make_shared<SandboxSupervisor>(id, pluginFilePath, *m_host, this);
     wireSupervisorSignals(id, supervisor);
 
     m_entries.emplace(id, supervisor);
@@ -94,7 +91,7 @@ bool SandboxSystem::adopt(const QString &sandboxId)
     }
     // pluginFilePath 留空：收编模式下 attach() 根本不会用到它（不会重新 loadPlugin()），
     // 见 SandboxSupervisor::attach() 的实现和文档。
-    auto supervisor = std::make_shared<SandboxSupervisor>(sandboxId, QString(), *m_registry, this);
+    auto supervisor = std::make_shared<SandboxSupervisor>(sandboxId, QString(), *m_host, this);
     wireSupervisorSignals(sandboxId, supervisor);
 
     m_entries.emplace(sandboxId, supervisor);

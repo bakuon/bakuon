@@ -254,7 +254,7 @@ void SandboxSupervisor::bindReplicaSignals()
                 if (ok) {
                     result = it->second->channel.readPayload();
                 }
-                Q_UNUSED(memoryKey);         // channel 内部已经记住了自己的 key，这里不需要重新挂载
+                Q_UNUSED(memoryKey)          // channel 内部已经记住了自己的 key，这里不需要重新挂载
                 m_pendingCommands.erase(it); // SharedMemoryChannel 析构 -> release() 自动 detach
                 Q_EMIT commandFinished(requestId, ok, result, errorMessage);
             });

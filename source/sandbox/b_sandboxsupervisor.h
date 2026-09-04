@@ -161,8 +161,8 @@ private:
     bool m_needsLoadPlugin   = true;
     bool m_phaseForwardBound = false;
 
-    QRemoteObjectNode &
-        m_registryNode; // 外部注入（通常是 SandboxSystem 持有的注册中心），生命周期由调用方保证长于本对象
+    // 外部注入（通常是 SandboxSystem 持有的注册中心），生命周期由调用方保证长于本对象
+    QRemoteObjectNode &m_registryNode;
     std::unique_ptr<PluginSandboxControlReplica> m_replica;
     std::unique_ptr<QProcess> m_process;
 

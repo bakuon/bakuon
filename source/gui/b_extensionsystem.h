@@ -5,6 +5,7 @@
 
 #include <bakuon/gui/IExtensionSystem.h>
 
+#include "gui/b_defaultextensionpoint.h"
 #include "gui/b_gui_export.h"
 
 namespace bakuon::gui {
@@ -12,9 +13,6 @@ namespace bakuon::gui {
 /* ============================================================
  *  ExtensionSystem：全局扩展点注册中心（Facade）
  * ============================================================*/
-
-template<typename T>
-class DefaultExtensionPoint;
 
 /**
  * @brief 扩展点注册中心 - extension facade

@@ -7,7 +7,6 @@
 #include <bakuon/gui/IPlugin.h>
 #include <bakuon/sandbox/ISandboxCommandHandler.h>
 
-#include "gui/b_defaultextensionpoint.h"
 #include "gui/b_extensionsystem.h"
 #include "gui/b_pluginpipeline.h"
 #include "sandbox/b_sandboxconstants.h"
@@ -173,7 +172,7 @@ public:
             m_pipeline->stop();
             m_pipeline->unload();
         }
-        setPhase(SandboxPhase::Stopped);
+        setPhase(SandboxPhase::Stopped); // TODO: Unload or Shutdown phase
         // 真正退出进程的动作交给 sandbox_runtime/main.cpp（本类只负责契约语义，
         // 进程生命周期是宿主 main() 的职责，保持单一职责）。
         Q_EMIT aboutToQuit();

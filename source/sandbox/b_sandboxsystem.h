@@ -113,7 +113,7 @@ private:
 
 private:
     std::atomic<uint64_t> m_nextSeq{1};
-    std::unique_ptr<QRemoteObjectRegistryHost> m_registry;
+    std::unique_ptr<QRemoteObjectRegistryHost> m_host;
     std::unordered_map<QString, std::shared_ptr<SandboxSupervisor>> m_entries;
 };
 
