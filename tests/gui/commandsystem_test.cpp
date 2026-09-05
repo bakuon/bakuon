@@ -12,6 +12,8 @@
 #include <QTimer>
 #include <QWidget>
 
+#include <cstdlib>
+
 #include <gtest/gtest.h>
 #include <gui/b_commandmodel.h>
 #include <gui/b_commandsystem.h>
@@ -503,7 +505,15 @@ TEST(CommandSystem, ContextGuardPopsOnScopeExit)
 
 int main(int argc, char* argv[])
 {
+#ifdef Q_OS_LINUX
+    // 强行将命令行参数改写，等同于在启动程序时追加了 -platform offscreen
+    // 这比环境变量的优先级更高，能有效阻止 Qt 去深度初始化 xcb
+    int customized_argc     = 3;
+    char* customized_argv[] = {argv[0], (char*) "-platform", (char*) "offscreen", nullptr};
+    QApplication app(customized_argc, customized_argv);
+#else
     QApplication app(argc, argv);
+#endif
 
     ::testing::InitGoogleTest(&argc, argv);
 

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <gtest/gtest.h>
 
 #include <QApplication>
@@ -100,7 +101,11 @@ TEST(ContextTest, ContextFocusRouter)
 
 int main(int argc, char* argv[])
 {
+#ifdef Q_OS_LINUX
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+#else
     QApplication app(argc, argv);
+#endif
 
     ::testing::InitGoogleTest(&argc, argv);
 
