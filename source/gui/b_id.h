@@ -85,8 +85,16 @@ public:
     {
         if (!id.isValid()) {
             os << "Id(invalid)";
+            return std::forward<Stream>(os);
+        }
+        const auto n = id.name();
+        // QDebug 对 std::string_view 存在多个可行的隐式转换（QUtf8StringView /
+        // QByteArrayView 都能接）
+        if constexpr (std::is_same_v<std::decay_t<Stream>, QDebug>) {
+            os << "Id(" << id.rawId() << ','
+               << QByteArrayView(n.data(), static_cast<qsizetype>(n.size())) << ')';
         } else {
-            os << "Id(" << id.rawId() << ',' << std::string_view(id.name()) << ')';
+            os << "Id(" << id.rawId() << ',' << std::string_view(n) << ')';
         }
         return std::forward<Stream>(os);
     }
