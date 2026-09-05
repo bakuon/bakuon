@@ -53,22 +53,30 @@ void MainWindow::registerCommands()
 {
     auto& del = gui::CommandSystem::registerCommand(kCmdDelete, QStringLiteral("删除"));
     del.setShortcut(QKeySequence::Delete);
-    del.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditDelete));
     del.setAttribute(gui::Command::Attribute::UpdateEnabled);
-
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    del.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditDelete));
+#endif
+    
     auto& dup = gui::CommandSystem::registerCommand(kCmdDuplicate, QStringLiteral("复制"));
     dup.setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
     dup.setAttribute(gui::Command::Attribute::HideWhenIdle, true); // test hidden
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     dup.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditCopy));
-
+#endif
+    
     auto& paste = gui::CommandSystem::registerCommand(kCmdPaste, QStringLiteral("粘贴"));
     del.setShortcut(QKeySequence::Paste);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     paste.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditPaste));
-
+#endif
+    
     auto& save = gui::CommandSystem::registerCommand(kCmdSave, QStringLiteral("保存"));
     save.setShortcut(QKeySequence::Save);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     save.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::DocumentSave));
-
+#endif
+    
     auto& customize = gui::CommandSystem::registerCommand(kCmdCustomize, QStringLiteral("自定义"));
     customize.setShortcut(QKeySequence(Qt::Key_O));
 
