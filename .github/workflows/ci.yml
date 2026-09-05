@@ -96,7 +96,11 @@ jobs:
           # "发现测试用例"那一步就直接崩掉（不是测试逻辑本身的问题，是 QPA 平台插件
           # 选择的问题）。
           QT_QPA_PLATFORM: offscreen
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          # 显式导出变量，确保子进程继承
+          export QT_QPA_PLATFORM=offscreen
+          # 运行测试
+          ctest --test-dir build --output-on-failure
 
       - name: Upload test logs on failure
         if: failure()
