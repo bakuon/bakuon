@@ -12,6 +12,11 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # 这种方式对 ctest --test-dir 也有效，因为它会将环境变量写入测试定义
+    set(ENV{QT_QPA_PLATFORM} "offscreen")
+endif()
+
 function(bakuon_add_test)
     cmake_parse_arguments(
         ARG
