@@ -64,6 +64,10 @@ jobs:
           modules: qtremoteobjects
           cache: true
 
+      - name: Install Xvfb
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y xvfb
+
       - name: Enable ccache (Linux)
         if: runner.os == 'Linux'
         uses: hendrikmuhs/ccache-action@v1
@@ -88,7 +92,8 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Test
+      - name: Test with Xvfb
+        if: runner.os == 'Linux'
         env:
           # 三个 GUI 相关的 test target（context/commandsystem 等）会真的构造 QWidget
           # 系的对象；CI runner 没有显示器/X server，offscreen 平台插件让它们不需要
@@ -96,6 +101,13 @@ jobs:
           # "发现测试用例"那一步就直接崩掉（不是测试逻辑本身的问题，是 QPA 平台插件
           # 选择的问题）。
           QT_QPA_PLATFORM: offscreen
+        run: |
+          # xvfb-run 会启动一个虚拟的 X Server，并设置 DISPLAY 环境变量
+          # 这样 xcb 插件就能成功连接到一个“假”的显示器，从而避免报错
+          xvfb-run --server-args="-screen 0 1024x768x24" ctest --test-dir build --output-on-failure
+          
+      - name: Test
+        if: runner.os == 'Windows'
         run: ctest --test-dir build --output-on-failure
 
       - name: Upload test logs on failure
