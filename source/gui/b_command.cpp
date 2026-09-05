@@ -112,6 +112,7 @@ void Command::setAttribute(Attributes attribute, bool on)
 
 void Command::setRealAction(QAction* activeAction)
 {
+    Q_ASSERT(m_proxyAction != activeAction);
     if (m_realAction.data() == activeAction) {
         return; // 身份没变；状态是否与当前 Attributes 一致由其它入口（setAttributes 等）保证
     }
