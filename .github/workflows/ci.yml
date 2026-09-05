@@ -18,7 +18,8 @@ concurrency:
 env:
   # 和 QIcon::ThemeIcon（examples/gui/menubar，Qt 6.7+ 才有）保持一致，
   # 避免 CI 用的 Qt 版本比示例代码要求的还旧，导致这一个 target 在 CI 上又得单独跳过。
-  BAKUON_CI_QT_VERSION: "6.7.*"
+  # Linux 系统只有 6.5.0 版本的 Qt plugins
+  BAKUON_CI_QT_VERSION: "6.5.0"
 
 jobs:
   build-and-test:
@@ -88,29 +89,9 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Prepare Offscreen Plugin Only
-        if: runner.os == 'Linux'
-        run: |
-          # 1. 找到 Qt 安装目录下的 platforms 文件夹
-          # jurplel/install-qt-action 通常将 Qt 安装在 $RUNNER_TOOL_CACHE 或指定路径
-          # 我们可以通过 qmake 或 pkg-config 查找，或者直接使用 find
-          QT_BIN_DIR=$(dirname $(which qmake6 || which qmake))
-          QT_ROOT_DIR=$(dirname "$QT_BIN_DIR")
-          PLATFORMS_SRC="$QT_ROOT_DIR/plugins/platforms"
-          
-          # 2. 创建只包含 offscreen 的临时插件目录
-          mkdir -p /tmp/qt-plugins-offscreen/platforms
-          cp "$PLATFORMS_SRC/libqoffscreen.so" /tmp/qt-plugins-offscreen/platforms/
-          
-          # 3. (可选) 复制必要的依赖库，如果 offscreen 依赖其他 Qt 库
-          # 通常 offscreen 依赖较少，但为了安全，可以复制整个 plugins 目录然后删除非 offscreen 文件
-          # 这里我们采用更简单的策略：只保留 offscreen
-
-      - name: Test with Isolated Plugins
+      - name: Test with offscreen
         if: runner.os == 'Linux'
         env:
-          # 关键：强制 Qt 只从这个目录加载平台插件
-          QT_QPA_PLATFORM_PLUGIN_PATH: /tmp/qt-plugins-offscreen
           # 三个 GUI 相关的 test target（context/commandsystem 等）会真的构造 QWidget
           # 系的对象；CI runner 没有显示器/X server，offscreen 平台插件让它们不需要
           # 真实显示环境也能跑——本地在容器里验证过这几个测试必须要这个变量才不会在
