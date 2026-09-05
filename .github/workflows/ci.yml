@@ -64,14 +64,6 @@ jobs:
           # source/sandbox/CMakeLists.txt 的 find_package(... COMPONENTS RemoteObjects)。
           modules: qtremoteobjects
           cache: true
-
-      - name: Remove XCB Plugin (Linux Only)
-        if: runner.os == 'Linux'
-        run: |
-          # 查找 Qt 安装目录
-          QT_DIR=$(dirname $(dirname $(which qmake6 || which qmake)))
-          # 查找并删除 Qt 安装目录下的 libqxcb.so
-          find $QT_DIR/plugins/platforms/ -name "libqxcb.so" -exec rm -v {} \;
       
       - name: Enable ccache (Linux)
         if: runner.os == 'Linux'
