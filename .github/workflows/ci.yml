@@ -65,23 +65,14 @@ jobs:
           modules: qtremoteobjects
           cache: true
 
-      - name: Install XCB Dependencies
+      - name: Remove XCB Plugin (Linux Only)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libxcb-xinerama0 \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-render-util0 \
-            libxcb-xkb1 \
-            libxkbcommon-x11-0 \
-            libgl1-mesa-glx \
-            libegl1-mesa \
-            libfontconfig1 \
-            libdbus-1-3
-            
+          # 查找 Qt 安装目录
+          QT_DIR=$(dirname $(dirname $(which qmake6 || which qmake)))
+          # 查找并删除 Qt 安装目录下的 libqxcb.so
+          find $QT_DIR/plugins/platforms/ -name "libqxcb.so" -exec rm -v {} \;
+      
       - name: Enable ccache (Linux)
         if: runner.os == 'Linux'
         uses: hendrikmuhs/ccache-action@v1
@@ -106,19 +97,14 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Test with offscreen
-        if: runner.os == 'Linux'
+      - name: Test
         env:
           # 三个 GUI 相关的 test target（context/commandsystem 等）会真的构造 QWidget
           # 系的对象；CI runner 没有显示器/X server，offscreen 平台插件让它们不需要
           # 真实显示环境也能跑——本地在容器里验证过这几个测试必须要这个变量才不会在
           # "发现测试用例"那一步就直接崩掉（不是测试逻辑本身的问题，是 QPA 平台插件
           # 选择的问题）。
-          QT_QPA_PLATFORM: offscreen
-        run: ctest --test-dir build --output-on-failure
-
-      - name: Test
-        if: runner.os == 'Windows'
+          QT_QPA_PLATFORM: ${{ runner.os == 'Linux' && 'offscreen' || '' }}
         run: ctest --test-dir build --output-on-failure
 
       - name: Upload test logs on failure
