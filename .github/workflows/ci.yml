@@ -64,10 +64,6 @@ jobs:
           modules: qtremoteobjects
           cache: true
 
-      - name: Install Xvfb
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y xvfb
-
       - name: Enable ccache (Linux)
         if: runner.os == 'Linux'
         uses: hendrikmuhs/ccache-action@v1
@@ -92,20 +88,37 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Test with Xvfb
+      - name: Prepare Offscreen Plugin Only
+        if: runner.os == 'Linux'
+        run: |
+          # 1. 找到 Qt 安装目录下的 platforms 文件夹
+          # jurplel/install-qt-action 通常将 Qt 安装在 $RUNNER_TOOL_CACHE 或指定路径
+          # 我们可以通过 qmake 或 pkg-config 查找，或者直接使用 find
+          QT_BIN_DIR=$(dirname $(which qmake6 || which qmake))
+          QT_ROOT_DIR=$(dirname "$QT_BIN_DIR")
+          PLATFORMS_SRC="$QT_ROOT_DIR/plugins/platforms"
+          
+          # 2. 创建只包含 offscreen 的临时插件目录
+          mkdir -p /tmp/qt-plugins-offscreen/platforms
+          cp "$PLATFORMS_SRC/libqoffscreen.so" /tmp/qt-plugins-offscreen/platforms/
+          
+          # 3. (可选) 复制必要的依赖库，如果 offscreen 依赖其他 Qt 库
+          # 通常 offscreen 依赖较少，但为了安全，可以复制整个 plugins 目录然后删除非 offscreen 文件
+          # 这里我们采用更简单的策略：只保留 offscreen
+
+      - name: Test with Isolated Plugins
         if: runner.os == 'Linux'
         env:
+          # 关键：强制 Qt 只从这个目录加载平台插件
+          QT_QPA_PLATFORM_PLUGIN_PATH: /tmp/qt-plugins-offscreen
           # 三个 GUI 相关的 test target（context/commandsystem 等）会真的构造 QWidget
           # 系的对象；CI runner 没有显示器/X server，offscreen 平台插件让它们不需要
           # 真实显示环境也能跑——本地在容器里验证过这几个测试必须要这个变量才不会在
           # "发现测试用例"那一步就直接崩掉（不是测试逻辑本身的问题，是 QPA 平台插件
           # 选择的问题）。
           QT_QPA_PLATFORM: offscreen
-        run: |
-          # xvfb-run 会启动一个虚拟的 X Server，并设置 DISPLAY 环境变量
-          # 这样 xcb 插件就能成功连接到一个“假”的显示器，从而避免报错
-          xvfb-run --server-args="-screen 0 1024x768x24" ctest --test-dir build --output-on-failure
-          
+        run: ctest --test-dir build --output-on-failure
+
       - name: Test
         if: runner.os == 'Windows'
         run: ctest --test-dir build --output-on-failure
