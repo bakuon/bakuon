@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <QApplication>
 #include <QEventLoop>
 #include <QFile>
 #include <QTabWidget>
@@ -102,23 +101,4 @@ TEST(HostCommandWiringTest, TriggeringNewTabOnceOpensExactlyOneTab)
     // 这里 800ms 完全足够让失控现象暴露出来。
     spinFor(800);
     EXPECT_EQ(tabs->count(), 1) << "一次命令触发不应该开出不止一个标签（失控循环回归）";
-}
-
-int main(int argc, char *argv[])
-{
-#ifdef Q_OS_LINUX
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-#endif
-
-    QApplication app(argc, argv);
-
-    ::testing::InitGoogleTest(&argc, argv);
-
-    QTimer::singleShot(0, []() {
-        int gtest_result = RUN_ALL_TESTS();
-        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
-        QCoreApplication::exit(gtest_result);
-    });
-
-    return app.exec();
 }

@@ -98,22 +98,3 @@ TEST(ContextTest, ContextFocusRouter)
 
     delete window;
 }
-
-int main(int argc, char* argv[])
-{
-#ifdef Q_OS_LINUX
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-#endif
-
-    QApplication app(argc, argv);
-
-    ::testing::InitGoogleTest(&argc, argv);
-
-    QTimer::singleShot(0, []() {
-        int gtest_result = RUN_ALL_TESTS();
-        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
-        QCoreApplication::exit(gtest_result);
-    });
-
-    return app.exec();
-}

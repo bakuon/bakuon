@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <QCoreApplication>
 #include <QEventLoop>
 #include <QProcess>
 #include <QTimer>
@@ -135,19 +134,4 @@ TEST(TabSandboxManagerOrphanTest, RediscoverAndAdoptOrphanAfterHostCrash)
 
     manager.closeAll();
     ASSERT_TRUE(waitUntil([&] { return manager.count() == 0; })) << "等待 closeAll 收尾超时";
-}
-
-int main(int argc, char *argv[])
-{
-    QCoreApplication app(argc, argv);
-
-    ::testing::InitGoogleTest(&argc, argv);
-
-    QTimer::singleShot(0, []() {
-        int gtest_result = RUN_ALL_TESTS();
-        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
-        QCoreApplication::exit(gtest_result);
-    });
-
-    return app.exec();
 }
