@@ -18,7 +18,6 @@ concurrency:
 env:
   # 和 QIcon::ThemeIcon（examples/gui/menubar，Qt 6.7+ 才有）保持一致，
   # 避免 CI 用的 Qt 版本比示例代码要求的还旧，导致这一个 target 在 CI 上又得单独跳过。
-  # Linux 系统只有 6.5.0 版本的 Qt plugins
   BAKUON_CI_QT_VERSION: "6.7.*"
 
 jobs:

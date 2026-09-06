@@ -257,7 +257,7 @@ uint64_t TabSandboxManager::openTab(const QString &pluginFilePath, QVariantMap p
         m_pendingQueue.push_back(tabId);
         Q_EMIT tabQueued(tabId);
     }
-    persistSession();
+    persistSession(); // // 在 onPhaseChanged 中调用了一次
     return tabId;
 }
 
@@ -325,7 +325,7 @@ bool TabSandboxManager::closeTab(uint64_t tabId)
     case TabState::Running  : {
         session.state = TabState::Closing;
         m_sandboxSystem->shutdown(session.sandboxId);
-        persistSession();
+        persistSession(); // 在 onProcessFinished 中调用了一次
         return true;
     }
     case TabState::Faulted: {
@@ -390,7 +390,7 @@ bool TabSandboxManager::restartTab(uint64_t tabId)
     // maxConcurrentSandboxes() 一个名额——这是 restart 语义相对严格名额控制的
     // 刻意取舍，见类注释。
     spawnSession(session);
-    persistSession();
+    persistSession(); // 在 onPhaseChanged 中调用了一次
     return true;
 }
 
@@ -407,8 +407,8 @@ void TabSandboxManager::finalizeSession(TabSession &session, bool emitClosed)
         m_sandboxSystem->remove(session.sandboxId);
         session.sandboxId.clear();
     }
-    m_tabs.erase(tabId);
     persistSession();
+    m_tabs.erase(tabId);
     if (emitClosed) {
         Q_EMIT tabClosed(tabId);
     }

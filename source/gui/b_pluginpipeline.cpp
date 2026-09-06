@@ -10,7 +10,6 @@ namespace bakuon::gui {
 
 QString toString(PluginState state)
 {
-    // clang(-Wswitch-enum)
     switch (state) {
     case PluginState::Idle            : return QStringLiteral("Idle");
     case PluginState::Discovering     : return QStringLiteral("Discovering");
@@ -36,6 +35,7 @@ QString toString(PluginState state)
     case PluginState::Unloading       : return QStringLiteral("Unloading");
     case PluginState::Unloaded        : return QStringLiteral("Unloaded");
     case PluginState::UnloadFailed    : return QStringLiteral("UnloadFailed");
+    default                           : break;
     }
     return QStringLiteral("<unknown PluginState>");
 }

@@ -12,11 +12,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # 这种方式对 ctest --test-dir 也有效，因为它会将环境变量写入测试定义
-    set(ENV{QT_QPA_PLATFORM} "offscreen")
-endif()
-
 function(bakuon_add_test)
     cmake_parse_arguments(
         ARG
@@ -193,4 +188,35 @@ if(TARGET sandbox)
             sandboxed_example_plugin
             orphan_test_helper)
     endif()
+endif()
+
+# ============================================================================
+# host/ 的回归测试：直接把 host/ 下的 .cpp 编译进测试可执行文件（host/ 本身是
+# 一个 add_executable，不是库，没有 bakuon:: 目标可以链接），需要
+# BAKUON_BUILD_HOST 打开且沙箱子系统齐备。
+# ============================================================================
+if(BAKUON_BUILD_HOST AND TARGET sandbox_runtime AND TARGET sandboxed_example_plugin)
+    bakuon_add_test(
+        NAME
+        test_host_command_wiring
+        SOURCES
+        "host/host_command_wiring_test.cpp"
+        DEPENDS
+        bakuon::gui
+        bakuon::sandbox)
+    # bakuon_add_test() 的 SOURCES 只接受单个值（cmake_parse_arguments 的
+    # one_value_keywords），host/ 下的 MainWindow.cpp/TabContentWidget.cpp 需要
+    # 额外用 target_sources() 补进来——host/ 本身是 add_executable 不是库，
+    # 没有 bakuon:: 目标可以直接链接，只能把源文件也编进测试可执行文件里。
+    target_sources(
+        test_host_command_wiring
+        PRIVATE
+            "${CMAKE_SOURCE_DIR}/host/MainWindow.cpp"
+            "${CMAKE_SOURCE_DIR}/host/TabContentWidget.cpp")
+    target_compile_definitions(
+        test_host_command_wiring
+        PRIVATE
+            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+    add_dependencies(test_host_command_wiring sandbox_runtime sandboxed_example_plugin)
 endif()

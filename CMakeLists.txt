@@ -23,6 +23,8 @@ include(BakuonCMake)
 option(BAKUON_BUILD_TESTS "构建 bakuon 单元测试" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_EXAMPLES "构建 bakuon 示例程序" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_STANDALONE "构建 standalone 主程序" ${PROJECT_IS_TOP_LEVEL})
+option(BAKUON_BUILD_HOST "构建 host/ 下真正的 GUI TabHost 主程序（依赖 BAKUON_BUILD_SANDBOX）"
+       ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_PLUGINS "构建 plugins/ 下的运行时插件（MODULE/SHARED）" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_SANDBOX_RUNTIME "构建 source/sandbox/ 下的插件沙箱子进程可执行文件（依赖 BAKUON_BUILD_SANDBOX）"
        ${PROJECT_IS_TOP_LEVEL})
@@ -97,6 +99,10 @@ add_subdirectory(source)
 
 if(BAKUON_BUILD_STANDALONE)
     add_subdirectory(standalone)
+endif()
+
+if(BAKUON_BUILD_HOST)
+    add_subdirectory(host)
 endif()
 
 if(BAKUON_BUILD_EXAMPLES)
