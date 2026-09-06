@@ -10,18 +10,6 @@ using namespace bakuon::sandbox;
 
 namespace {
 
-/// 见 tests/sandbox/sandbox_integration_test.cpp 里对这两个 helper 的详细注释；
-/// 本文件同样需要真实子进程通信，故采用同样的模式（本项目里 QCoreApplication
-/// 惰性单例 + 轮询 waitUntil 是既定的测试基础设施写法，暂无共享 test-utils 头文件）。
-QCoreApplication &app()
-{
-    static int argc     = 1;
-    static char argv0[] = "test_sandbox_tabsandboxmanager";
-    static char *argv[] = {argv0, nullptr};
-    static QCoreApplication instance(argc, argv);
-    return instance;
-}
-
 template<typename Predicate>
 bool waitUntil(Predicate predicate, int timeoutMs = 5000)
 {
@@ -63,8 +51,6 @@ QString sandboxedExamplePluginPath()
 
 TEST(TabSandboxManagerTest, OpenRunCloseLifecycle)
 {
-    Q_UNUSED(app())
-
     TabSandboxManager manager(sandboxRuntimePath());
 
     std::vector<TabState> observedForTab;
@@ -109,8 +95,6 @@ TEST(TabSandboxManagerTest, OpenRunCloseLifecycle)
 
 TEST(TabSandboxManagerTest, ConcurrencyThrottlingBackfillsQueue)
 {
-    Q_UNUSED(app())
-
     TabSandboxManager manager(sandboxRuntimePath());
     manager.setMaxConcurrentSandboxes(1);
 
@@ -151,8 +135,6 @@ TEST(TabSandboxManagerTest, ConcurrencyThrottlingBackfillsQueue)
 
 TEST(TabSandboxManagerTest, FaultedTabDoesNotAffectOtherTabs)
 {
-    Q_UNUSED(app())
-
     TabSandboxManager manager(sandboxRuntimePath());
 
     QString faultReason;
@@ -186,8 +168,6 @@ TEST(TabSandboxManagerTest, FaultedTabDoesNotAffectOtherTabs)
 
 TEST(TabSandboxManagerTest, RestartTabReplacesSandboxId)
 {
-    Q_UNUSED(app())
-
     TabSandboxManager manager(sandboxRuntimePath());
 
     const auto tabId = manager.openTab(sandboxedExamplePluginPath());
@@ -211,4 +191,19 @@ TEST(TabSandboxManagerTest, RestartTabReplacesSandboxId)
 
     manager.closeAll();
     ASSERT_TRUE(waitUntil([&] { return manager.count() == 0; })) << "等待 closeAll 收尾超时";
+}
+
+int main(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+
+    ::testing::InitGoogleTest(&argc, argv);
+
+    QTimer::singleShot(0, []() {
+        int gtest_result = RUN_ALL_TESTS();
+        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
+        QCoreApplication::exit(gtest_result);
+    });
+
+    return app.exec();
 }

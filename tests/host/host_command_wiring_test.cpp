@@ -17,23 +17,6 @@ using namespace bakuon::host;
 
 namespace {
 
-// QApplication（不是 QCoreApplication）：MainWindow 是真实的 QMainWindow，
-// 需要完整的 QtWidgets 支持。offscreen 平台由外部统一通过 QT_QPA_PLATFORM 环境
-// 变量指定（见 CI/本地跑法），这里不写死。
-QApplication &app()
-{
-    // 在 Linux 系统下使用 QApplication 必须使用配置 QT_QPA_PLATFORM=offscreen
-#ifdef Q_OS_LINUX
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-#endif
-
-    static int argc     = 1;
-    static char argv0[] = "test_host_command_wiring";
-    static char *argv[] = {argv0, nullptr};
-    static QApplication instance(argc, argv);
-    return instance;
-}
-
 template<typename Predicate>
 bool waitUntil(Predicate predicate, int timeoutMs = 5000)
 {
@@ -95,9 +78,6 @@ QString sandboxedExamplePluginPath()
  */
 TEST(HostCommandWiringTest, TriggeringNewTabOnceOpensExactlyOneTab)
 {
-    QApplication &a = app();
-    Q_UNUSED(a);
-
     QTemporaryDir pluginsDir;
     ASSERT_TRUE(pluginsDir.isValid());
     // 只放一个候选插件文件，绕开 QInputDialog::getItem()——那是个模态对话框，
@@ -122,4 +102,23 @@ TEST(HostCommandWiringTest, TriggeringNewTabOnceOpensExactlyOneTab)
     // 这里 800ms 完全足够让失控现象暴露出来。
     spinFor(800);
     EXPECT_EQ(tabs->count(), 1) << "一次命令触发不应该开出不止一个标签（失控循环回归）";
+}
+
+int main(int argc, char *argv[])
+{
+#ifdef Q_OS_LINUX
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
+
+    QApplication app(argc, argv);
+
+    ::testing::InitGoogleTest(&argc, argv);
+
+    QTimer::singleShot(0, []() {
+        int gtest_result = RUN_ALL_TESTS();
+        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
+        QCoreApplication::exit(gtest_result);
+    });
+
+    return app.exec();
 }

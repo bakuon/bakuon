@@ -9,16 +9,22 @@ project(
     LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
 
 function(bakuon_add_test)
     cmake_parse_arguments(
         ARG
-        ""
-        "NAME;SOURCES"
-        "DEPENDS"
+        "" # Options (例如: 单选开关)
+        "NAME" # One value keywords (只能传单个值的关键字)
+        "SOURCES;DEPENDS" # Multi value keywords (可以传多个值的关键字)
         ${ARGN})
+
+    if(NOT ARG_NAME)
+        message(FATAL_ERROR "bakuon_add_test: NAME parameter is required")
+    endif()
+
+    if(NOT ARG_SOURCES)
+        message(FATAL_ERROR "bakuon_add_test: SOURCES parameter is required")
+    endif()
 
     add_executable(${ARG_NAME} ${ARG_SOURCES})
     target_link_libraries(${ARG_NAME} PRIVATE gtest gtest_main ${ARG_DEPENDS})
@@ -143,7 +149,7 @@ if(TARGET sandbox)
         # 孤儿收编测试需要一个真正独立的"第一代 Host"进程可以被 SIGKILL——见
         # orphan_test_helper.cpp 顶部注释。这是纯测试辅助可执行文件，不是产品代码，
         # 因此不用 bakuon_add_test()（那是给 gtest 用例用的），普通 add_executable 即可。
-        add_executable(orphan_test_helper "sandbox/orphan_test_helper.cpp")
+        add_executable(orphan_test_helper "shared/orphan_test_helper.cpp")
         target_link_libraries(orphan_test_helper PRIVATE bakuon::sandbox)
         target_compile_features(orphan_test_helper PRIVATE cxx_std_20)
         bakuon_apply_warnings(orphan_test_helper)
@@ -195,28 +201,23 @@ endif()
 # 一个 add_executable，不是库，没有 bakuon:: 目标可以链接），需要
 # BAKUON_BUILD_HOST 打开且沙箱子系统齐备。
 # ============================================================================
-if(BAKUON_BUILD_HOST AND TARGET sandbox_runtime AND TARGET sandboxed_example_plugin)
+if(BAKUON_BUILD_HOST
+   AND TARGET sandbox_runtime
+   AND TARGET sandboxed_example_plugin)
     bakuon_add_test(
         NAME
         test_host_command_wiring
         SOURCES
         "host/host_command_wiring_test.cpp"
+        "${CMAKE_SOURCE_DIR}/host/MainWindow.cpp"
+        "${CMAKE_SOURCE_DIR}/host/TabContentWidget.cpp"
         DEPENDS
         bakuon::gui
         bakuon::sandbox)
-    # bakuon_add_test() 的 SOURCES 只接受单个值（cmake_parse_arguments 的
-    # one_value_keywords），host/ 下的 MainWindow.cpp/TabContentWidget.cpp 需要
-    # 额外用 target_sources() 补进来——host/ 本身是 add_executable 不是库，
-    # 没有 bakuon:: 目标可以直接链接，只能把源文件也编进测试可执行文件里。
-    target_sources(
-        test_host_command_wiring
-        PRIVATE
-            "${CMAKE_SOURCE_DIR}/host/MainWindow.cpp"
-            "${CMAKE_SOURCE_DIR}/host/TabContentWidget.cpp")
+
     target_compile_definitions(
         test_host_command_wiring
-        PRIVATE
-            BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
-            BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+        PRIVATE BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+                BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
     add_dependencies(test_host_command_wiring sandbox_runtime sandboxed_example_plugin)
 endif()

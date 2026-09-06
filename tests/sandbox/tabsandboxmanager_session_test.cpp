@@ -13,17 +13,6 @@ using namespace bakuon::sandbox;
 
 namespace {
 
-// 见 tabsandboxmanager_test.cpp / tabsandboxmanager_orphan_test.cpp 里对这两个
-// helper 的详细注释，本文件沿用同样的写法。
-QCoreApplication &app()
-{
-    static int argc     = 1;
-    static char argv0[] = "test_sandbox_tabsandboxmanager_session";
-    static char *argv[] = {argv0, nullptr};
-    static QCoreApplication instance(argc, argv);
-    return instance;
-}
-
 template<typename Predicate>
 bool waitUntil(Predicate predicate, int timeoutMs = 10000)
 {
@@ -72,8 +61,6 @@ QString orphanHelperPath()
 // 是不是真的接回了同一个 tabId、pluginFilePath 有没有一并恢复"。
 TEST(TabSandboxManagerSessionTest, RestoreSameTabIdAfterCrashUsingPersistedSession)
 {
-    Q_UNUSED(app());
-
     QTemporaryDir tempDir;
     ASSERT_TRUE(tempDir.isValid());
     const QString sessionFilePath = tempDir.filePath(QStringLiteral("tab-sessions.json"));
@@ -191,8 +178,6 @@ TEST(TabSandboxManagerSessionTest, RestoreSameTabIdAfterCrashUsingPersistedSessi
 // "对应的孤儿已经彻底死透了、不会再出现"这两种情况）。
 TEST(TabSandboxManagerSessionTest, RespawnRestoredTabWhenNoOrphanShowsUp)
 {
-    Q_UNUSED(app());
-
     QTemporaryDir tempDir;
     ASSERT_TRUE(tempDir.isValid());
     const QString sessionFilePath = tempDir.filePath(QStringLiteral("tab-sessions.json"));
@@ -222,4 +207,19 @@ TEST(TabSandboxManagerSessionTest, RespawnRestoredTabWhenNoOrphanShowsUp)
 
     manager.closeAll();
     ASSERT_TRUE(waitUntil([&] { return manager.count() == 0; })) << "等待 closeAll 收尾超时";
+}
+
+int main(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+
+    ::testing::InitGoogleTest(&argc, argv);
+
+    QTimer::singleShot(0, []() {
+        int gtest_result = RUN_ALL_TESTS();
+        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
+        QCoreApplication::exit(gtest_result);
+    });
+
+    return app.exec();
 }

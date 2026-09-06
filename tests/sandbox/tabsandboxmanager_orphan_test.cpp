@@ -11,17 +11,6 @@ using namespace bakuon::sandbox;
 
 namespace {
 
-// 见 tests/sandbox/sandbox_integration_test.cpp / tabsandboxmanager_test.cpp
-// 里对这两个 helper 的详细注释，本文件沿用同样的写法。
-QCoreApplication &app()
-{
-    static int argc     = 1;
-    static char argv0[] = "test_sandbox_tabsandboxmanager_orphan";
-    static char *argv[] = {argv0, nullptr};
-    static QCoreApplication instance(argc, argv);
-    return instance;
-}
-
 template<typename Predicate>
 bool waitUntil(Predicate predicate, int timeoutMs = 10000)
 {
@@ -80,8 +69,6 @@ QString orphanHelperPath()
 // SandboxSupervisor::attach()）的端到端确认，不是重复验证同一件事。
 TEST(TabSandboxManagerOrphanTest, RediscoverAndAdoptOrphanAfterHostCrash)
 {
-    Q_UNUSED(app())
-
     QProcess helper;
     helper.setProgram(orphanHelperPath());
     helper.setArguments({sandboxRuntimePath(), sandboxedExamplePluginPath()});
@@ -148,4 +135,19 @@ TEST(TabSandboxManagerOrphanTest, RediscoverAndAdoptOrphanAfterHostCrash)
 
     manager.closeAll();
     ASSERT_TRUE(waitUntil([&] { return manager.count() == 0; })) << "等待 closeAll 收尾超时";
+}
+
+int main(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+
+    ::testing::InitGoogleTest(&argc, argv);
+
+    QTimer::singleShot(0, []() {
+        int gtest_result = RUN_ALL_TESTS();
+        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
+        QCoreApplication::exit(gtest_result);
+    });
+
+    return app.exec();
 }

@@ -15,19 +15,6 @@ using namespace bakuon::sandbox;
 
 namespace {
 
-/// gtest 默认的 main()（bakuon_add_test 链接的 gtest_main）不会构造 QCoreApplication，
-/// 但本文件里的测试要跑真正的子进程通信（QProcess/QRemoteObjectRegistryHost/本地 socket），
-/// 都需要一个活的 Qt 事件循环——用函数局部 static 在首次用到时惰性构造一次，
-/// 进程生命周期内只构造一次，规避 QCoreApplication 不能重复构造的限制。
-QCoreApplication &app()
-{
-    static int argc     = 1;
-    static char argv0[] = "sandbox_integration_test";
-    static char *argv[] = {argv0, nullptr};
-    static QCoreApplication instance(argc, argv);
-    return instance;
-}
-
 /// 反复轮询 predicate 直到为真或超时；比裸的 QEventLoop + quit() 更方便在
 /// gtest 断言里表达"等某个信号触发的副作用发生"。
 template<typename Predicate>
@@ -66,8 +53,6 @@ bool waitUntil(Predicate predicate, int timeoutMs = 5000)
 
 TEST(SandboxSystemIntegrationTest, FullLifecycleAndSharedMemoryCommandRoundTrip)
 {
-    Q_UNUSED(app()) // 确保 QCoreApplication 存在
-
     SandboxSystem system;
     const QString id = system.spawn(QString::fromLatin1(BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH),
                                     QString::fromLatin1(BAKUON_TEST_SANDBOX_RUNTIME_PATH));
@@ -140,8 +125,6 @@ TEST(SandboxSystemIntegrationTest, FullLifecycleAndSharedMemoryCommandRoundTrip)
 
 TEST(SandboxSystemIntegrationTest, UnknownCommandIdReportsFailureNotCrash)
 {
-    Q_UNUSED(app());
-
     SandboxSystem system;
     const QString id = system.spawn(QString::fromLatin1(BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH),
                                     QString::fromLatin1(BAKUON_TEST_SANDBOX_RUNTIME_PATH));
@@ -180,4 +163,19 @@ TEST(SandboxSystemIntegrationTest, UnknownCommandIdReportsFailureNotCrash)
                      [&](int) { processExited = true; });
     ASSERT_TRUE(system.shutdown(id));
     ASSERT_TRUE(waitUntil([&] { return processExited; }, 3000)) << "等待子进程退出超时";
+}
+
+int main(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+
+    ::testing::InitGoogleTest(&argc, argv);
+
+    QTimer::singleShot(0, []() {
+        int gtest_result = RUN_ALL_TESTS();
+        // 测试完成后，带着 gtest 的返回码退出 Qt 事件循环
+        QCoreApplication::exit(gtest_result);
+    });
+
+    return app.exec();
 }
