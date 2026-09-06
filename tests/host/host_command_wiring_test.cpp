@@ -22,6 +22,11 @@ namespace {
 // 变量指定（见 CI/本地跑法），这里不写死。
 QApplication &app()
 {
+    // 在 Linux 系统下使用 QApplication 必须使用配置 QT_QPA_PLATFORM=offscreen
+#ifdef Q_OS_LINUX
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+#endif
+
     static int argc     = 1;
     static char argv0[] = "test_host_command_wiring";
     static char *argv[] = {argv0, nullptr};
@@ -97,7 +102,8 @@ TEST(HostCommandWiringTest, TriggeringNewTabOnceOpensExactlyOneTab)
     ASSERT_TRUE(pluginsDir.isValid());
     // 只放一个候选插件文件，绕开 QInputDialog::getItem()——那是个模态对话框，
     // 在无显示环境下会阻塞事件循环，测试无从继续。
-    const QString pluginCopyPath = pluginsDir.filePath(QStringLiteral("sandboxed_example_plugin.so"));
+    const QString pluginCopyPath = pluginsDir.filePath(
+        QStringLiteral("sandboxed_example_plugin.so"));
     ASSERT_TRUE(QFile::copy(sandboxedExamplePluginPath(), pluginCopyPath));
 
     MainWindow window(pluginsDir.path(), sandboxRuntimePath(), QString());
