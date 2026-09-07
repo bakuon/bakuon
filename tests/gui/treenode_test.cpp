@@ -47,7 +47,7 @@ TEST(TreeTest, subtree)
     std::cout << "subtreeSize(root) = " << root.subtreeSize() << '\n'; // 输出 9
 
     std::cout << "\n== paths / pathNode 校验 ==\n";
-    auto path = b1->paths();
+    auto path = b1->path();
     std::cout << "rowPath(B1) = [";
     for (auto p : path)
         std::cout << p << ' ';

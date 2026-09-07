@@ -92,13 +92,14 @@ public:
 
     /// 命令菜单栏和工具栏
 
+    // TODO: 使用 ICommandLayout 和 CommandItem
     static CommandLayout* menubarLayout(); // 默认菜单布局
     static CommandLayout* toolbarLayout(); // 默认工具栏布局
     static void renderMenuBar(CommandLayout* layout, QMenuBar* menubar);
-    static void renderMenuBar(CommandLayout::Item* parent, QMenuBar* menubar);
-    static void renderMenu(CommandLayout::Item* parent, QMenu* menu);
+    static void renderMenuBar(CommandLayout::Node* parent, QMenuBar* menubar);
+    static void renderMenu(CommandLayout::Node* parent, QMenu* menu);
     static void renderToolBar(CommandLayout* layout, QMainWindow* window);
-    static void renderToolBar(CommandLayout::Item* parent, QToolBar* toolbar);
+    static void renderToolBar(CommandLayout::Node* parent, QToolBar* toolbar);
     static bool saveLayout(const QString& path);
     static bool loadLayout(const QString& path);
 

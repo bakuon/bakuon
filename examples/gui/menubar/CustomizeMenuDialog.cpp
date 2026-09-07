@@ -96,7 +96,7 @@ void CustomizeMenuDialog::moveSelected(int direction)
     } else {
         return; // 已在边界，无法继续移动
     }
-    m_model->move(idx, parent, destRow);
+    m_model->moveRows(parent, row, 1, parent, destRow);
 }
 
 } // namespace bakuon::examples

@@ -223,7 +223,6 @@ public:
 
     // ---------------------------------------------------------------
     //  数据访问
-    //  TODO: 是否需要支持 setValue(T value)?
     // ---------------------------------------------------------------
     value_type& data() noexcept { return m_data; }
     const value_type& data() const noexcept { return m_data; }
@@ -255,23 +254,11 @@ public:
         return n;
     }
 
-    // 在父节点子列表中的下标；O(k)，k 为下标本身(需要沿 m_prevSibling 回溯计数)。
-    std::size_t index() const noexcept
-    {
-        std::size_t row = 0;
-        for (auto* s = m_prevSibling; s; s = s->m_prevSibling)
-            ++row;
-        return row;
-    }
+    // 在父节点子列表中的下标(0-based); O(1)。
+    std::size_t index() const noexcept { return m_index; }
 
-    // 节点深度(根为 0)；O(depth)。
-    std::size_t depth() const noexcept
-    {
-        std::size_t d = 0;
-        for (auto* p = m_parent; p; p = p->m_parent)
-            ++d;
-        return d;
-    }
+    // 节点深度(根为 0)；O(1)。
+    std::size_t depth() const noexcept { return m_depth; }
 
     // 子树节点总数(含自身)；O(n)，遍历整棵子树。
     std::size_t subtreeSize() const noexcept
@@ -294,7 +281,7 @@ public:
     // 从根到当前节点的"行路径"(row path)：每一层在其父节点中的下标。
     // 例如 [0, 2, 1] 表示 root->child(0)->child(2)->child(1) == this。
     // 这正是 Qt QModelIndex 体系中定位一个节点所需要的信息。
-    std::vector<std::size_t> paths() const
+    std::vector<std::size_t> path() const
     {
         std::vector<std::size_t> out;
         for (auto* n = this; n->m_parent; n = n->m_parent)
@@ -378,8 +365,7 @@ public:
     auto filteredDescendants(Pred pred) const
     {
         return descendants(TraversalOrder::PreOrder)
-               | std::views::filter(
-                   [pred = std::move(pred)](TreeNode* n) { return pred(n->data()); });
+               | std::views::filter([p = std::move(pred)](TreeNode* n) { return p(n->data()); });
     }
 
     // 同时满足多个谓词(逻辑与)的组合过滤 —— "多属性过滤视图"。
@@ -400,7 +386,7 @@ public:
     }
 
     // 按下标插入；O(index)(需要先定位插入点)，插入动作本身是 O(1)。
-    TreeNode* insertChildAt(std::size_t index, T value)
+    TreeNode* insertChild(std::size_t index, T value)
     {
         if (TreeNode* ref = childAt(index))
             return insertChildBefore(ref, std::move(value));
@@ -427,7 +413,7 @@ public:
     //  摘除 / 删除
     // ---------------------------------------------------------------
 
-    // 将 this(及其整棵子树)从树中摘除，所有权转移给调用者；O(1)。
+    // 将 this(及其整棵子树)从树中摘除(take)，所有权转移给调用者；O(1)。
     // 根节点不允许通过此接口摘除，请使用 Tree::releaseRoot(){ return std::move(m_root); }。
     [[nodiscard]] std::unique_ptr<TreeNode> extract()
     {
@@ -447,8 +433,20 @@ public:
             m_parent->m_lastChild = prev;
 
         --m_parent->m_childCount;
+        // 维护后续兄弟的 index 缓存（从 next 开始全部 -1）
+        for (TreeNode* s = next; s; s = s->m_nextSibling.get())
+            --s->m_index;
+
+        // 摘除后重置自身缓存（成为独立根）
         self->m_parent      = nullptr;
         self->m_prevSibling = nullptr;
+        self->m_index       = 0;
+        self->m_depth       = 0;
+        // 子树内部相对深度保持不变，只需把整棵子树的 depth 统一减掉原来的 depth
+        // （因为现在 depth=0，相当于整棵子树 depth 都减去了旧值）
+        // 这里用递归方式把绝对 depth 重置为相对 depth（以自身为 0）
+        self->updateSubtreeDepth(0);
+
         return self; // self->m_nextSibling 已在上面被移空
     }
 
@@ -507,6 +505,29 @@ public:
             newParent->appendOwnedChild(std::move(self));
     }
 
+    // ---------------------------------------------------------------
+    //  挂接已摘除（或新构造）的子树
+    // ---------------------------------------------------------------
+
+    // 将 child 挂接为 this 的子节点。
+    // - beforeChild == nullptr 时追加到末尾
+    // - beforeChild 必须是 this 的直接子节点（或为 nullptr）
+    // - child 必须当前没有 parent（即已经 extract 或新建）
+    // 返回挂接后的裸指针；失败抛异常。
+    TreeNode* attachChild(std::unique_ptr<TreeNode> child, TreeNode* beforeChild = nullptr)
+    {
+        if (!child)
+            throw std::invalid_argument("attachChild: child 不能为空");
+        if (child->m_parent)
+            throw std::logic_error("attachChild: child 仍挂在其它节点下，请先 extract");
+        if (beforeChild && beforeChild->m_parent != this)
+            throw std::invalid_argument("attachChild: beforeChild 必须是 this 的直接子节点");
+
+        if (beforeChild)
+            return attachBefore(beforeChild, std::move(child));
+        return appendOwnedChild(std::move(child));
+    }
+
 private:
     // 在 refChild 之前插入一个已构造(或已摘除)的子树；O(1)。
     TreeNode* attachBefore(TreeNode* refChild, std::unique_ptr<TreeNode> child)
@@ -522,6 +543,15 @@ private:
         refChild->m_prevSibling = raw;
 
         ++m_childCount;
+
+        // 设置新节点的 index，并维护后续兄弟的 index
+        raw->m_index = prev ? prev->m_index + 1 : 0;
+        for (TreeNode* s = refChild; s; s = s->m_nextSibling.get())
+            ++s->m_index;
+
+        // 更新子树深度：父 depth + 1
+        raw->updateSubtreeDepth(m_depth + 1);
+
         return raw;
     }
 
@@ -537,7 +567,30 @@ private:
             m_firstChild = std::move(child);
         m_lastChild = raw;
         ++m_childCount;
+
+        // 设置 index / depth
+        raw->m_index = m_lastChild == raw && raw->m_prevSibling ? raw->m_prevSibling->m_index + 1
+                                                                : 0;
+        // 上面写法在只有一个孩子时也正确（prev 为 null → index=0）
+        raw->updateSubtreeDepth(m_depth + 1);
+
         return raw;
+    }
+
+    void updateSubtreeDepth(std::size_t baseDepth)
+    {
+        // 迭代式 BFS 更新子树所有节点的绝对深度（避免递归）
+        // 使用队列保存 (节点, 对应深度)
+        std::vector<std::pair<TreeNode*, std::size_t>> queue;
+        queue.emplace_back(this, baseDepth);
+
+        for (std::size_t i = 0; i < queue.size(); ++i) {
+            auto [node, d] = queue[i];
+            node->m_depth  = d;
+
+            for (TreeNode* c = node->m_firstChild.get(); c; c = c->m_nextSibling.get())
+                queue.emplace_back(c, d + 1);
+        }
     }
 
 private:
@@ -548,7 +601,9 @@ private:
     TreeNode* m_lastChild   = nullptr;       // 非拥有，O(1) 尾部追加缓存
     std::unique_ptr<TreeNode> m_firstChild;  // 拥有
     std::unique_ptr<TreeNode> m_nextSibling; // 拥有
-    std::size_t m_childCount = 0;
+    std::size_t m_childCount = 0;            // 子节点数目
+    std::size_t m_index      = 0;            // 在父节点中的 0-based 下标
+    std::size_t m_depth      = 0;            // 从根开始的 0-based 深度
 };
 
 // =============================================================================

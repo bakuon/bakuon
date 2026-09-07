@@ -163,15 +163,12 @@ void MainWindow::registerCommands()
 
 void MainWindow::buildMenuAndToolBar()
 {
-    using Item             = gui::CommandLayout::Item;
-    constexpr auto kAppend = static_cast<std::size_t>(-1);
-
-    Item *fileMenu = m_menuLayout.addMenu(nullptr, kAppend, QStringLiteral("文件(&F)"));
-    m_menuLayout.addCommand(fileMenu, kAppend, kCmdNewTab);
-    m_menuLayout.addCommand(fileMenu, kAppend, kCmdCloseTab);
-    m_menuLayout.addCommand(fileMenu, kAppend, kCmdRestartTab);
-    m_menuLayout.addSeparator(fileMenu, kAppend);
-    m_menuLayout.addCommand(fileMenu, kAppend, kCmdQuit);
+    auto fileMenu = m_menuLayout.addContainer(QStringLiteral("文件(&F)"));
+    m_menuLayout.addCommand(kCmdNewTab.toString(), fileMenu);
+    m_menuLayout.addCommand(kCmdCloseTab.toString(), fileMenu);
+    m_menuLayout.addCommand(kCmdRestartTab.toString(), fileMenu);
+    m_menuLayout.addSeparator(fileMenu);
+    m_menuLayout.addCommand(kCmdQuit.toString(), fileMenu);
 
     gui::CommandSystem::renderMenuBar(&m_menuLayout, menuBar());
 

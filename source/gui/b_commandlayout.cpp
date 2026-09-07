@@ -7,289 +7,385 @@
 
 namespace bakuon::gui {
 
-namespace {
-constexpr auto kKeyType     = "type";
-constexpr auto kKeyTitle    = "title";
-constexpr auto kKeyCommand  = "command";
-constexpr auto kKeyChildren = "children";
-constexpr auto kKeyVersion  = "version";
-constexpr auto kKeyLayout   = "layout";
-
-bool isContainer(const CommandLayout::Item* item)
-{
-    return item->data().type != CommandLayoutData::Type::Command
-           && item->data().type != CommandLayoutData::Type::Separator;
-}
-} // namespace
-
 CommandLayout::CommandLayout()
+    : m_root(std::make_unique<Node>())
 {
-    // TreeNode() 默认构造得到一个 T{} 数据的哨兵节点；CommandLayoutNode::type
-    // 的默认值就是 Type::Root，因此这里不需要再手动赋值。
-    m_root = std::make_unique<CommandLayout::Item>();
+    // 根节点标记为 Container，并作为 invisibleRoot
+    m_root->data()[CommandItem::TypeRole] = QVariant::fromValue<CommandItem::Type>(
+        CommandItem::Type::Container);
+}
+CommandLayout::Node *CommandLayout::node(const CommandItem &item) const
+{
+    return item.isValid() ? static_cast<Node *>(item.pointer()) : m_root.get();
 }
 
-CommandLayout::Item* CommandLayout::addContainer(Item* parent, std::size_t index,
-                                                 const QString& title)
+CommandItem CommandLayout::invisibleItem() const
 {
-    if (!parent) {
-        parent = m_root.get();
-    }
-    if (!isContainer(parent)) {
-        qWarning() << "CommandLayout: Sub-nodes cannot be added to leaf nodes (commands/separator)";
-        return nullptr;
-    }
-    CommandLayoutData data;
-    data.type  = CommandLayoutData::Type::Container;
-    data.title = title;
-    return parent->insertChildAt(index, std::move(data));
+    return createItem(m_root.get());
 }
 
-CommandLayout::Item* CommandLayout::addMenu(Item* parent, std::size_t index, const QString& title)
+CommandItem CommandLayout::parentItem(const CommandItem &child) const
 {
-    return addContainer(parent, index, title);
+    Node *n = node(child);
+    if (!n || n == m_root.get()) {
+        return {};
+    }
+    return createItem(n->parent());
 }
 
-CommandLayout::Item* CommandLayout::addCommand(Item* parent, std::size_t index, const CommandId& id)
+CommandItem CommandLayout::itemAt(std::size_t index, const CommandItem &parent) const
 {
-    if (!parent) {
-        parent = m_root.get();
-    }
-    if (!isContainer(parent)) {
-        qWarning() << "CommandLayout: Sub-nodes cannot be added to leaf nodes (commands/separator)";
-        return nullptr;
-    }
-    CommandLayoutData data;
-    data.type      = CommandLayoutData::Type::Command;
-    data.commandId = id;
-    return parent->insertChildAt(index, std::move(data));
+    Node *p = node(parent);
+    if (!p || index >= p->childCount())
+        return {};
+    if (Node *child = p->childAt(index))
+        return createItem(child);
+    return {};
 }
 
-CommandLayout::Item* CommandLayout::addSeparator(Item* parent, std::size_t index)
+std::size_t CommandLayout::count(const CommandItem &parent) const noexcept
 {
-    if (!parent) {
-        parent = m_root.get();
-    }
-    if (parent->isRoot()) {
-        // QMenuBar 没有 addSeparator()（顶层菜单之间没有"分隔线"这个概念），
-        // 在数据层就拒绝这种无法渲染的结构，比等到 MenuBarBuilder 渲染时才发现更早暴露问题。
-        qWarning()
-            << "CommandLayout::addSeparator:The top-level menu bar does not support a separator.";
-        return nullptr;
-    }
-    if (!isContainer(parent)) {
-        qWarning() << "CommandLayout: Sub-nodes cannot be added to leaf nodes (commands/separator)";
-        return nullptr;
-    }
-    CommandLayoutData data;
-    data.type  = CommandLayoutData::Type::Separator;
-    data.title = QStringLiteral("──────────");
-    return parent->insertChildAt(index, std::move(data));
+    Node *p = node(parent);
+    return p ? p->childCount() : 0;
 }
 
-bool CommandLayout::removeItem(Item* item)
+std::size_t CommandLayout::size() const noexcept
 {
-    if (!item || item->isRoot()) {
+    // 含 invisible root
+    return m_root ? m_root->subtreeSize() : 0;
+}
+
+bool CommandLayout::isEmpty() const noexcept
+{
+    return !m_root || m_root->childCount() == 0;
+}
+
+int CommandLayout::itemIndex(const CommandItem &item) const
+{
+    Node *n = node(item);
+    if (!n || n == m_root.get())
+        return -1;
+    return static_cast<int>(n->index()); // O(1) 缓存
+}
+
+std::size_t CommandLayout::itemDepth(const CommandItem &item) const
+{
+    Node *n = node(item);
+    if (!n)
+        return 0;
+    // invisible root 深度视为 0，其子节点从 1 开始也可，这里直接返回缓存值
+    return n->depth();
+}
+
+std::vector<std::size_t> CommandLayout::itemPath(const CommandItem &item) const
+{
+    Node *n = node(item);
+    if (!n || n == m_root.get())
+        return {};
+    return n->path();
+}
+
+CommandItem CommandLayout::itemFromPath(std::span<const std::size_t> path) const noexcept
+{
+    if (!m_root)
+        return {};
+    Node *n = m_root->pathNode(path);
+    return n ? createItem(n) : CommandItem{};
+}
+
+bool CommandLayout::isValidPath(std::span<const std::size_t> path) const noexcept
+{
+    return itemFromPath(path).isValid();
+}
+
+bool CommandLayout::add(CommandItem item, CommandItem parent, int index)
+{
+    Node *src = node(item);
+    Node *dst = node(parent);
+    if (!src || !dst || src->parent() != nullptr) // 必须是已摘除的
+        return false;
+    if (dst == src || dst->isDescendantOf(src))
+        return false;
+
+    Node *before = nullptr;
+    if (index >= 0 && static_cast<std::size_t>(index) < dst->childCount())
+        before = dst->childAt(static_cast<std::size_t>(index));
+
+    // 重新获得所有权并挂接
+    std::unique_ptr<Node> owned(src);
+    try {
+        dst->attachChild(std::move(owned), before);
+    } catch (const std::exception &e) {
+        qWarning() << "CommandLayout::add:" << e.what();
         return false;
     }
-    item->remove(); // TreeNode 自带：extract() + 递归析构整棵子树
     return true;
 }
 
-bool CommandLayout::moveItem(Item* srcParent, int srcIndex, Item* destParent, int destIndex)
+bool CommandLayout::remove(CommandItem item)
 {
-    // BUGFIX: 原先错误地拒绝了 srcParent 为根的情况，导致无法移动顶层菜单/工具栏节点。
-    // 真正禁止移动的是根节点自身，而不是“父节点是根”的子节点。
-    if (!srcParent) {
+    Node *n = node(item);
+    if (!n || n == m_root.get())
         return false;
-    }
+    n->remove();
+    return true;
+}
 
-    if (!destParent) {
-        destParent = m_root.get();
-    }
+CommandItem CommandLayout::take(CommandItem parent, int index)
+{
+    Node *p = node(parent);
+    if (!p || index < 0 || static_cast<std::size_t>(index) >= p->childCount())
+        return {};
 
-    auto* srcNode = srcParent->childAt(static_cast<std::size_t>(srcIndex));
-    if (!srcNode || srcNode->isRoot()) {
-        return false; // 禁止移动根节点，或源下标越界
-    }
-    if (destParent == srcNode || destParent->isDescendantOf(srcNode)) {
-        return false; // 环路保护：不能把节点拖进它自己的子孙里
-    }
+    Node *child = p->childAt(static_cast<std::size_t>(index));
+    if (!child)
+        return {};
 
-    if (!isContainer(destParent)) {
-        return false; // 叶子节点不能作为容器
-    }
+    // 摘除，所有权暂时由局部 unique_ptr 持有
+    std::unique_ptr<Node> owned = child->extract();
+    // 这里可以把 owned 存进一个“游离节点表”，或直接返回句柄
+    // 最简单的做法：释放到裸指针，由调用方保证后续会 re-attach 或手动管理
+    Node *raw                   = owned.release();
+    return createItem(raw);
+}
 
-    // beforeChild 在"移动前"的子节点列表里查找——这是 TreeNode 句柄式 API 的核心价值：
-    // 摘除 node 不会改变 beforeChild 自身的身份，因此这里完全不需要像基于整数下标的
-    // 实现那样手动处理"先移除导致后续下标整体前移一位"的修正。
-    auto* destNode    = destParent->childAt(static_cast<std::size_t>(destIndex));
-    auto* beforeChild = (destIndex < static_cast<int>(destParent->childCount())) ? destNode
-                                                                                 : nullptr;
-    if (beforeChild == srcNode) {
-        return true; // 目标位置就是自己当前所在的位置，视为无操作成功
-    }
-    if (beforeChild && srcNode->parent() == destParent && srcNode->nextSibling() == beforeChild) {
-        return true; // "移动到当前下一个兄弟之前"等价于原地不动
-    }
+bool CommandLayout::move(CommandItem sourceItem, CommandItem targetParent, int targetIndex)
+{
+    Node *src  = node(sourceItem);
+    Node *dest = node(targetParent);
+    if (!src || !dest || src == m_root.get())
+        return false;
+    if (dest == src || dest->isDescendantOf(src))
+        return false;
+
+    Node *before = nullptr;
+    if (targetIndex >= 0 && static_cast<std::size_t>(targetIndex) < dest->childCount())
+        before = dest->childAt(static_cast<std::size_t>(targetIndex));
+
+    if (before == src)
+        return true;
+    if (before && src->parent() == dest && src->nextSibling() == before)
+        return true;
 
     try {
-        srcNode->moveAsChild(destParent, beforeChild);
-    } catch (const std::exception& e) {
-        qWarning() << "CommandLayout::moveItem:" << e.what();
+        src->moveAsChild(dest, before);
+    } catch (const std::exception &e) {
+        qWarning() << "CommandLayout::move:" << e.what();
         return false;
     }
     return true;
 }
 
-bool CommandLayout::moveItem(Item* item, Item* destParent, std::size_t destIndex)
+bool CommandLayout::move(CommandItem sourceParent, int sourceIndex, CommandItem targetParent,
+                         int targetIndex)
 {
-    if (!item || item->isRoot()) {
-        return false; // 禁止移动根节点
-    }
-
-    if (!destParent) {
-        destParent = m_root.get();
-    }
-
-    if (destParent == item || destParent->isDescendantOf(item)) {
-        return false; // 环路保护：不能把节点拖进它自己的子孙里
-    }
-
-    if (!isContainer(destParent)) {
-        return false; // 叶子节点不能作为容器
-    }
-
-    Item* beforeChild = (destIndex < destParent->childCount()) ? destParent->childAt(destIndex)
-                                                               : nullptr;
-
-    if (beforeChild == item) {
-        return true; // 目标位置就是自己当前所在的位置，视为无操作成功
-    }
-    if (beforeChild && item->parent() == destParent && item->nextSibling() == beforeChild) {
-        return true; // "移动到当前下一个兄弟之前"等价于原地不动
-    }
-
-    try {
-        item->moveAsChild(destParent, beforeChild);
-    } catch (const std::exception& e) {
-        qWarning() << "CommandLayout::moveNode:" << e.what();
+    CommandItem srcItem = itemAt(static_cast<std::size_t>(sourceIndex), sourceParent);
+    if (!srcItem.isValid())
         return false;
-    }
-    return true;
+    return move(srcItem, targetParent, targetIndex);
 }
 
-static QJsonObject nodeToJson(const CommandLayout::Item* item)
+CommandItem CommandLayout::addContainer(const QString &title, CommandItem parent, int index)
 {
-    QJsonObject obj;
-    const CommandLayoutData& v = item->data();
-    switch (v.type) {
-    case CommandLayoutData::Type::Root: break; // 不会被调用到：nodeToJson 只对非根节点递归调用
-    case CommandLayoutData::Type::Container:
-        obj[QLatin1String(kKeyType)]  = QStringLiteral("container");
-        obj[QLatin1String(kKeyTitle)] = v.title;
-        break;
-    case CommandLayoutData::Type::Command:
-        obj[QLatin1String(kKeyType)]    = QStringLiteral("command");
-        obj[QLatin1String(kKeyCommand)] = v.commandId.toString();
-        break;
-    case CommandLayoutData::Type::Separator:
-        obj[QLatin1String(kKeyType)] = QStringLiteral("separator");
-        break;
-    default: break;
-    }
+    Node *p = node(parent);
+    if (!p)
+        return {};
 
-    if (v.type == CommandLayoutData::Type::Container) {
-        QJsonArray children;
-        for (auto* child : item->children()) { // TreeNode 自带的 O(1) 双向子节点视图
-            children.append(nodeToJson(child));
-        }
-        obj[QLatin1String(kKeyChildren)] = children;
-    }
-    return obj;
+    ItemDataList data;
+    data[CommandItem::DisplayRole] = title;
+    data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Container);
+
+    Node *child = insertChild(p, std::move(data), index);
+    return child ? createItem(child) : CommandItem{};
 }
 
-static void populateFromJson(CommandLayout::Item* parent, const QJsonArray& childrenJson)
+CommandItem CommandLayout::addCommand(const QString &id, CommandItem parent, int index)
 {
-    // 必须自顶向下、边解析边挂接（parent->insertChildAt/appendChild 之后立刻拿到已挂接的
-    // 节点指针再递归处理其子节点），因为 TreeNode 只提供"用一个值在某个已存在节点下
-    // 构造新子节点"的公开接口，没有"把一整棵已经在内存里搭好的游离子树整体挂上去"的接口——
-    // 这与自底向上先构建完整子树、最后再整体挂接的写法（很多树的常见写法）不同，
-    // 是使用这个特定 TreeNode API 时需要注意的一点。
-    for (const auto v : childrenJson) {
-        const QJsonObject obj = v.toObject();
-        const QString type    = obj.value(QLatin1String(kKeyType)).toString();
+    Node *p = node(parent);
+    if (!p)
+        return {};
 
-        CommandLayoutData data;
-        if (type == QStringLiteral("container")) {
-            data.type  = CommandLayoutData::Type::Container;
-            data.title = obj.value(QLatin1String(kKeyTitle)).toString();
-        } else if (type == QStringLiteral("command")) {
-            data.type      = CommandLayoutData::Type::Command;
-            data.commandId = CommandId{obj.value(QLatin1String(kKeyCommand)).toString()};
-        } else if (type == QStringLiteral("separator")) {
-            data.type = CommandLayoutData::Type::Separator;
-        } else {
-            qWarning() << "CommandLayout: An unknown node type was encountered in JSON and has "
-                          "been skipped:"
-                       << type;
-            continue;
-        }
+    ItemDataList data;
+    data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Command);
+    data[CommandItem::CommandRole] = id;
 
-        auto node = parent->appendChild(std::move(data));
-        if (node->data().type == CommandLayoutData::Type::Container) {
-            populateFromJson(node, obj.value(QLatin1String(kKeyChildren)).toArray());
-        }
+    Node *child = insertChild(p, std::move(data), index);
+    return child ? createItem(child) : CommandItem{};
+}
+
+CommandItem CommandLayout::addSeparator(CommandItem parent, int index)
+{
+    Node *p = node(parent);
+    if (!p || p == m_root.get()) {
+        // 与历史行为一致：顶层（invisible root）不允许 separator
+        qWarning() << "CommandLayout: root does not support separator";
+        return {};
     }
+
+    ItemDataList data;
+    data[CommandItem::DisplayRole] = QStringLiteral("──────────");
+    data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Separator);
+
+    Node *child = insertChild(p, std::move(data), index);
+    return child ? createItem(child) : CommandItem{};
+}
+
+CommandItem CommandLayout::addSection(const QString &title, CommandItem parent, int index)
+{
+    Node *p = node(parent);
+    if (!p || p == m_root.get()) {
+        // 与历史行为一致：顶层（invisible root）不允许 section
+        qWarning() << "CommandLayout: root does not support section header";
+        return {};
+    }
+
+    ItemDataList data;
+    data[CommandItem::DisplayRole] = title;
+    data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Section);
+
+    Node *child = insertChild(p, std::move(data), index);
+    return child ? createItem(child) : CommandItem{};
+}
+
+QVariant CommandLayout::itemData(CommandItem item, int role) const
+{
+    Node *n = node(item);
+    if (!n)
+        return {};
+    auto it = n->data().find(role);
+    return it != n->data().end() ? it->second : QVariant{};
+}
+
+void CommandLayout::setItemData(CommandItem item, int role, const QVariant &value)
+{
+    Node *n = node(item);
+    if (!n || n == m_root.get())
+        return;
+    n->data()[role] = value;
 }
 
 QJsonObject CommandLayout::serialize() const
 {
     QJsonObject root;
-    root[QLatin1String(kKeyVersion)] = 1; // 预留格式版本号，便于未来结构升级时做兼容处理
+    root[QStringLiteral("version")] = 1;
     QJsonArray children;
-    for (Item* child : m_root->children()) {
-        children.append(nodeToJson(child));
+    if (m_root) {
+        for (Node *c : m_root->children())
+            children.append(nodeToJson(c));
     }
-    root[QLatin1String(kKeyLayout)] = children;
+    root[QStringLiteral("layout")] = children;
     return root;
 }
 
-void CommandLayout::deserialize(const QJsonObject& root)
+void CommandLayout::deserialize(const QJsonObject &obj)
 {
-    m_root = std::make_unique<Item>(); // 整体替换：先重置为一棵只有哨兵根节点的空树
-    const QJsonArray children = root.value(QLatin1String(kKeyLayout)).toArray();
-    populateFromJson(m_root.get(), children);
+    m_root                                = std::make_unique<Node>();
+    m_root->data()[CommandItem::TypeRole] = QVariant::fromValue(CommandItem::Type::Container);
+
+    const QJsonArray arr = obj.value(QStringLiteral("layout")).toArray();
+    populateFromJson(m_root.get(), arr);
 }
 
-bool CommandLayout::save(const QString& path) const
+bool CommandLayout::save(const QString &filePath) const
 {
-    QFile file(path);
+    QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        qWarning() << "CommandLayout::saveToFile: Unable to open file for writing" << path
-                   << file.errorString();
+        qWarning() << "CommandLayout::save: cannot open" << filePath << file.errorString();
         return false;
     }
     file.write(QJsonDocument(serialize()).toJson(QJsonDocument::Indented));
     return true;
 }
 
-bool CommandLayout::load(const QString& path)
+bool CommandLayout::load(const QString &filePath)
 {
-    QFile file(path);
+    QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        qWarning() << "CommandLayout::loadFromFile: Unable to open file for reading" << path
-                   << file.errorString();
+        qWarning() << "CommandLayout::load: cannot open" << filePath << file.errorString();
         return false;
     }
     QJsonParseError err{};
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        qWarning() << "CommandLayout::loadFromFile: JSON parsing failed" << err.errorString();
+        qWarning() << "CommandLayout::load: JSON error" << err.errorString();
         return false;
     }
     deserialize(doc.object());
     return true;
+}
+
+CommandLayout::Node *CommandLayout::insertChild(Node *parent, ItemDataList data, int index)
+{
+    if (index < 0 || static_cast<std::size_t>(index) >= parent->childCount())
+        return parent->appendChild(std::move(data));
+    return parent->insertChild(static_cast<std::size_t>(index), std::move(data));
+}
+
+QJsonObject CommandLayout::nodeToJson(const Node *n)
+{
+    QJsonObject obj;
+    const auto &data = n->data();
+
+    const auto type = CommandItem::Type(data.at(CommandItem::TypeRole).toInt());
+    switch (type) {
+    case CommandItem::Type::Container: // Container
+        obj[QStringLiteral("type")]  = QStringLiteral("container");
+        obj[QStringLiteral("title")] = data.at(CommandItem::DisplayRole).toString();
+        break;
+    case CommandItem::Type::Command: // Command
+        obj[QStringLiteral("type")]    = QStringLiteral("command");
+        obj[QStringLiteral("command")] = data.at(CommandItem::CommandRole).toString();
+        break;
+    case CommandItem::Type::Separator: // Separator
+        obj[QStringLiteral("type")] = QStringLiteral("separator");
+        break;
+    case CommandItem::Type::Section: // Section
+        obj[QStringLiteral("title")] = data.at(CommandItem::DisplayRole).toString();
+        obj[QStringLiteral("type")]  = QStringLiteral("section");
+        break;
+    case CommandItem::Type::Root:
+    case CommandItem::Type::Custom:
+    default                       : break;
+    }
+
+    if (type == CommandItem::Type::Container) {
+        QJsonArray children;
+        for (Node *c : n->children())
+            children.append(nodeToJson(c));
+        obj[QStringLiteral("children")] = children;
+    }
+    return obj;
+}
+
+void CommandLayout::populateFromJson(Node *parent, const QJsonArray &arr)
+{
+    for (const auto v : arr) {
+        const QJsonObject obj = v.toObject();
+        const QString type    = obj.value(QStringLiteral("type")).toString();
+
+        ItemDataList data;
+        if (type == QStringLiteral("container")) {
+            data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Container);
+            data[CommandItem::DisplayRole] = obj.value(QStringLiteral("title")).toString();
+        } else if (type == QStringLiteral("command")) {
+            data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Command);
+            data[CommandItem::CommandRole] = obj.value(QStringLiteral("command")).toString();
+        } else if (type == QStringLiteral("separator")) {
+            data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Separator);
+            data[CommandItem::DisplayRole] = QStringLiteral("──────────");
+        } else if (type == QStringLiteral("section")) {
+            data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Section);
+            data[CommandItem::DisplayRole] = obj.value(QStringLiteral("section")).toString();
+        } else {
+            qWarning() << "CommandLayout: unknown type skipped:" << type;
+            continue;
+        }
+
+        Node *child = parent->appendChild(std::move(data));
+        if (type == QStringLiteral("container")) {
+            populateFromJson(child, obj.value(QStringLiteral("children")).toArray());
+        }
+    }
 }
 
 } // namespace bakuon::gui

@@ -83,32 +83,35 @@ void CommandManager::renderMenuBar(CommandLayout* layout, QMenuBar* menubar) con
     qDeleteAll(menubar->findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly));
     menubar->clear();
 
-    renderMenuBar(layout->root(), menubar);
+    renderMenuBar(layout->node(CommandItem{}), menubar);
 }
 
-void CommandManager::renderMenuBar(CommandLayout::Item* parent, QMenuBar* menubar) const
+void CommandManager::renderMenuBar(CommandLayout::Node* parent, QMenuBar* menubar) const
 {
-    for (CommandLayout::Item* child : parent->children()) {
-        const CommandLayoutData& v = child->data();
-        switch (v.type) {
-        case CommandLayoutData::Type::Container: {
-            QMenu* sub = menubar->addMenu(v.title);
+    for (CommandLayout::Node* child : parent->children()) {
+        const auto& value = child->data();
+        const auto type   = value.at(CommandItem::TypeRole).value<CommandItem::Type>();
+
+        switch (type) {
+        case CommandItem::Type::Container: {
+            const auto title = value.at(CommandItem::DisplayRole).toString();
+            QMenu* sub       = menubar->addMenu(title);
             renderMenu(child, sub);
-            break;
-        }
-        case CommandLayoutData::Type::Command: {
-            if (Command* cmd = this->command(CommandId(v.commandId))) {
+        } break;
+
+        case CommandItem::Type::Command: {
+            const auto id = value.at(CommandItem::CommandRole).toString();
+            if (Command* cmd = this->command(CommandId(id))) {
                 menubar->addAction(cmd->action());
             } else {
                 // 布局引用了一个当前未注册的命令：只跳过显示，不修改数据本身，
                 // 保留这条引用——命令后续被注册回来后，下一次 build() 会自动补上。
                 qWarning()
                     << "CommandManager::renderMenuBar: No registered command was found, skipped:"
-                    << v.commandId;
+                    << id;
             }
-            break;
-        }
-        case CommandLayoutData::Type::Separator:
+        } break;
+        case CommandItem::Type::Separator:
             // QMenuBar 没有 addSeparator()（顶层菜单之间没有"分隔线"这个概念），
             // CommandLayout::addSeparator() 已经在数据层拒绝了这种结构。
             qWarning() << "CommandManager::renderMenuBar: "
@@ -116,40 +119,48 @@ void CommandManager::renderMenuBar(CommandLayout::Item* parent, QMenuBar* menuba
                           "has been ignored.";
             break;
 
-        case CommandLayoutData::Type::Root: // 不会出现：Root 只应该是最外层，不会作为某个节点的子节点
-        default                           : break;
+        case CommandItem::Type::Section:
+        case CommandItem::Type::Root: // 不会出现：Root 只应该是最外层，不会作为某个节点的子节点
+        default                        : break;
         }
     }
 }
 
-void CommandManager::renderMenu(CommandLayout::Item* parent, QMenu* menu) const
+void CommandManager::renderMenu(CommandLayout::Node* parent, QMenu* menu) const
 {
-    for (CommandLayout::Item* child : parent->children()) {
-        const CommandLayoutData& v = child->data();
-        switch (v.type) {
-        case CommandLayoutData::Type::Container: {
-            QMenu* sub = menu->addMenu(v.title);
+    for (CommandLayout::Node* child : parent->children()) {
+        const auto& value = child->data();
+        const auto type   = value.at(CommandItem::TypeRole).value<CommandItem::Type>();
+        switch (type) {
+        case CommandItem::Type::Container: {
+            const auto title = value.at(CommandItem::DisplayRole).toString();
+            QMenu* sub       = menu->addMenu(title);
             renderMenu(child, sub);
             break;
         }
-        case CommandLayoutData::Type::Command: {
-            if (Command* cmd = this->command(CommandId(v.commandId))) {
+        case CommandItem::Type::Command: {
+            const auto id = value.at(CommandItem::CommandRole).toString();
+            if (Command* cmd = this->command(CommandId(id))) {
                 menu->addAction(cmd->action());
             } else {
                 // 布局引用了一个当前未注册的命令：只跳过显示，不修改数据本身，
                 // 保留这条引用——命令后续被注册回来后，下一次 build() 会自动补上。
                 qWarning()
                     << "CommandManager::renderMenu: No registered command was found, skipped:"
-                    << v.commandId;
+                    << id;
             }
             break;
         }
-        case CommandLayoutData::Type::Separator: {
+        case CommandItem::Type::Separator: {
             menu->addSeparator();
             break;
         }
-        case CommandLayoutData::Type::Root: // 不会出现：Root 只应该是最外层，不会作为某个节点的子节点
-        default                           : break;
+        case CommandItem::Type::Section: {
+            const auto title = value.at(CommandItem::DisplayRole).toString();
+            menu->addSection(title);
+        } break;
+        case CommandItem::Type::Root: // 不会出现：Root 只应该是最外层，不会作为某个节点的子节点
+        default                     : break;
         }
     }
 }
@@ -166,9 +177,9 @@ void CommandManager::renderToolBar(CommandLayout* layout, QMainWindow* window) c
     }
 
     // 顶层每个 parent 是一个工具栏
-    auto* root = layout->root();
-    for (CommandLayout::Item* child : root->children()) {
-        const QString title = child->data().title;
+    auto* root = layout->node({});
+    for (CommandLayout::Node* child : root->children()) {
+        const QString title = child->data().at(CommandItem::DisplayRole).toString();
         auto* toolbar       = new QToolBar(title, window);
         toolbar->setObjectName(QString("Dynamic_%1").arg(title));
         renderToolBar(child, toolbar);
@@ -176,33 +187,36 @@ void CommandManager::renderToolBar(CommandLayout* layout, QMainWindow* window) c
     }
 }
 
-void CommandManager::renderToolBar(CommandLayout::Item* parent, QToolBar* toolbar) const
+void CommandManager::renderToolBar(CommandLayout::Node* parent, QToolBar* toolbar) const
 {
     if (!parent)
         return;
-    for (CommandLayout::Item* child : parent->children()) {
-        const CommandLayoutData& v = child->data();
-        switch (v.type) {
-        case CommandLayoutData::Type::Container: {
+    for (CommandLayout::Node* child : parent->children()) {
+        const auto& value = child->data();
+        const auto type   = value.at(CommandItem::TypeRole).value<CommandItem::Type>();
+        switch (type) {
+        case CommandItem::Type::Container: {
             // 不支持第二层嵌套
             break;
         }
-        case CommandLayoutData::Type::Command: {
-            if (Command* cmd = this->command(CommandId(v.commandId))) {
+        case CommandItem::Type::Command: {
+            const auto id = value.at(CommandItem::CommandRole).toString();
+            if (Command* cmd = this->command(CommandId(id))) {
                 toolbar->addAction(cmd->action());
             } else {
                 qWarning()
                     << "CommandManager::renderToolBar: No registered command was found, skipped:"
-                    << v.commandId;
+                    << id;
             }
             break;
         }
-        case CommandLayoutData::Type::Separator: {
+        case CommandItem::Type::Separator: {
             toolbar->addSeparator();
             break;
         }
-        case CommandLayoutData::Type::Root: // 不会出现：Root 只应该是最外层，不会作为某个节点的子节点
-        default                           : break;
+        case CommandItem::Type::Section:
+        case CommandItem::Type::Root: // 不会出现：Root 只应该是最外层，不会作为某个节点的子节点
+        default                        : break;
         }
     }
 }

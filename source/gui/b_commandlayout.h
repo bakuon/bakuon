@@ -1,32 +1,14 @@
 #pragma once
 
-#include <QtCore/QDebug>
-#include <QtCore/QJsonObject>
+#include <cstddef>
+#include <memory>
 
 #include "gui/b_gui_export.h"
-#include "gui/b_types.h"
 #include "gui/detail/b_treenode.h"
 
+#include <bakuon/gui/ICommandLayout.h>
+
 namespace bakuon::gui {
-
-class CommandLayout;
-
-// CommandLayoutData：CommandLayout 树中每个节点携带的数据（TreeNode<T> 的 T）。
-// 纯数据结构，不含任何 Qt Model/View 相关内容。
-struct CommandLayoutData
-{
-    enum class Type : quint8 {
-        Root,      // 仅根节点使用，从不出现在序列化结果里（根是隐式的容器，不作为一个"节点"落盘）
-        Container, // 一级/多级子菜单或工具栏容器
-        Command,   // 引用一个 CommandId
-        Separator, // 分隔线
-        // Section, // Section Header: a non-clickable text item to the menu
-    };
-
-    Type type = Type::Root;
-    QString title;       // 仅 Menu 节点使用（支持 & 助记符）
-    CommandId commandId; // 仅 Command 节点使用
-};
 
 /** CommandLayout
  * CommandLayout：菜单/工具栏"分组布局"的纯数据层——树形结构 + 序列化，
@@ -51,37 +33,24 @@ struct CommandLayoutData
  *   CommandModel 的接口去改（CommandModel 内部会转调 CommandLayout 并补上信号）。
  *   只读操作（exportToJson/saveToFile）任何时候直接调用都是安全的。
  */
-class BAKUON_GUI_EXPORT CommandLayout
+class BAKUON_GUI_EXPORT CommandLayout : public ICommandLayout
 {
 public:
-    using Item = TreeNode<CommandLayoutData>;
+    using ItemDataList = std::unordered_map<int, QVariant>;
+    using Node         = TreeNode<ItemDataList>;
 
     CommandLayout();
-    CommandLayout(const CommandLayout&)                = delete;
-    CommandLayout& operator=(const CommandLayout&)     = delete;
-    CommandLayout(CommandLayout&&) noexcept            = default;
-    CommandLayout& operator=(CommandLayout&&) noexcept = default;
-    ~CommandLayout() = default; // 根节点的 unique_ptr 递归释放整棵树
+    ~CommandLayout() override = default;
 
-    Item* root() noexcept { return m_root.get(); }
-    const Item* root() const noexcept { return m_root.get(); }
+    CommandLayout(const CommandLayout &)                = delete;
+    CommandLayout &operator=(const CommandLayout &)     = delete;
+    CommandLayout(CommandLayout &&) noexcept            = default;
+    CommandLayout &operator=(CommandLayout &&) noexcept = default;
 
-    std::size_t size() const noexcept { return m_root ? m_root->subtreeSize() : 0; }
-    bool empty() const noexcept { return m_root == nullptr; }
-
-    // 按行路径(从根出发的下标序列)定位节点；非法路径返回 nullptr。
-    Item* pathItem(std::span<const std::size_t> path) const noexcept
-    {
-        return m_root ? m_root->pathNode(path) : nullptr;
-    }
-
-    bool isValidPath(std::span<const std::size_t> path) const noexcept
-    {
-        return pathItem(path) != nullptr;
-    }
+    [[nodiscard]] Node *node(const CommandItem &item) const;
 
     // 整棵树的遍历视图，直接转发到根节点。
-    Generator<Item*> traverse(TraversalOrder order = TraversalOrder::PreOrder) const
+    Generator<Node *> traverse(TraversalOrder order = TraversalOrder::PreOrder) const
     {
         return m_root->descendants(order);
     }
@@ -92,23 +61,47 @@ public:
         return m_root->filteredDescendants(std::move(pred));
     }
 
-    Item* addContainer(Item* parent, std::size_t index, const QString& title);
-    Item* addMenu(Item* parent, std::size_t index, const QString& title);
-    Item* addCommand(Item* parent, std::size_t index, const CommandId& id);
-    Item* addSeparator(Item* parent, std::size_t index);
+    [[nodiscard]] CommandItem invisibleItem() const override;
+    [[nodiscard]] CommandItem parentItem(const CommandItem &child) const override;
+    [[nodiscard]] CommandItem itemAt(std::size_t index, const CommandItem &parent) const override;
+    [[nodiscard]] std::size_t count(const CommandItem &parent = {}) const noexcept override;
+    [[nodiscard]] std::size_t size() const noexcept override;
+    [[nodiscard]] bool isEmpty() const noexcept override;
+    [[nodiscard]] int itemIndex(const CommandItem &item) const override;
+    [[nodiscard]] std::size_t itemDepth(const CommandItem &item) const override;
+    [[nodiscard]] std::vector<std::size_t> itemPath(const CommandItem &item) const override;
+    [[nodiscard]] CommandItem itemFromPath(std::span<const std::size_t> path) const noexcept override;
+    [[nodiscard]] bool isValidPath(std::span<const std::size_t> path) const noexcept override;
 
-    bool removeItem(Item* item);
-    bool moveItem(Item* srcParent, int srcIndex, Item* destParent, int destIndex);
-    bool moveItem(Item* item, Item* destParent, std::size_t destIndex);
+    // 将已存在的 item 插入到 parent 下（用于 takeAt 后重新挂接，或外部构造的临时项）
+    bool add(CommandItem item, CommandItem parent, int index = -1) override;
+    bool remove(CommandItem item) override;
+    CommandItem take(CommandItem parent, int index) override;
+    bool move(CommandItem sourceItem, CommandItem targetParent, int targetIndex) override;
+    bool move(CommandItem sourceParent, int sourceIndex, CommandItem targetParent,
+              int targetIndex) override;
 
-    // ---- 序列化 ----
-    QJsonObject serialize() const;
-    void deserialize(const QJsonObject& root); // 整体替换当前结构
-    bool save(const QString& path) const;
-    bool load(const QString& path);
+    CommandItem addContainer(const QString &title, CommandItem parent = {}, int index = -1) override;
+    CommandItem addCommand(const QString &id, CommandItem parent, int index = -1) override;
+    CommandItem addSeparator(CommandItem parent, int index = -1) override;
+    CommandItem addSection(const QString &title, CommandItem parent, int index = -1) override;
+
+    QVariant itemData(CommandItem item, int role) const override;
+    void setItemData(CommandItem item, int role, const QVariant &value) override;
+
+    [[nodiscard]] QJsonObject serialize() const override;
+    void deserialize(const QJsonObject &obj) override; // 整体替换当前结构
+
+    bool save(const QString &filePath) const override;
+    bool load(const QString &filePath) override;
 
 private:
-    std::unique_ptr<Item> m_root;
+    static Node *insertChild(Node *parent, ItemDataList data, int index);
+    static QJsonObject nodeToJson(const Node *n);
+    static void populateFromJson(Node *parent, const QJsonArray &arr);
+
+private:
+    std::unique_ptr<Node> m_root;
 };
 
 } // namespace bakuon::gui

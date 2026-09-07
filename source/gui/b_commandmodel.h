@@ -3,8 +3,10 @@
 #include <QtCore/QAbstractItemModel>
 #include <QtCore/QJsonObject>
 
-#include "gui/b_commandlayout.h"
 #include "gui/b_gui_export.h"
+#include "gui/b_types.h"
+
+#include <bakuon/gui/ICommandLayout.h>
 
 namespace bakuon::gui {
 
@@ -35,7 +37,7 @@ public:
     static constexpr char kMimeType[]                = "application/x-bakuon-commandmodel-node";
     static constexpr char kExternalCommandMimeType[] = "application/x-bakuon-commandid";
 
-    explicit CommandModel(CommandLayout* layout, QObject* parent = nullptr);
+    explicit CommandModel(ICommandLayout* layout, QObject* parent = nullptr);
 
     // ---- QAbstractItemModel 接口 ----
     [[nodiscard]] QModelIndex index(int row, int column,
@@ -58,25 +60,22 @@ public:
     bool removeRows(int row, int count, const QModelIndex& parent = {}) override;
 
     // ---- 结构性编辑 API（转调 CommandLayout，并补上对应的 Qt Model 信号）----
-    QModelIndex addMenu(const QModelIndex& parent, int row, const QString& title);
+    QModelIndex addContainer(const QModelIndex& parent, int row, const QString& title);
     QModelIndex addCommand(const QModelIndex& parent, int row, const CommandId& id);
     QModelIndex addSeparator(const QModelIndex& parent, int row);
-    bool move(const QModelIndex& index, const QModelIndex& newParent, int newRow);
 
     bool saveToFile(const QString& path) const;
     // 整体重置：包一层 beginResetModel/endResetModel 后转调 CommandLayout::loadFromFile
     bool loadFromFile(const QString& path);
 
 private:
-    using Item = CommandLayout::Item;
-
-    [[nodiscard]] Item* itemFromIndex(const QModelIndex& index) const;
-    [[nodiscard]] QModelIndex indexFromItem(Item* item) const;
+    [[nodiscard]] CommandItem itemFromIndex(const QModelIndex& index) const;
+    [[nodiscard]] QModelIndex indexFromItem(const CommandItem& item) const;
 
     // moveRows() 与 dropMimeData() 的内部移动分支共用同一套"前置校验 + begin/endMoveRows"逻辑
-    bool moveItemChecked(Item* item, Item* destParent, int destRow);
+    bool moveItemChecked(const CommandItem& item, const CommandItem& destParent, int destRow);
 
-    CommandLayout* m_layout = nullptr; // 非拥有，见类文档的生命周期约束
+    ICommandLayout* m_layout = nullptr; // 非拥有，见类文档的生命周期约束
 };
 
 } // namespace bakuon::gui

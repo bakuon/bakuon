@@ -63,11 +63,11 @@ public:
 
     // 渲染菜单栏
     void renderMenuBar(CommandLayout* layout, QMenuBar* menubar) const;
-    void renderMenuBar(CommandLayout::Item* parent, QMenuBar* menubar) const;
-    void renderMenu(CommandLayout::Item* parent, QMenu* menu) const;
+    void renderMenuBar(CommandLayout::Node* parent, QMenuBar* menubar) const;
+    void renderMenu(CommandLayout::Node* parent, QMenu* menu) const;
     // 渲染工具栏
     void renderToolBar(CommandLayout* layout, QMainWindow* window) const;
-    void renderToolBar(CommandLayout::Item* parent, QToolBar* toolbar) const;
+    void renderToolBar(CommandLayout::Node* parent, QToolBar* toolbar) const;
 
 private:
     // 默认菜单栏/工具栏布局

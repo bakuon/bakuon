@@ -37,42 +37,42 @@ TEST(CommandSystem, CommandLayout)
     mgr.registerCommand(kCmdC, QStringLiteral("命令C"));
 
     CommandLayout layout;
-    using Item = CommandLayout::Item;
+    CommandItem root;
 
-    Item* fileMenu = layout.addMenu(nullptr, 0, QStringLiteral("文件"));
-    layout.addCommand(fileMenu, 0, kCmdA);
-    Item* editMenu = layout.addMenu(nullptr, 1, QStringLiteral("编辑"));
-    layout.addCommand(editMenu, 0, kCmdB);
+    auto fileMenu = layout.addContainer(QStringLiteral("文件"), root);
+    layout.addCommand(kCmdA.toString(), fileMenu, 0);
+    auto editMenu = layout.addContainer(QStringLiteral("编辑"), root, 1);
+    layout.addCommand(kCmdB.toString(), editMenu, 0);
     layout.addSeparator(editMenu, 1);
-    layout.addCommand(editMenu, 2, kCmdC);
+    layout.addCommand(kCmdC.toString(), editMenu, 2);
 
-    const size_t num = layout.root()->childCount();
+    const size_t num = layout.invisibleItem().childCount();
     EXPECT_TRUE(num == 2) << "FAIL: " << "根节点下期望有 2 个菜单，结果是 " << num;
-    EXPECT_TRUE(editMenu->childCount() == 3) << "FAIL: " << "编辑菜单下有 3 个子节点（B/分隔线/C）";
+    EXPECT_TRUE(editMenu.childCount() == 3) << "FAIL: " << "编辑菜单下有 3 个子节点（B/分隔线/C）";
 
     // 菜单栏顶层不允许分隔线
-    EXPECT_TRUE(layout.addSeparator(nullptr, 0) == nullptr)
+    EXPECT_TRUE(layout.addSeparator(root, 0).isValid() == false)
         << "FAIL: " << "根节点添加分隔线没有被拒绝";
 
     // 移动：把编辑菜单下第 2 项（分隔线，下标1）移到最前面——用句柄而非下标定位
-    auto* sepItem = editMenu->childAt(1);
-    EXPECT_TRUE(sepItem->data().type == CommandLayoutData::Type::Separator)
+    auto sepItem = layout.itemAt(1, editMenu);
+    EXPECT_TRUE(sepItem.data(CommandItem::TypeRole).value<CommandItem::Type>()
+                == CommandItem::Type::Separator)
         << "取到的第1项不是分隔线";
-    EXPECT_TRUE(layout.moveItem(editMenu, 1, editMenu, 0)) << "分隔线移动到编辑菜单最前面失败";
-    EXPECT_TRUE(editMenu->childAt(0) == sepItem) << "移动后第0项不是刚才那个分隔线节点";
+    EXPECT_TRUE(layout.move(editMenu, 1, editMenu, 0)) << "分隔线移动到编辑菜单最前面失败";
+    EXPECT_TRUE(layout.itemAt(0, editMenu) == sepItem) << "移动后第0项不是刚才那个分隔线节点";
 
     // TreeNode 自带的 paths()/pathNode() 往返一致性
-    const std::vector<std::size_t> path = sepItem->paths();
-    EXPECT_TRUE(layout.root()->pathNode(path) == sepItem)
+    const std::vector<std::size_t> path = sepItem.path();
+    EXPECT_TRUE(layout.itemFromPath(path) == sepItem)
         << "paths()/pathNode() 往返定位到不是同一节点";
 
     // JSON 往返序列化
     const QJsonObject json = layout.serialize();
     CommandLayout layout2;
     layout2.deserialize(json);
-    EXPECT_TRUE(layout2.root()->childCount() == layout.root()->childCount())
-        << "JSON 往返后根节点行数不一致";
-    EXPECT_TRUE(layout2.root()->childAt(1)->childCount() == editMenu->childCount())
+    EXPECT_TRUE(layout2.count() == layout.count()) << "JSON 往返后根节点行数不一致";
+    EXPECT_TRUE(layout2.count(editMenu) == editMenu.childCount())
         << "JSON 往返后编辑菜单子节点数不一致";
 
     // 存盘/读盘
@@ -80,11 +80,11 @@ TEST(CommandSystem, CommandLayout)
     EXPECT_TRUE(layout.save(path2)) << "保存到磁盘失败";
     CommandLayout layout3;
     EXPECT_TRUE(layout3.load(path2)) << "从磁盘读取失败";
-    EXPECT_TRUE(layout3.root()->childCount() == 2) << "读盘后根节点行数不正确";
+    EXPECT_TRUE(layout3.count() == 2) << "读盘后根节点行数不正确";
 
     // 引用了未注册命令的场景：不应崩溃，只应在渲染时被跳过
     const CommandId unknownId{"test.unknown"};
-    layout3.addCommand(layout3.root()->childAt(0), 1, unknownId);
+    layout3.addCommand(unknownId.toString(), layout3.itemAt(0, {}), 1);
     // 渲染到真实 QMenuBar，验证渲染（现在直接消费 CommandLayout）不崩溃、
     // 且能正确跳过未知命令
     QMenuBar menuBar;
@@ -104,14 +104,14 @@ TEST(CommandSystem, CommandLayout)
 TEST(CommandSystem, CommandModel)
 {
     CommandLayout layout;
-    using Item = CommandLayout::Item;
+    CommandItem root;
 
-    Item* fileMenu = layout.addMenu(nullptr, 0, QStringLiteral("文件"));
-    layout.addCommand(fileMenu, 0, kCmdA);
-    Item* editMenu = layout.addMenu(nullptr, 1, QStringLiteral("编辑"));
-    layout.addCommand(editMenu, 0, kCmdB);
+    auto fileMenu = layout.addContainer(QStringLiteral("文件"), root, 0);
+    layout.addCommand(kCmdA.toString(), fileMenu, 0);
+    auto editMenu = layout.addContainer(QStringLiteral("编辑"), root, 1);
+    layout.addCommand(kCmdB.toString(), editMenu, 0);
     layout.addSeparator(editMenu, 1);
-    layout.addCommand(editMenu, 2, kCmdC);
+    layout.addCommand(kCmdC.toString(), editMenu, 2);
 
     CommandModel model(&layout);
     EXPECT_TRUE(model.rowCount({}) == 2) << "CommandModel 读到的根节点行数与 CommandLayout 不一致";
@@ -122,11 +122,11 @@ TEST(CommandSystem, CommandModel)
 
     const QModelIndex newCmdIdx = model.addCommand(editMenuIdx, 0, kCmdA);
     EXPECT_TRUE(newCmdIdx.isValid()) << "通过 CommandModel::addCommand 插入新命令节点失败";
-    EXPECT_TRUE(editMenu->childCount() == 4) << "CommandModel 的编辑未能如实写回底层 CommandLayout";
+    EXPECT_TRUE(editMenu.childCount() == 4) << "CommandModel 的编辑未能如实写回底层 CommandLayout";
 
     EXPECT_TRUE(model.removeRows(0, 1, editMenuIdx))
         << "通过 CommandModel::removeRows 删除节点失败";
-    EXPECT_TRUE(editMenu->childCount() == 3) << "删除后底层 CommandLayout 子节点数未能同步减少";
+    EXPECT_TRUE(editMenu.childCount() == 3) << "删除后底层 CommandLayout 子节点数未能同步减少";
 
     // moveRows：把编辑菜单下第0项移动到第2位之后（往下移一位），验证 Qt moveRows 语义正确对接
     const int beforeRow0Type
@@ -296,10 +296,10 @@ TEST(CommandSystem, LoadLayoutToolbarKey)
 
     auto* menubar = mgr.menubarLayout();
     auto* toolbar = mgr.toolbarLayout();
-    menubar->addMenu(nullptr, 0, QStringLiteral("文件"));
-    auto* tb = toolbar->addContainer(nullptr, 0, QStringLiteral("主工具栏"));
-    toolbar->addCommand(tb, 0, kCmdA);
-    toolbar->addCommand(tb, 1, kCmdB);
+    menubar->addContainer(QStringLiteral("文件"), {}, 0);
+    auto tb = toolbar->addContainer(QStringLiteral("主工具栏"), {}, 0);
+    toolbar->addCommand(kCmdA.toString(), tb, 0);
+    toolbar->addCommand(kCmdB.toString(), tb, 1);
 
     const QString path = QDir::temp().filePath(QStringLiteral("bakuon_test_layout_roundtrip.json"));
     {
@@ -313,24 +313,24 @@ TEST(CommandSystem, LoadLayoutToolbarKey)
 
     // 通过 CommandSystem 门面加载（覆盖原先的 toolbar 键写错 bug）
     ASSERT_TRUE(CommandSystem::loadLayout(path));
-    EXPECT_EQ(CommandSystem::menubarLayout()->root()->childCount(), 1u);
-    EXPECT_EQ(CommandSystem::toolbarLayout()->root()->childCount(), 1u);
-    EXPECT_EQ(CommandSystem::toolbarLayout()->root()->childAt(0)->childCount(), 2u)
+    EXPECT_EQ(CommandSystem::menubarLayout()->count(), 1u);
+    EXPECT_EQ(CommandSystem::toolbarLayout()->count(), 1u);
+    EXPECT_EQ(CommandSystem::toolbarLayout()->itemAt(0, {}).childCount(), 2u)
         << "toolbar 应保留 2 个命令节点，而非被 menubar 覆盖";
 }
 
 TEST(CommandSystem, MoveTopLevelMenu)
 {
     CommandLayout layout;
-    auto* fileMenu = layout.addMenu(nullptr, 0, QStringLiteral("文件"));
-    auto* editMenu = layout.addMenu(nullptr, 1, QStringLiteral("编辑"));
-    ASSERT_EQ(layout.root()->childCount(), 2u);
+    auto fileMenu = layout.addContainer(QStringLiteral("文件"), {}, 0);
+    auto editMenu = layout.addContainer(QStringLiteral("编辑"), {}, 1);
+    ASSERT_EQ(layout.count(), 2u);
 
     // 回归：moveItem(srcParent=root, ...) 曾被错误拒绝
-    EXPECT_TRUE(layout.moveItem(layout.root(), 1, layout.root(), 0))
+    EXPECT_TRUE(layout.move(layout.invisibleItem(), 1, layout.invisibleItem(), 0))
         << "应允许移动根下的顶层菜单节点";
-    EXPECT_EQ(layout.root()->childAt(0), editMenu);
-    EXPECT_EQ(layout.root()->childAt(1), fileMenu);
+    EXPECT_EQ(layout.itemAt(0, {}), editMenu);
+    EXPECT_EQ(layout.itemAt(1, {}), fileMenu);
 }
 
 TEST(CommandSystem, UnregisterDeletesCommand)

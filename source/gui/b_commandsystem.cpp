@@ -80,12 +80,12 @@ void CommandSystem::renderMenuBar(CommandLayout* layout, QMenuBar* menubar)
     defaultWorkspace().commandManager().renderMenuBar(layout, menubar);
 }
 
-void CommandSystem::renderMenuBar(CommandLayout::Item* parent, QMenuBar* menubar)
+void CommandSystem::renderMenuBar(CommandLayout::Node* parent, QMenuBar* menubar)
 {
     defaultWorkspace().commandManager().renderMenuBar(parent, menubar);
 }
 
-void CommandSystem::renderMenu(CommandLayout::Item* parent, QMenu* menu)
+void CommandSystem::renderMenu(CommandLayout::Node* parent, QMenu* menu)
 {
     defaultWorkspace().commandManager().renderMenu(parent, menu);
 }
@@ -95,7 +95,7 @@ void CommandSystem::renderToolBar(CommandLayout* layout, QMainWindow* window)
     defaultWorkspace().commandManager().renderToolBar(layout, window);
 }
 
-void CommandSystem::renderToolBar(CommandLayout::Item* parent, QToolBar* toolbar)
+void CommandSystem::renderToolBar(CommandLayout::Node* parent, QToolBar* toolbar)
 {
     defaultWorkspace().commandManager().renderToolBar(parent, toolbar);
 }

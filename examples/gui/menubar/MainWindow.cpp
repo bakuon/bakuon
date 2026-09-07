@@ -57,26 +57,26 @@ void MainWindow::registerCommands()
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     del.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditDelete));
 #endif
-    
+
     auto& dup = gui::CommandSystem::registerCommand(kCmdDuplicate, QStringLiteral("复制"));
     dup.setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
     dup.setAttribute(gui::Command::Attribute::HideWhenIdle, true); // test hidden
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     dup.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditCopy));
 #endif
-    
+
     auto& paste = gui::CommandSystem::registerCommand(kCmdPaste, QStringLiteral("粘贴"));
     del.setShortcut(QKeySequence::Paste);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     paste.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditPaste));
 #endif
-    
+
     auto& save = gui::CommandSystem::registerCommand(kCmdSave, QStringLiteral("保存"));
     save.setShortcut(QKeySequence::Save);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     save.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::DocumentSave));
 #endif
-    
+
     auto& customize = gui::CommandSystem::registerCommand(kCmdCustomize, QStringLiteral("自定义"));
     customize.setShortcut(QKeySequence(Qt::Key_O));
 
@@ -97,23 +97,18 @@ void MainWindow::registerCommands()
 
 void MainWindow::buildDefaultMenuLayout()
 {
-    using Item             = gui::CommandLayout::Item;
-    m_menuLayout           = new gui::CommandLayout;
-    // TreeNode::insertChildAt 对越界下标的内置回退语义就是"追加到末尾"，
-    // 用一个具名常量表达"追加"意图，比裸的 (size_t)-1 更清楚。
-    constexpr auto kAppend = static_cast<std::size_t>(-1);
+    m_menuLayout  = new gui::CommandLayout;
+    auto fileMenu = m_menuLayout->addContainer(QStringLiteral("文件(&F)"));
+    m_menuLayout->addCommand(kCmdSave.toString(), fileMenu);
 
-    Item* fileMenu = m_menuLayout->addMenu(nullptr, kAppend, QStringLiteral("文件(&F)"));
-    m_menuLayout->addCommand(fileMenu, kAppend, kCmdSave);
+    auto editMenu = m_menuLayout->addContainer(QStringLiteral("编辑(&E)"));
+    m_menuLayout->addCommand(kCmdDelete.toString(), editMenu);
+    m_menuLayout->addSeparator(editMenu);
+    m_menuLayout->addCommand(kCmdDuplicate.toString(), editMenu);
+    m_menuLayout->addCommand(kCmdPaste.toString(), editMenu);
 
-    Item* editMenu = m_menuLayout->addMenu(nullptr, kAppend, QStringLiteral("编辑(&E)"));
-    m_menuLayout->addCommand(editMenu, kAppend, kCmdDelete);
-    m_menuLayout->addSeparator(editMenu, kAppend);
-    m_menuLayout->addCommand(editMenu, kAppend, kCmdDuplicate);
-    m_menuLayout->addCommand(editMenu, kAppend, kCmdPaste);
-
-    Item* viewMenu = m_menuLayout->addMenu(nullptr, kAppend, QStringLiteral("视图(&V)"));
-    m_menuLayout->addCommand(viewMenu, kAppend, kCmdCustomize);
+    auto viewMenu = m_menuLayout->addContainer(QStringLiteral("视图(&V)"));
+    m_menuLayout->addCommand(kCmdCustomize.toString(), viewMenu);
 
     // 默认布局搭好之后，才创建 CommandModel 包一层——供"自定义菜单布局"对话框使用。
     m_menuModel = new gui::CommandModel(m_menuLayout, this);
