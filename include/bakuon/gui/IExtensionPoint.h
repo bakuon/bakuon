@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include <gui/b_gui_export.h>
+
 /**
  * @file IExtensionPoint.h
  * @brief 通用扩展点框架
@@ -111,7 +113,7 @@ struct extension_iid
  * 仅描述"一个扩展点"这一抽象概念，不暴露具体接口 T。注册中心以该基类
  * 的 shared_ptr 存储，使不同 T 的扩展点可以共存于同一容器。
  */
-class ExtensionPointBase
+class BAKUON_GUI_EXPORT ExtensionPointBase
 {
 public:
     ExtensionPointBase()          = default;

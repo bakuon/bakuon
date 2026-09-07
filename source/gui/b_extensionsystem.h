@@ -1,7 +1,7 @@
 #pragma once
 
-#include <shared_mutex>
-#include <unordered_map>
+#include <memory>
+#include <string>
 
 #include <bakuon/gui/IExtensionSystem.h>
 
@@ -168,11 +168,11 @@ public:
     void clear() override;
 
 private:
-    ExtensionSystem()           = default;
-    ~ExtensionSystem() override = default;
+    ExtensionSystem();
+    ~ExtensionSystem() override;
 
-    std::unordered_map<std::string, std::shared_ptr<ExtensionPointBase>> m_extensionPoints;
-    mutable std::shared_mutex m_mutex;
+    class Impl;
+    Impl* d;
 };
 
 template<typename T>

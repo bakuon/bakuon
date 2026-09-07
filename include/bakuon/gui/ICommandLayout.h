@@ -6,6 +6,8 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QString>
 
+#include <gui/b_gui_export.h>
+
 namespace bakuon::gui {
 
 class ICommandLayout;
@@ -68,7 +70,7 @@ private:
     const ICommandLayout* m_layout;
 };
 
-class ICommandLayout
+class BAKUON_GUI_EXPORT ICommandLayout
 {
 public:
     ICommandLayout()          = default;

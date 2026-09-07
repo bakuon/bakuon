@@ -1,10 +1,11 @@
 #pragma once
 
 #include <bakuon/gui/IExtensionPoint.h>
+#include <gui/b_gui_export.h>
 
 namespace bakuon::gui {
 
-class IExtensionSystem
+class BAKUON_GUI_EXPORT IExtensionSystem
 {
 public:
     virtual ~IExtensionSystem() = default;
