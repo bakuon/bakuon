@@ -15,11 +15,17 @@ find_package(
     NAMES
     Qt6
     Qt5
-    COMPONENTS Core RemoteObjects
+    COMPONENTS Core
+               Gui
+               Widgets
+               RemoteObjects
     REQUIRED)
 find_package(
     Qt${QT_VERSION_MAJOR}
-    COMPONENTS Core RemoteObjects
+    COMPONENTS Core
+               Gui
+               Widgets
+               RemoteObjects
     REQUIRED)
 
 bakuon_add_module(
@@ -75,7 +81,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE $<BUILD_INTERFACE:${CMAKE_CUR
 if(BAKUON_BUILD_SANDBOX_RUNTIME)
     set(SANDBOX_RUNTIME "sandbox_runtime")
     add_executable(${SANDBOX_RUNTIME} main.cpp)
-    target_link_libraries(${SANDBOX_RUNTIME} PRIVATE bakuon::sandbox Qt6::Core Qt6::RemoteObjects)
+    target_link_libraries(
+        ${SANDBOX_RUNTIME}
+        PRIVATE bakuon::sandbox
+                Qt${QT_VERSION_MAJOR}::Core
+                Qt${QT_VERSION_MAJOR}::Widgets
+                Qt${QT_VERSION_MAJOR}::RemoteObjects)
     target_compile_features(${SANDBOX_RUNTIME} PRIVATE cxx_std_20)
     bakuon_apply_warnings(${SANDBOX_RUNTIME})
 endif()

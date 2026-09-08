@@ -8,14 +8,18 @@
 #include <vector>
 
 #include <QtCore/QObject>
+#include <QtCore/QPoint>
+#include <QtCore/QRect>
 #include <QtCore/QString>
 #include <QtCore/QVariantMap>
 #include <QtCore/QVector>
+#include <QtGui/QImage>
 
 namespace bakuon::sandbox {
 
 class SandboxSystem;
 enum class SandboxPhase;
+class SharedMemoryChannel;
 
 /**
  * @brief Host 侧一个"标签页/会话"的稳定身份，与底层 sandboxId 解耦。
@@ -151,6 +155,14 @@ public:
     ///       一个名额，这是刻意的权衡（restart 语义优先于严格的名额计数），见类注释。
     bool restartTab(uint64_t tabId);
 
+    /**
+     * @brief 转发一次输入事件给该 Tab 背后沙箱进程里的 GUI 表面。
+     * @note 参数含义/取值约定见 b_guisurfaceevents.h；Tab 不存在或还没有
+     *       有效 sandboxId（Queued/Restoring 状态）时静默返回 false，不报错。
+     */
+    bool dispatchInputEvent(uint64_t tabId, int type, const QPoint &pos, int button, int modifiers,
+                            int key, const QString &text = {});
+
     [[nodiscard]] TabState tabState(uint64_t tabId) const;
     [[nodiscard]] QString sandboxIdForTab(uint64_t tabId) const;
     [[nodiscard]] std::optional<uint64_t> tabForSandboxId(const QString &sandboxId) const;
@@ -245,6 +257,16 @@ Q_SIGNALS:
     /// 和 tabAdopted 分开发，是为了让 UI 层能区分"恢复成功，内容都在"和
     /// "捡到一个来路不明的孤儿，内容对不上"这两种截然不同的用户提示。
     void tabRestored(uint64_t tabId, const QString &sandboxId);
+    /**
+     * @brief 该 Tab 背后的沙箱进程送来了新一帧画面（转发自
+     *        SandboxSystem::sandboxFrameReady，已经把共享内存里的原始像素读出来
+     *        构造成了 QImage，调用方不需要碰任何 SharedMemoryChannel 细节）。
+     * @param image 已经是一份独立拷贝（不是共享内存的借用视图），调用方可以
+     *              安全地持有/跨线程传递，不用担心底层共享内存段被覆写。
+     * @param dirtyRect v1 恒等于整张图的范围（还没做真正的脏矩形裁剪，见
+     *                 pluginsandboxcontrol.rep 里 frameReady 的说明）。
+     */
+    void tabFrameReady(uint64_t tabId, const QImage &image, const QRect &dirtyRect);
 
 private:
     uint64_t nextTabId();
@@ -258,6 +280,8 @@ private:
     void onLogMessage(const QString &sandboxId, int level, const QString &message);
     void onProcessFinished(const QString &sandboxId, int exitCode);
     void onOrphanDiscovered(const QString &sandboxId);
+    void onFrameReady(const QString &sandboxId, const QString &memoryKey, const QSize &size,
+                      int format, const QRect &dirtyRect);
     /// 把当前 m_tabs 完整重写到 sessionFilePath()；sessionFilePath() 为空时是 no-op。
     /// 用 QSaveFile 原子写入，见 .cpp 实现里的说明。
     void persistSession() const;
@@ -272,6 +296,11 @@ private:
     std::unordered_map<QString, uint64_t> m_sandboxIdToTab; // 仅覆盖已 spawn 的条目
     std::deque<uint64_t> m_pendingQueue;
     std::vector<QString> m_pendingOrphans; // 已发现、尚未 tryAdoptOrphanedSandboxes() 的孤儿
+    // 每个仍在追踪 GUI 表面的沙箱实例一个持久化的共享内存挂载（attach 一次，之后每帧
+    // 直接原地重读，不重复 attach/detach）；tab 关闭/finalize 时一并清理，见
+    // finalizeSession() 的实现。用 sandboxId 而不是 tabId 做 key，是因为
+    // restartTab() 换了新 sandboxId 之后旧的挂载天然应该失效，不需要特殊处理。
+    std::unordered_map<QString, std::unique_ptr<SharedMemoryChannel>> m_frameChannels;
 
     // 声明顺序即析构顺序（反向）：m_sandboxSystem 必须放在最后声明，确保它是所有成员里
     // 第一个被析构的——它的析构链路（SandboxSystem -> shared_ptr<SandboxSupervisor> ->

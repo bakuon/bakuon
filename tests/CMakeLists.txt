@@ -215,6 +215,26 @@ if(TARGET sandbox)
             sandbox_runtime
             sandboxed_example_plugin
             orphan_test_helper)
+
+        # 跨进程 GUI 合成端到端验证：真实起 sandbox_runtime + sandboxed_example_plugin，
+        # 验证渲染（frameReady）和输入（dispatchInputEvent）两个方向都真正打通。
+        # USE_QT_CORE 而不是 USE_QT_GUI：TabSandboxManager 本身不碰 QWidget，
+        # 只需要一个跑事件循环的 QCoreApplication。
+        bakuon_add_test(
+            NAME
+            test_sandbox_gui_surface_compositing
+            USE_QT_CORE
+            SOURCES
+            "sandbox/gui_surface_compositing_test.cpp"
+            DEPENDS
+            bakuon::sandbox)
+        target_compile_definitions(
+            test_sandbox_gui_surface_compositing
+            PRIVATE
+                BAKUON_TEST_SANDBOX_RUNTIME_PATH="$<TARGET_FILE:sandbox_runtime>"
+                BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
+        add_dependencies(test_sandbox_gui_surface_compositing sandbox_runtime
+                         sandboxed_example_plugin)
     endif()
 endif()
 

@@ -6,6 +6,7 @@
 #include <sandbox/b_tabsandboxmanager.h>
 
 class QTabWidget;
+class QImage;
 
 namespace bakuon::host {
 
@@ -60,6 +61,7 @@ private:
     void onTabRestoring(uint64_t tabId);
     void onTabRestored(uint64_t tabId, const QString &sandboxId);
     void onTabAdopted(uint64_t tabId, const QString &sandboxId);
+    void onTabFrameReady(uint64_t tabId, const QImage &image, const QRect &dirtyRect);
 
 private:
     QString m_pluginsDir;

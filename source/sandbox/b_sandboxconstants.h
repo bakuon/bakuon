@@ -61,4 +61,13 @@ inline constexpr auto kSandboxObjectName = "PluginSandboxControl";
  */
 [[nodiscard]] QString makeSharedMemoryKey(const QString &sandboxId, const QString &requestId);
 
+/**
+ * @brief 生成"帧缓冲区"专属的共享内存段 key —— 和 makeSharedMemoryKey() 不同，
+ *        这个 key 是每个沙箱实例整个生命周期内固定不变的一个，不是每帧/每次请求
+ *        都换一个：帧数据由 Sandbox 侧 create() 一次、之后每一帧原地
+ *        writePayload() 覆写同一块区域，Host 侧只需要 attach() 一次，见
+ *        b_sandboxruntime.cpp 里 GUI 表面捕获那部分的说明。
+ */
+[[nodiscard]] QString makeFrameMemoryKey(const QString &sandboxId);
+
 } // namespace bakuon::sandbox

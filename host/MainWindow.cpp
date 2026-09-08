@@ -109,6 +109,10 @@ MainWindow::MainWindow(QString pluginsDir, QString sandboxRuntimeExecutable,
     connect(&m_tabManager, &sandbox::TabSandboxManager::orphanSandboxAvailable, this, [this]() {
         qDebug() << "adopted: " << m_tabManager.tryAdoptOrphanedSandboxes();
     });
+    connect(&m_tabManager,
+            &sandbox::TabSandboxManager::tabFrameReady,
+            this,
+            &MainWindow::onTabFrameReady);
 
     registerCommands();
     buildMenuAndToolBar();
@@ -276,6 +280,18 @@ TabContentWidget *MainWindow::addPlaceholderTab(uint64_t tabId, const QString &t
 {
     auto *widget = new TabContentWidget(tabId, m_tabs);
     connect(widget, &TabContentWidget::restartRequested, this, &MainWindow::restartTab);
+    connect(widget,
+            &TabContentWidget::inputEvent,
+            this,
+            [this](uint64_t id,
+                   int type,
+                   QPoint pos,
+                   int button,
+                   int modifiers,
+                   int key,
+                   QString text) {
+                m_tabManager.dispatchInputEvent(id, type, pos, button, modifiers, key, text);
+            });
     m_tabs->addTab(widget, title);
     return widget;
 }
@@ -387,6 +403,13 @@ void MainWindow::onTabAdopted(uint64_t tabId, const QString &sandboxId)
     statusBar()->showMessage(QStringLiteral("发现了一个来路不明的沙箱进程，已作为新标签 %1 收编")
                                  .arg(tabId),
                              5000);
+}
+
+void MainWindow::onTabFrameReady(uint64_t tabId, const QImage &image, const QRect &dirtyRect)
+{
+    if (auto *w = widgetForTab(tabId)) {
+        w->setFrame(image, dirtyRect);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

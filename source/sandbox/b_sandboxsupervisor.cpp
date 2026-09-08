@@ -258,6 +258,18 @@ void SandboxSupervisor::bindReplicaSignals()
                 m_pendingCommands.erase(it); // SharedMemoryChannel 析构 -> release() 自动 detach
                 Q_EMIT commandFinished(requestId, ok, result, errorMessage);
             });
+    connect(m_replica.get(),
+            &PluginSandboxControlReplica::frameReady,
+            this,
+            &SandboxSupervisor::frameReady);
+}
+
+void SandboxSupervisor::dispatchInputEvent(int type, const QPoint &pos, int button, int modifiers,
+                                           int key, const QString &text)
+{
+    if (m_replica) {
+        m_replica->dispatchInputEvent(type, pos, button, modifiers, key, text);
+    }
 }
 
 void SandboxSupervisor::run()

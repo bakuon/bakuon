@@ -1,14 +1,20 @@
 #include "sandbox/b_sandboxruntime.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QTimer>
 #include <QtCore/QVariantMap>
+#include <QtGui/QMouseEvent>
+#include <QtGui/QWheelEvent>
 #include <QtRemoteObjects/QRemoteObjectHost>
+#include <QtWidgets/QWidget>
 
 #include <bakuon/gui/IPlugin.h>
+#include <bakuon/sandbox/IGuiSurfaceHandler.h>
 #include <bakuon/sandbox/ISandboxCommandHandler.h>
 
 #include "gui/b_extensionsystem.h"
 #include "gui/b_pluginpipeline.h"
+#include "sandbox/b_guisurfaceevents.h"
 #include "sandbox/b_sandboxconstants.h"
 #include "sandbox/b_sharedmemorychannel.h"
 
@@ -90,6 +96,14 @@ public:
             m_commandHandlers = gui::ExtensionSystem::instance()
                                     .extensionPoint<ISandboxCommandHandler>();
         }
+        // 同样的模式注册 GUI 表面扩展点，见 IGuiSurfaceHandler.h 顶部说明。
+        m_guiSurfaceHandlers = gui::ExtensionSystem::instance()
+                                   .registerDefaultExtensionPoint<IGuiSurfaceHandler>(
+                                       "沙箱内 GUI 表面扩展点");
+        if (!m_guiSurfaceHandlers) {
+            m_guiSurfaceHandlers = gui::ExtensionSystem::instance()
+                                       .extensionPoint<IGuiSurfaceHandler>();
+        }
         setPid(QCoreApplication::applicationPid());
     }
 
@@ -154,10 +168,12 @@ public:
             return;
         }
         setPhase(SandboxPhase::Running);
+        startGuiSurfaceCaptureIfAvailable();
     }
 
     void stop() override
     {
+        stopGuiSurfaceCapture();
         setPhase(SandboxPhase::Stopping);
         if (m_pipeline) {
             m_pipeline->stop();
@@ -167,6 +183,7 @@ public:
 
     void shutdownSandbox() override
     {
+        stopGuiSurfaceCapture();
         if (m_pipeline) {
             // Stopped 才允许 unload()（见 PluginPipeline 状态机），Running 时先补一次 stop()。
             m_pipeline->stop();
@@ -176,6 +193,58 @@ public:
         // 真正退出进程的动作交给 sandbox_runtime/main.cpp（本类只负责契约语义，
         // 进程生命周期是宿主 main() 的职责，保持单一职责）。
         Q_EMIT aboutToQuit();
+    }
+
+    void dispatchInputEvent(int type, QPoint pos, int button, int modifiers, int key,
+                            QString text) override
+    {
+        if (!m_surfaceWidget) {
+            return; // 没有 GUI 表面（插件没注册 IGuiSurfaceHandler，或者还没到 Running），忽略
+        }
+
+        const auto qtButton    = toQtMouseButton(button);
+        const auto qtModifiers = toQtKeyModifiers(modifiers);
+
+        switch (static_cast<GuiInputEventType>(type)) {
+        case GuiInputEventType::MouseMove: {
+            QMouseEvent ev(QEvent::MouseMove, QPointF(pos), QPointF(pos),
+                          Qt::MouseButton::NoButton, qtButton, qtModifiers);
+            QCoreApplication::sendEvent(m_surfaceWidget, &ev);
+            break;
+        }
+        case GuiInputEventType::MousePress: {
+            const Qt::MouseButton primary = toSingleQtMouseButton(button);
+            QMouseEvent ev(QEvent::MouseButtonPress, QPointF(pos), QPointF(pos), primary,
+                          qtButton, qtModifiers);
+            QCoreApplication::sendEvent(m_surfaceWidget, &ev);
+            break;
+        }
+        case GuiInputEventType::MouseRelease: {
+            const Qt::MouseButton primary = toSingleQtMouseButton(button);
+            QMouseEvent ev(QEvent::MouseButtonRelease, QPointF(pos), QPointF(pos), primary,
+                          Qt::MouseButton::NoButton, qtModifiers);
+            QCoreApplication::sendEvent(m_surfaceWidget, &ev);
+            break;
+        }
+        case GuiInputEventType::Wheel: {
+            QWheelEvent ev(QPointF(pos), QPointF(pos), QPoint(), QPoint(0, key), qtButton,
+                          qtModifiers, Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(m_surfaceWidget, &ev);
+            break;
+        }
+        case GuiInputEventType::KeyPress: {
+            QKeyEvent ev(QEvent::KeyPress, key, qtModifiers, text);
+            QCoreApplication::sendEvent(m_surfaceWidget, &ev);
+            break;
+        }
+        case GuiInputEventType::KeyRelease: {
+            QKeyEvent ev(QEvent::KeyRelease, key, qtModifiers, text);
+            QCoreApplication::sendEvent(m_surfaceWidget, &ev);
+            break;
+        }
+        }
+        // 输入可能改变了界面外观（比如按钮按下的高亮态），下一次定时抓帧会自然带上
+        // 这次变化——v1 按固定频率抓帧，不在这里额外触发一次立即抓帧，见类注释。
     }
 
     void executeCommand(QString requestId, QString commandId, QString memoryKey,
@@ -228,9 +297,149 @@ Q_SIGNALS:
     void aboutToQuit();
 
 private:
+    /**
+     * @brief run() 成功后调用一次：如果插件注册了 IGuiSurfaceHandler，
+     * 把它的 widget 定住固定尺寸、创建帧缓冲共享内存段、启动周期性抓帧定时器。
+     *
+     * v1 已知限制（后续优化方向，不在本次范围内）：
+     *  1. 固定尺寸、固定帧率轮询，不支持运行期 resize()，不做"内容有没有变化"
+     *     的脏检测——每一帧都无条件抓取+发送，即使界面完全静止。
+     *  2. dirtyRect 恒等于整帧范围，没有做真正的脏矩形裁剪。
+     *  3. 同一沙箱进程只取第一个注册的 IGuiSurfaceHandler。
+     * 这些都是为了先把"链路通不通"跑通、有意收窄的范围，见
+     * IGuiSurfaceHandler.h 和 pluginsandboxcontrol.rep 里 frameReady 的说明。
+     */
+    void startGuiSurfaceCaptureIfAvailable()
+    {
+        if (m_surfaceWidget) {
+            return; // 已经启动过了（比如 stop() 之后又 run() 一次），不重复初始化
+        }
+        if (!m_guiSurfaceHandlers) {
+            return;
+        }
+        const auto handlers = m_guiSurfaceHandlers->extensions(
+            [](const std::shared_ptr<IGuiSurfaceHandler> &) { return true; });
+        if (handlers.empty()) {
+            return; // 插件没有注册 GUI 表面，纯后台/命令行式插件，正常情况，不是错误
+        }
+
+        m_surfaceWidget = handlers.front()->surfaceWidget();
+        if (!m_surfaceWidget) {
+            Q_EMIT logMessage(1 /*Warning*/,
+                              QStringLiteral("IGuiSurfaceHandler::surfaceWidget() 返回了空指针"));
+            return;
+        }
+
+        // 固定尺寸：见类文档"已知限制"第 1 条。480x360 只是一个能验证链路的合理初始值。
+        m_surfaceWidget->resize(kSurfaceWidth, kSurfaceHeight);
+
+        const QString frameKey = makeFrameMemoryKey(m_sandboxId);
+        const quint32 frameBytes
+            = static_cast<quint32>(kSurfaceWidth) * static_cast<quint32>(kSurfaceHeight) * 4;
+        if (auto err = m_frameChannel.create(frameKey, QByteArray(), frameBytes)) {
+            Q_EMIT logMessage(2 /*Error*/,
+                              QStringLiteral("帧缓冲共享内存创建失败：%1").arg(*err));
+            m_surfaceWidget = nullptr;
+            return;
+        }
+
+        m_frameTimer = new QTimer(this);
+        connect(m_frameTimer, &QTimer::timeout, this, &SandboxControlSourceImpl::captureAndSendFrame);
+        m_frameTimer->start(kFrameIntervalMs);
+        captureAndSendFrame(); // 立即发一帧，不等第一个定时器 tick，减少用户能感知到的首帧延迟
+    }
+
+    void stopGuiSurfaceCapture()
+    {
+        if (m_frameTimer) {
+            m_frameTimer->stop();
+            m_frameTimer->deleteLater();
+            m_frameTimer = nullptr;
+        }
+        m_surfaceWidget = nullptr; // 不 delete：widget 的生命周期属于插件自己，本类只是借用指针
+    }
+
+    void captureAndSendFrame()
+    {
+        if (!m_surfaceWidget) {
+            return;
+        }
+        const QImage image
+            = m_surfaceWidget->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+        const QByteArray raw(reinterpret_cast<const char *>(image.constBits()),
+                             static_cast<qsizetype>(image.sizeInBytes()));
+        if (auto err = m_frameChannel.writePayload(raw)) {
+            Q_EMIT logMessage(1 /*Warning*/, QStringLiteral("帧数据写入共享内存失败：%1").arg(*err));
+            return;
+        }
+        Q_EMIT frameReady(m_frameChannel.key(), image.size(),
+                          static_cast<int>(QImage::Format_ARGB32),
+                          QRect(QPoint(0, 0), image.size()));
+    }
+
+    [[nodiscard]] static Qt::MouseButtons toQtMouseButton(int button)
+    {
+        Qt::MouseButtons result;
+        const auto b = static_cast<GuiMouseButton>(button);
+        if ((static_cast<int>(b) & static_cast<int>(GuiMouseButton::Left)) != 0) {
+            result |= Qt::LeftButton;
+        }
+        if ((static_cast<int>(b) & static_cast<int>(GuiMouseButton::Right)) != 0) {
+            result |= Qt::RightButton;
+        }
+        if ((static_cast<int>(b) & static_cast<int>(GuiMouseButton::Middle)) != 0) {
+            result |= Qt::MiddleButton;
+        }
+        return result;
+    }
+
+    /// QMouseEvent 的 press/release 事件需要单个"触发本次事件的按钮"，
+    /// 和"当前按住的按钮集合"（Qt::MouseButtons，见 toQtMouseButton()）是两个
+    /// 不同的参数——按位组合取第一个命中的位即可，契约层面本来就没打算支持
+    /// "同一个事件里报告好几个按钮同时按下/松开"这种边界情况。
+    [[nodiscard]] static Qt::MouseButton toSingleQtMouseButton(int button)
+    {
+        const auto b = static_cast<GuiMouseButton>(button);
+        if ((static_cast<int>(b) & static_cast<int>(GuiMouseButton::Left)) != 0) {
+            return Qt::LeftButton;
+        }
+        if ((static_cast<int>(b) & static_cast<int>(GuiMouseButton::Right)) != 0) {
+            return Qt::RightButton;
+        }
+        if ((static_cast<int>(b) & static_cast<int>(GuiMouseButton::Middle)) != 0) {
+            return Qt::MiddleButton;
+        }
+        return Qt::NoButton;
+    }
+
+    [[nodiscard]] static Qt::KeyboardModifiers toQtKeyModifiers(int modifiers)
+    {
+        Qt::KeyboardModifiers result;
+        const auto m = static_cast<GuiKeyModifier>(modifiers);
+        if ((static_cast<int>(m) & static_cast<int>(GuiKeyModifier::Shift)) != 0) {
+            result |= Qt::ShiftModifier;
+        }
+        if ((static_cast<int>(m) & static_cast<int>(GuiKeyModifier::Ctrl)) != 0) {
+            result |= Qt::ControlModifier;
+        }
+        if ((static_cast<int>(m) & static_cast<int>(GuiKeyModifier::Alt)) != 0) {
+            result |= Qt::AltModifier;
+        }
+        return result;
+    }
+
+private:
+    static constexpr int kSurfaceWidth    = 480;
+    static constexpr int kSurfaceHeight   = 360;
+    static constexpr int kFrameIntervalMs = 100; // 约 10fps，v1 固定频率，见"已知限制"
+
     QString m_sandboxId;
     std::shared_ptr<gui::PluginPipeline> m_pipeline;
     std::shared_ptr<gui::IExtensionPoint<ISandboxCommandHandler>> m_commandHandlers;
+    std::shared_ptr<gui::IExtensionPoint<IGuiSurfaceHandler>> m_guiSurfaceHandlers;
+    QWidget *m_surfaceWidget = nullptr; // 借用指针，生命周期属于插件
+    SharedMemoryChannel m_frameChannel;
+    QTimer *m_frameTimer = nullptr;
 };
 
 SandboxRuntime::SandboxRuntime(QString sandboxId, QObject *parent)

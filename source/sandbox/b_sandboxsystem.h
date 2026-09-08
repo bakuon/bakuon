@@ -6,6 +6,9 @@
 #include <unordered_map>
 
 #include <QtCore/QObject>
+#include <QtCore/QPoint>
+#include <QtCore/QRect>
+#include <QtCore/QSize>
 #include <QtCore/QString>
 #include <QtCore/QVariantMap>
 #include <QtCore/QVector>
@@ -63,6 +66,10 @@ public:
     /// 对所有仍在注册表里的实例调用 shutdown()；不等待子进程真正退出。
     void shutdownAll();
 
+    /// 便捷方法：对指定 sandboxId 转发一次输入事件，见 SandboxSupervisor::dispatchInputEvent()。
+    bool dispatchInputEvent(const QString &sandboxId, int type, const QPoint &pos, int button,
+                            int modifiers, int key, const QString &text);
+
     /// 子进程真正退出（processFinished）后从注册表移除；之后 sandboxId 不再有效。
     void remove(const QString &sandboxId);
 
@@ -92,6 +99,9 @@ Q_SIGNALS:
     void sandboxFaulted(const QString &sandboxId, const QString &reason);
     /// 子进程已经真正退出（对应 SandboxSupervisor::processFinished），此后该 sandboxId 会被自动 remove()。
     void sandboxProcessFinished(const QString &sandboxId, int exitCode);
+    /// 转发自 SandboxSupervisor::frameReady，见 pluginsandboxcontrol.rep 里对应信号的说明。
+    void sandboxFrameReady(const QString &sandboxId, const QString &memoryKey, const QSize &size,
+                           int format, const QRect &dirtyRect);
     /**
      * @brief 注册中心里出现了一个本实例没有 spawn() 过的 PluginSandboxControl 对象。
      *

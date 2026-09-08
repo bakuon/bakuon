@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QtCore/QObject>
+#include <QtWidgets/QWidget>
 
 // 插件实现应当只依赖 include/bakuon/ 下的公开门面，
 // 不要直接 #include "gui/b_xxx.h" / "sandbox/b_xxx.h"（那些是内部实现细节）。
 #include "bakuon/gui/IPlugin.h"
+#include "bakuon/sandbox/IGuiSurfaceHandler.h"
 #include "bakuon/sandbox/ISandboxCommandHandler.h"
 
 namespace bakuon::plugins::sandboxed_example {
@@ -34,6 +36,47 @@ public:
 
 private:
     QString m_error;
+};
+
+/**
+ * @brief 跨进程 GUI 合成的最小验证用例：一个自绘的、带点击计数器的 QWidget。
+ *
+ * 故意画得很简单（纯色背景 + 居中文字），不追求美观——这个类存在的唯一目的是
+ * 用最少的代码同时验证两个方向都真正打通：
+ *  1. 渲染方向（Sandbox → Host）：数字变化后，Host 侧显示的画面应该跟着更新；
+ *  2. 输入方向（Host → Sandbox）：鼠标点击从 Host 转发过来、真的送达了这个
+ *     widget 的 mousePressEvent()，而不是石沉大海。
+ * 只要点击一次、数字真的从 0 变成 1，链路就是通的。
+ */
+class ClickCounterWidget final : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ClickCounterWidget(QWidget *parent = nullptr);
+
+    [[nodiscard]] int clickCount() const noexcept { return m_clickCount; }
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+
+private:
+    int m_clickCount = 0;
+};
+
+/// IGuiSurfaceHandler 的最小实现：把 ClickCounterWidget 包出去。
+class ClickCounterSurfaceHandler final : public bakuon::sandbox::IGuiSurfaceHandler
+{
+public:
+    explicit ClickCounterSurfaceHandler(QObject *parentForWidget);
+    ~ClickCounterSurfaceHandler() override;
+
+    QWidget *surfaceWidget() override { return m_widget; }
+
+private:
+    // 没有 parent（构造时传的是 nullptr，见 .cpp 里的说明），生命周期由本类自己
+    // 通过析构函数管理，不依赖 Qt 的父子对象自动清理机制。
+    ClickCounterWidget *m_widget;
 };
 
 /**
@@ -67,6 +110,7 @@ public:
 
 private:
     std::shared_ptr<SumFloatsCommandHandler> m_handler;
+    std::shared_ptr<ClickCounterSurfaceHandler> m_surfaceHandler;
 };
 
 } // namespace bakuon::plugins::sandboxed_example

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QtGui/QImage>
 #include <QtWidgets/QWidget>
 
 #include <sandbox/b_tabsandboxmanager.h>
@@ -11,15 +12,43 @@ class QPushButton;
 namespace bakuon::host {
 
 /**
- * @brief 单个 Tab 的占位内容视图。
+ * @brief 跨进程 GUI 合成的真实显示表面：把 TabSandboxManager::tabFrameReady()
+ * 送来的 QImage 画出来，并把这块区域收到的鼠标/键盘事件转发回沙箱进程。
  *
- * 跨进程 GUI 合成（沙箱插件真正渲染出来的像素回传到 Host 显示）还没有实现——
- * 见和 Yuri 讨论过的方案（offscreen QApplication + QSharedMemory 位图流 +
- * .rep 契约扩展帧/输入事件），已记录、待 TabHost 主线稳定后再着手。这个类现在
- * 展示的是"这个 Tab 背后的沙箱进程处于什么状态"——tabId/sandboxId/状态/日志——
- * 而不是插件真正的界面内容。等跨进程合成落地后，这里会被替换成真正接收/绘制
- * 帧数据的视图；对外接口（构造参数、tabId()）预计不需要变，方便到时候平滑替换
- * 而不用大改 MainWindow 里的调用方代码。
+ * 和 IGuiSurfaceHandler.h 里 SandboxRuntime 侧的 v1 已知限制对应：固定尺寸
+ * （480x360，和 SandboxRuntime 里 kSurfaceWidth/kSurfaceHeight 一致，没有做
+ * 运行期协商），按原样绘制不做缩放。
+ */
+class GuiSurfaceView final : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit GuiSurfaceView(QWidget *parent = nullptr);
+
+    void setFrame(const QImage &image, const QRect &dirtyRect);
+
+Q_SIGNALS:
+    /// type/button/modifiers/key 的取值约定见 sandbox::GuiInputEventType 等
+    /// （b_guisurfaceevents.h）——这里不直接用 Qt 的枚举，转换在 .cpp 里做一次，
+    /// 让"该用哪套取值约定"这件事只在一个地方决定。
+    void inputEvent(int type, QPoint pos, int button, int modifiers, int key, QString text);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+
+private:
+    QImage m_frame;
+};
+
+/**
+ * @brief 单个 Tab 的内容视图：状态诊断信息（tabId/sandboxId/状态/日志） +
+ * 真实的跨进程 GUI 合成显示表面（GuiSurfaceView）。
  */
 class TabContentWidget : public QWidget
 {
@@ -32,9 +61,15 @@ public:
     void setState(sandbox::TabState state);
     void setSandboxId(const QString &sandboxId);
     void appendLogLine(int level, const QString &message);
+    void setFrame(const QImage &image, const QRect &dirtyRect);
 
 Q_SIGNALS:
     void restartRequested(uint64_t tabId);
+    /// 转发自内部 GuiSurfaceView::inputEvent()，带上 tabId 方便 MainWindow
+    /// 直接转给 TabSandboxManager::dispatchInputEvent(tabId, ...)，不需要
+    /// MainWindow 自己再去反查"这个信号是哪个 Tab 发出来的"。
+    void inputEvent(uint64_t tabId, int type, QPoint pos, int button, int modifiers, int key,
+                    QString text);
 
 private:
     uint64_t m_tabId;
@@ -42,6 +77,8 @@ private:
     QLabel *m_sandboxIdLabel     = nullptr;
     QPlainTextEdit *m_log        = nullptr;
     QPushButton *m_restartButton = nullptr;
+    GuiSurfaceView *m_surface    = nullptr;
 };
 
 } // namespace bakuon::host
+

@@ -41,4 +41,9 @@ QString makeSharedMemoryKey(const QString &sandboxId, const QString &requestId)
     return QStringLiteral("bakuon-cmd-%1-%2").arg(sandboxId, requestId);
 }
 
+QString makeFrameMemoryKey(const QString &sandboxId)
+{
+    return QStringLiteral("bakuon-frame-%1").arg(sandboxId);
+}
+
 } // namespace bakuon::sandbox

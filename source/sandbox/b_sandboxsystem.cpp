@@ -126,6 +126,13 @@ void SandboxSystem::wireSupervisorSignals(const QString &sandboxId,
                 QMetaObject::invokeMethod(
                     this, [this, sandboxId] { remove(sandboxId); }, Qt::QueuedConnection);
             });
+    connect(supervisor.get(),
+            &SandboxSupervisor::frameReady,
+            this,
+            [this, sandboxId](const QString &memoryKey, const QSize &size, int format,
+                              const QRect &dirtyRect) {
+                Q_EMIT sandboxFrameReady(sandboxId, memoryKey, size, format, dirtyRect);
+            });
 }
 
 bool SandboxSystem::run(const QString &sandboxId)
@@ -155,6 +162,17 @@ bool SandboxSystem::shutdown(const QString &sandboxId)
         return false;
     }
     sup->shutdown();
+    return true;
+}
+
+bool SandboxSystem::dispatchInputEvent(const QString &sandboxId, int type, const QPoint &pos,
+                                       int button, int modifiers, int key, const QString &text)
+{
+    auto sup = supervisor(sandboxId);
+    if (!sup) {
+        return false;
+    }
+    sup->dispatchInputEvent(type, pos, button, modifiers, key, text);
     return true;
 }
 

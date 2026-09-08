@@ -1,3 +1,6 @@
+#include <QPoint>
+#include <QRect>
+#include <QSize>
 #include <QString>
 #include <QVariantMap>
 
@@ -52,9 +55,20 @@ class PluginSandboxControl
     SLOT(void stop());
     SLOT(void shutdownSandbox());
     SLOT(void executeCommand(QString requestId, QString commandId, QString memoryKey, QVariantMap params));
+    // 跨进程 GUI 合成——输入方向（Host → Sandbox）：见 IGuiSurfaceHandler.h。
+    // type/button/modifiers/key 的取值约定见 b_guisurfaceevents.h 里的
+    // GuiInputEventType/GuiMouseButton/GuiKeyModifier；这里不直接用 QEvent::Type
+    // 等 Qt 内部枚举，是为了让契约本身的取值稳定、不随 Qt 版本演进而改变含义。
+    SLOT(void dispatchInputEvent(int type, QPoint pos, int button, int modifiers, int key, QString text));
 
     // ── Sandbox → Host：事件通知 ──
     SIGNAL(logMessage(int level, QString message));
     SIGNAL(commandFinished(QString requestId, bool ok, QString memoryKey, QString errorMessage));
     SIGNAL(faulted(QString reason));
+    // 跨进程 GUI 合成——渲染方向（Sandbox → Host）：memoryKey 指向的共享内存段
+    // 由 Sandbox 侧 makeFrameMemoryKey() 创建、整个沙箱生命周期内固定不变，
+    // 每帧原地覆写，不重复创建；size/format 描述当前帧像素数据的解读方式
+    // （format 取值对应 QImage::Format），dirtyRect 预留给未来的脏矩形优化，
+    // v1 里恒等于整帧范围，见 b_sandboxruntime.cpp 顶部说明。
+    SIGNAL(frameReady(QString memoryKey, QSize size, int format, QRect dirtyRect));
 };

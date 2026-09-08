@@ -5,7 +5,10 @@
 
 #include <QtCore/QByteArray>
 #include <QtCore/QObject>
+#include <QtCore/QPoint>
 #include <QtCore/QProcess>
+#include <QtCore/QRect>
+#include <QtCore/QSize>
 #include <QtCore/QString>
 #include <QtCore/QVariantMap>
 
@@ -127,6 +130,15 @@ public:
     QString beginCommand(const QString &commandId, const QByteArray &inputPayload,
                          quint32 resultCapacity = 0, QVariantMap params = {});
 
+    /**
+     * @brief 转发一次输入事件给沙箱进程里的 GUI 表面（见 IGuiSurfaceHandler.h）。
+     * @note 参数含义/取值约定见 b_guisurfaceevents.h（GuiInputEventType 等）；
+     *       Replica 不可用（还没连上/已经断开）时静默忽略，不报错——上层
+     *       （TabSandboxManager）没有必要因为一次输入事件的丢失而中断。
+     */
+    void dispatchInputEvent(int type, const QPoint &pos, int button, int modifiers, int key,
+                            const QString &text);
+
     [[nodiscard]] const QString &sandboxId() const noexcept { return m_sandboxId; }
     [[nodiscard]] SandboxPhase phase() const noexcept { return m_phase; }
     [[nodiscard]] qint64 processId() const;
@@ -144,6 +156,8 @@ Q_SIGNALS:
     void faulted(const QString &reason);
     /// 子进程真正退出（QProcess::finished）时触发，携带退出码；之后本对象即可安全析构。
     void processFinished(int exitCode);
+    /// 转发自 Replica 的 frameReady：见 pluginsandboxcontrol.rep 里对应信号的说明。
+    void frameReady(const QString &memoryKey, const QSize &size, int format, const QRect &dirtyRect);
 
 private:
     void onReplicaStateChanged();

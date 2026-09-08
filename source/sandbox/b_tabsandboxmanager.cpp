@@ -14,6 +14,7 @@
 
 #include "sandbox/b_sandboxsupervisor.h"
 #include "sandbox/b_sandboxsystem.h"
+#include "sandbox/b_sharedmemorychannel.h"
 
 namespace bakuon::sandbox {
 
@@ -45,6 +46,10 @@ TabSandboxManager::TabSandboxManager(QString sandboxRuntimeExecutable, QObject *
             &SandboxSystem::orphanDiscovered,
             this,
             &TabSandboxManager::onOrphanDiscovered);
+    connect(m_sandboxSystem.get(),
+            &SandboxSystem::sandboxFrameReady,
+            this,
+            &TabSandboxManager::onFrameReady);
 }
 
 TabSandboxManager::~TabSandboxManager()
@@ -364,6 +369,17 @@ void TabSandboxManager::closeAll()
     }
 }
 
+bool TabSandboxManager::dispatchInputEvent(uint64_t tabId, int type, const QPoint &pos, int button,
+                                           int modifiers, int key, const QString &text)
+{
+    auto it = m_tabs.find(tabId);
+    if (it == m_tabs.end() || it->second.sandboxId.isEmpty()) {
+        return false; // 没有这个 Tab，或者它还没有一个有效的沙箱进程可以送达
+    }
+    return m_sandboxSystem
+        ->dispatchInputEvent(it->second.sandboxId, type, pos, button, modifiers, key, text);
+}
+
 bool TabSandboxManager::restartTab(uint64_t tabId)
 {
     auto it = m_tabs.find(tabId);
@@ -380,6 +396,7 @@ bool TabSandboxManager::restartTab(uint64_t tabId)
         // 先摘掉旧的 sandboxId -> tabId 映射再发起 shutdown()，这样旧实例真正退出、
         // 触发 handleProcessFinished 时会因为查不到映射而直接忽略（见该函数实现），
         // 不会覆盖我们即将建立的新映射。
+        m_frameChannels.erase(session.sandboxId); // 旧帧缓冲的挂载对新实例没有意义
         m_sandboxIdToTab.erase(session.sandboxId);
         m_sandboxSystem->shutdown(session.sandboxId);
         session.sandboxId.clear();
@@ -403,6 +420,7 @@ void TabSandboxManager::finalizeSession(TabSession &session, bool emitClosed)
 
     session.state = TabState::Faulted;
     if (!session.sandboxId.isEmpty()) {
+        m_frameChannels.erase(session.sandboxId); // 释放帧缓冲共享内存的挂载（如果有）
         m_sandboxIdToTab.erase(session.sandboxId);
         m_sandboxSystem->remove(session.sandboxId);
         session.sandboxId.clear();
@@ -622,6 +640,46 @@ void TabSandboxManager::onOrphanDiscovered(const QString &sandboxId)
     }
     m_pendingOrphans.push_back(sandboxId);
     Q_EMIT orphanSandboxAvailable(sandboxId);
+}
+
+void TabSandboxManager::onFrameReady(const QString &sandboxId, const QString &memoryKey,
+                                     const QSize &size, int format, const QRect &dirtyRect)
+{
+    auto tabIt = m_sandboxIdToTab.find(sandboxId);
+    if (tabIt == m_sandboxIdToTab.end()) {
+        return; // 不认识的 sandboxId（比如 restartTab() 刚摘掉映射的旧实例），忽略
+    }
+
+    auto chIt = m_frameChannels.find(sandboxId);
+    if (chIt == m_frameChannels.end()) {
+        // 第一次收到这个沙箱实例的帧：挂载一次，之后每帧复用同一个挂载原地重读，
+        // 不重复 attach/detach（帧缓冲共享内存段是沙箱侧整个生命周期内固定的一块，
+        // 见 makeFrameMemoryKey() / SandboxRuntime 里 GUI 表面捕获那部分的说明）。
+        auto channel = std::make_unique<SharedMemoryChannel>();
+        if (auto err = channel->attach(memoryKey)) {
+            qWarning() << "TabSandboxManager: 挂载帧缓冲共享内存失败" << memoryKey << *err;
+            return;
+        }
+        chIt = m_frameChannels.emplace(sandboxId, std::move(channel)).first;
+    }
+
+    const QByteArray raw     = chIt->second->readPayload();
+    const auto expectedBytes = static_cast<qsizetype>(size.width())
+                               * static_cast<qsizetype>(size.height()) * 4;
+    if (raw.size() < expectedBytes) {
+        qWarning() << "TabSandboxManager: 帧数据大小不符，期望至少" << expectedBytes << "实际"
+                   << raw.size();
+        return;
+    }
+
+    // QImage 直接借用 raw 的内存构造（不拷贝），必须在 raw 存活期间就 .copy() 出去一份
+    // 独立数据——raw 是本函数的局部变量，函数返回后就会被释放，signal 的接收方
+    // （可能是跨对象的槽函数，执行时机不确定）绝不能拿到一个借用了已释放内存的 QImage。
+    const QImage borrowedView(reinterpret_cast<const uchar *>(raw.constData()),
+                              size.width(),
+                              size.height(),
+                              static_cast<QImage::Format>(format));
+    Q_EMIT tabFrameReady(tabIt->second, borrowedView.copy(), dirtyRect);
 }
 
 } // namespace bakuon::sandbox
