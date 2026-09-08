@@ -32,7 +32,7 @@ CommandModel::CommandModel(ICommandLayout* layout, QObject* parent)
 
 CommandItem CommandModel::itemFromIndex(const QModelIndex& index) const
 {
-    return index.isValid() ? m_layout->createItem(index.internalPointer())
+    return index.isValid() ? m_layout->createItem(index.row(), index.internalPointer())
                            : m_layout->invisibleItem();
 }
 
@@ -258,7 +258,8 @@ bool CommandModel::dropMimeData(const QMimeData* data, Qt::DropAction action, in
         if (!item.isValid()) {
             return false;
         }
-        return moveItemChecked(item, targetParent, targetRow);
+        QModelIndex sourceParent = indexFromItem(item.parent());
+        return moveRow(sourceParent, item.index(), parent, targetRow);
     }
 
     if (data->hasFormat(QString::fromLatin1(kExternalCommandMimeType))) {

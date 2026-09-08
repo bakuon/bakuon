@@ -21,7 +21,7 @@ CommandLayout::Node *CommandLayout::node(const CommandItem &item) const
 
 CommandItem CommandLayout::invisibleItem() const
 {
-    return createItem(m_root.get());
+    return createItem(0, m_root.get());
 }
 
 CommandItem CommandLayout::parentItem(const CommandItem &child) const
@@ -30,7 +30,7 @@ CommandItem CommandLayout::parentItem(const CommandItem &child) const
     if (!n || n == m_root.get()) {
         return {};
     }
-    return createItem(n->parent());
+    return createItem(static_cast<int>(n->index()), n->parent());
 }
 
 CommandItem CommandLayout::itemAt(std::size_t index, const CommandItem &parent) const
@@ -39,7 +39,7 @@ CommandItem CommandLayout::itemAt(std::size_t index, const CommandItem &parent) 
     if (!p || index >= p->childCount())
         return {};
     if (Node *child = p->childAt(index))
-        return createItem(child);
+        return createItem(static_cast<int>(child->index()), child);
     return {};
 }
 
@@ -90,7 +90,7 @@ CommandItem CommandLayout::itemFromPath(std::span<const std::size_t> path) const
     if (!m_root)
         return {};
     Node *n = m_root->pathNode(path);
-    return n ? createItem(n) : CommandItem{};
+    return n ? createItem(static_cast<int>(n->index()), n) : CommandItem{};
 }
 
 bool CommandLayout::isValidPath(std::span<const std::size_t> path) const noexcept
@@ -146,7 +146,7 @@ CommandItem CommandLayout::take(CommandItem parent, int index)
     // 这里可以把 owned 存进一个“游离节点表”，或直接返回句柄
     // 最简单的做法：释放到裸指针，由调用方保证后续会 re-attach 或手动管理
     Node *raw                   = owned.release();
-    return createItem(raw);
+    return createItem(static_cast<int>(raw->index()), raw);
 }
 
 bool CommandLayout::move(CommandItem sourceItem, CommandItem targetParent, int targetIndex)
@@ -196,7 +196,7 @@ CommandItem CommandLayout::addContainer(const QString &title, CommandItem parent
     data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Container);
 
     Node *child = insertChild(p, std::move(data), index);
-    return child ? createItem(child) : CommandItem{};
+    return child ? createItem(static_cast<int>(child->index()), child) : CommandItem{};
 }
 
 CommandItem CommandLayout::addCommand(const QString &id, CommandItem parent, int index)
@@ -210,7 +210,7 @@ CommandItem CommandLayout::addCommand(const QString &id, CommandItem parent, int
     data[CommandItem::CommandRole] = id;
 
     Node *child = insertChild(p, std::move(data), index);
-    return child ? createItem(child) : CommandItem{};
+    return child ? createItem(static_cast<int>(child->index()), child) : CommandItem{};
 }
 
 CommandItem CommandLayout::addSeparator(CommandItem parent, int index)
@@ -227,7 +227,7 @@ CommandItem CommandLayout::addSeparator(CommandItem parent, int index)
     data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Separator);
 
     Node *child = insertChild(p, std::move(data), index);
-    return child ? createItem(child) : CommandItem{};
+    return child ? createItem(static_cast<int>(child->index()), child) : CommandItem{};
 }
 
 CommandItem CommandLayout::addSection(const QString &title, CommandItem parent, int index)
@@ -244,7 +244,7 @@ CommandItem CommandLayout::addSection(const QString &title, CommandItem parent, 
     data[CommandItem::TypeRole]    = QVariant::fromValue(CommandItem::Type::Section);
 
     Node *child = insertChild(p, std::move(data), index);
-    return child ? createItem(child) : CommandItem{};
+    return child ? createItem(static_cast<int>(child->index()), child) : CommandItem{};
 }
 
 QVariant CommandLayout::itemData(CommandItem item, int role) const

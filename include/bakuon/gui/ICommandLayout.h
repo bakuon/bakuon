@@ -26,12 +26,13 @@ public:
     };
 
     CommandItem()
-        : m_id(0)
+        : m_i(-1)
+        , m_id(0)
         , m_layout(nullptr)
     {
     }
 
-    [[nodiscard]] inline bool isValid() const noexcept { return m_id != 0 && m_layout != nullptr; }
+    [[nodiscard]] inline bool isValid() const noexcept { return m_i >= 0 && m_layout != nullptr; }
     explicit inline operator bool() const noexcept { return isValid(); }
 
     [[nodiscard]] inline QVariant data(int role) const;
@@ -53,19 +54,22 @@ public:
 
 private:
     friend class ICommandLayout;
-    CommandItem(const ICommandLayout* layout, const void* ptr) noexcept
-        : m_id(reinterpret_cast<std::uintptr_t>(ptr))
+    CommandItem(const ICommandLayout* layout, int i, const void* ptr) noexcept
+        : m_i(i)
+        , m_id(reinterpret_cast<std::uintptr_t>(ptr))
         , m_layout(layout)
     {
     }
 
-    CommandItem(const ICommandLayout* layout, std::uintptr_t id) noexcept
-        : m_id(id)
+    CommandItem(const ICommandLayout* layout, int i, std::uintptr_t id) noexcept
+        : m_i(i)
+        , m_id(id)
         , m_layout(layout)
     {
     }
 
 private:
+    int m_i;
     std::uintptr_t m_id;
     const ICommandLayout* m_layout;
 };
@@ -116,8 +120,8 @@ public:
     virtual bool save(const QString& filePath) const = 0;
     virtual bool load(const QString& filePath)       = 0;
 
-    inline CommandItem createItem(const void* ptr = nullptr) const;
-    inline CommandItem createItem(std::uintptr_t id) const;
+    inline CommandItem createItem(int i, const void* ptr = nullptr) const;
+    inline CommandItem createItem(int i, std::uintptr_t id) const;
 };
 
 inline QVariant CommandItem::data(int role) const
@@ -148,13 +152,13 @@ inline std::vector<std::size_t> CommandItem::path() const
 {
     return m_layout ? m_layout->itemPath(*this) : std::vector<std::size_t>{};
 }
-inline CommandItem ICommandLayout::createItem(const void* ptr) const
+inline CommandItem ICommandLayout::createItem(int i, const void* ptr) const
 {
-    return CommandItem{this, ptr};
+    return CommandItem{this, i, ptr};
 }
-inline CommandItem ICommandLayout::createItem(std::uintptr_t id) const
+inline CommandItem ICommandLayout::createItem(int i, std::uintptr_t id) const
 {
-    return CommandItem{this, id};
+    return CommandItem{this, i, id};
 }
 
 } // namespace bakuon::gui
