@@ -28,7 +28,7 @@ CustomizeMenuDialog::CustomizeMenuDialog(gui::CommandModel* model, QWidget* pare
     m_tree->setDragEnabled(true);
     m_tree->setAcceptDrops(true);
     m_tree->setDropIndicatorShown(true);
-    m_tree->setDragDropMode(QAbstractItemView::InternalMove);
+    m_tree->setDragDropMode(QAbstractItemView::DragDrop);
     m_tree->expandAll();
 
     auto* upBtn     = new QPushButton(QStringLiteral("上移"), this);
