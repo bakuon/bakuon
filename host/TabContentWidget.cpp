@@ -69,9 +69,20 @@ GuiSurfaceView::GuiSurfaceView(QWidget *parent)
 
 void GuiSurfaceView::setFrame(const QImage &image, const QRect &dirtyRect)
 {
-    Q_UNUSED(dirtyRect) // v1 恒等于整帧范围，这里直接整体替换，见类文档
-    m_frame = image;
-    update();
+    // image 现在通常只是脏矩形那一小块（见 SandboxRuntime::captureAndSendFrame()
+    // 的说明），不是整张画面——必须原地拼贴到持有的完整画面缓冲上，而不是整体替换，
+    // 否则每次局部更新都会把画面其余部分"擦掉"。
+    if (m_frame.size() != size()) {
+        // 还没有基线画面（第一帧，dirtyRect 覆盖整个 widget，image 本身就是完整画面），
+        // 或者尺寸对不上（v1 是固定尺寸，理论上不会发生，防御性地重新起一张底图）：
+        // 用黑色打底，等第一帧/后续帧把内容拼上去。
+        m_frame = QImage(size(), QImage::Format_ARGB32);
+        m_frame.fill(Qt::black);
+    }
+    QPainter painter(&m_frame);
+    painter.drawImage(dirtyRect.topLeft(), image);
+    painter.end();
+    update(dirtyRect); // 只重绘变化的区域，Qt 自己也能省一点重绘工作量
 }
 
 void GuiSurfaceView::paintEvent(QPaintEvent *event)

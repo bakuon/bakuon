@@ -13,11 +13,17 @@ namespace bakuon::host {
 
 /**
  * @brief 跨进程 GUI 合成的真实显示表面：把 TabSandboxManager::tabFrameReady()
- * 送来的 QImage 画出来，并把这块区域收到的鼠标/键盘事件转发回沙箱进程。
+ * 送来的 QImage 拼贴到自己持有的完整画面缓冲上，并把这块区域收到的鼠标/键盘
+ * 事件转发回沙箱进程。
  *
- * 和 IGuiSurfaceHandler.h 里 SandboxRuntime 侧的 v1 已知限制对应：固定尺寸
- * （480x360，和 SandboxRuntime 里 kSurfaceWidth/kSurfaceHeight 一致，没有做
- * 运行期协商），按原样绘制不做缩放。
+ * setFrame() 收到的 image 通常只是脏矩形那一小块（Sandbox 侧做了变化检测 +
+ * 真脏矩形裁剪，见 b_sandboxruntime.cpp 里 captureAndSendFrame() 的说明），
+ * 不是每次都传整张画面——本类内部用 QPainter 把它按 dirtyRect 的位置贴回持有的
+ * 完整画面（m_frame），paintEvent() 画的是这份持续累积出来的完整画面，
+ * 不是某一次收到的局部小图。
+ *
+ * 仍然保留的已知限制：固定尺寸（480x360，和 SandboxRuntime 里
+ * kSurfaceWidth/kSurfaceHeight 一致，没有做运行期协商），按原样绘制不做缩放。
  */
 class GuiSurfaceView final : public QWidget
 {
@@ -81,4 +87,3 @@ private:
 };
 
 } // namespace bakuon::host
-

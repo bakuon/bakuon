@@ -207,28 +207,46 @@ public:
 
         switch (static_cast<GuiInputEventType>(type)) {
         case GuiInputEventType::MouseMove: {
-            QMouseEvent ev(QEvent::MouseMove, QPointF(pos), QPointF(pos),
-                          Qt::MouseButton::NoButton, qtButton, qtModifiers);
+            QMouseEvent ev(QEvent::MouseMove,
+                           QPointF(pos),
+                           QPointF(pos),
+                           Qt::MouseButton::NoButton,
+                           qtButton,
+                           qtModifiers);
             QCoreApplication::sendEvent(m_surfaceWidget, &ev);
             break;
         }
         case GuiInputEventType::MousePress: {
             const Qt::MouseButton primary = toSingleQtMouseButton(button);
-            QMouseEvent ev(QEvent::MouseButtonPress, QPointF(pos), QPointF(pos), primary,
-                          qtButton, qtModifiers);
+            QMouseEvent ev(QEvent::MouseButtonPress,
+                           QPointF(pos),
+                           QPointF(pos),
+                           primary,
+                           qtButton,
+                           qtModifiers);
             QCoreApplication::sendEvent(m_surfaceWidget, &ev);
             break;
         }
         case GuiInputEventType::MouseRelease: {
             const Qt::MouseButton primary = toSingleQtMouseButton(button);
-            QMouseEvent ev(QEvent::MouseButtonRelease, QPointF(pos), QPointF(pos), primary,
-                          Qt::MouseButton::NoButton, qtModifiers);
+            QMouseEvent ev(QEvent::MouseButtonRelease,
+                           QPointF(pos),
+                           QPointF(pos),
+                           primary,
+                           Qt::MouseButton::NoButton,
+                           qtModifiers);
             QCoreApplication::sendEvent(m_surfaceWidget, &ev);
             break;
         }
         case GuiInputEventType::Wheel: {
-            QWheelEvent ev(QPointF(pos), QPointF(pos), QPoint(), QPoint(0, key), qtButton,
-                          qtModifiers, Qt::NoScrollPhase, false);
+            QWheelEvent ev(QPointF(pos),
+                           QPointF(pos),
+                           QPoint(),
+                           QPoint(0, key),
+                           qtButton,
+                           qtModifiers,
+                           Qt::NoScrollPhase,
+                           false);
             QCoreApplication::sendEvent(m_surfaceWidget, &ev);
             break;
         }
@@ -309,6 +327,21 @@ private:
      * 这些都是为了先把"链路通不通"跑通、有意收窄的范围，见
      * IGuiSurfaceHandler.h 和 pluginsandboxcontrol.rep 里 frameReady 的说明。
      */
+    /**
+     * @details run() 成功后调用一次：如果插件注册了 IGuiSurfaceHandler，
+     * 把它的 widget 定住固定尺寸、创建帧缓冲共享内存段、安装脏区域监听、
+     * 启动周期性抓帧定时器。
+     *
+     * v1.1 更新：已经做了变化检测 + 真脏矩形裁剪，见 eventFilter()/captureAndSendFrame()。
+     * 仍然保留的已知限制（后续优化方向，不在本次范围内）：
+     *  1. 固定尺寸，不支持运行期 resize()。
+     *  2. 固定 10fps 轮询上限（有变化才真正抓帧发送，但检测本身仍然是定时轮询，
+     *     不是每次 update() 立即触发——这是刻意的节流，避免密集重绘时每次都
+     *     发一帧，把带宽让给"按最高 10fps 合并发送"）。
+     *  3. 同一沙箱进程只取第一个注册的 IGuiSurfaceHandler。
+     * 这些都是为了先把"链路通不通"跑通、有意收窄的范围，见
+     * IGuiSurfaceHandler.h 和 pluginsandboxcontrol.rep 里 frameReady 的说明。
+     */
     void startGuiSurfaceCaptureIfAvailable()
     {
         if (m_surfaceWidget) {
@@ -332,19 +365,44 @@ private:
 
         // 固定尺寸：见类文档"已知限制"第 1 条。480x360 只是一个能验证链路的合理初始值。
         m_surfaceWidget->resize(kSurfaceWidth, kSurfaceHeight);
+        // 关键一步：Qt 的 update()/重绘调度机制只对"可见"widget 生效——一个从未
+        // show() 过的 widget，调用 update() 不会真正产生 QEvent::Paint（Qt 认为
+        // "反正没人看得见，调度它干什么"，直接丢弃这次请求，widget 变成不可见时
+        // 后续的 update() 调用全部沉默失败）。但本类的整个设计前提就是这个 widget
+        // 永远不能真的显示到屏幕上（这是运行在 `-platform offscreen` 下的沙箱进程，
+        // 压根没有真实窗口系统）。`Qt::WA_DontShowOnScreen` 是 Qt 官方为这类场景
+        // 提供的属性：让 widget 在内部各种事件/调度逻辑里被当成"已经 show() 过"
+        // 处理（因此 update() 能正常触发真正的 QEvent::Paint），但不会真的创建/
+        // 合成任何原生窗口——不加这一步，本类依赖 QEvent::Paint 做的变化检测/
+        // 脏矩形裁剪会在第一帧之后完全失效（第一帧能画出来是因为 grab() 自己
+        // 强制渲染，绕过了这层可见性判断；之后 widget 自己 update() 调度的重绘
+        // 则一直被无声丢弃）。
+        m_surfaceWidget->setAttribute(Qt::WA_DontShowOnScreen, true);
+        m_surfaceWidget->show();
 
-        const QString frameKey = makeFrameMemoryKey(m_sandboxId);
-        const quint32 frameBytes
-            = static_cast<quint32>(kSurfaceWidth) * static_cast<quint32>(kSurfaceHeight) * 4;
+        const QString frameKey   = makeFrameMemoryKey(m_sandboxId);
+        const quint32 frameBytes = static_cast<quint32>(kSurfaceWidth)
+                                   * static_cast<quint32>(kSurfaceHeight) * 4;
         if (auto err = m_frameChannel.create(frameKey, QByteArray(), frameBytes)) {
-            Q_EMIT logMessage(2 /*Error*/,
-                              QStringLiteral("帧缓冲共享内存创建失败：%1").arg(*err));
+            Q_EMIT logMessage(2 /*Error*/, QStringLiteral("帧缓冲共享内存创建失败：%1").arg(*err));
             m_surfaceWidget = nullptr;
             return;
         }
 
+        // 监听 widget 自己的 QEvent::Paint，累积"这段时间内到底哪些区域真的被
+        // 重绘过"的并集矩形——这是脏矩形的数据来源：直接问 Qt 自己刚刚画了哪里，
+        // 比"抓两帧图逐像素比较找差异"更省、更准确（后者对 480x360 这种小尺寸
+        // 影响不大，但语义上"问 Qt 自己"更直接、也不需要额外持有一份"上一帧"
+        // 的拷贝）。initialDirtyRect 覆盖整个 widget，保证第一帧发出去的是完整画面
+        // （Host 侧此时还没有任何基线画面可以拼接）。
+        m_surfaceWidget->installEventFilter(this);
+        m_pendingDirtyRect = m_surfaceWidget->rect();
+
         m_frameTimer = new QTimer(this);
-        connect(m_frameTimer, &QTimer::timeout, this, &SandboxControlSourceImpl::captureAndSendFrame);
+        connect(m_frameTimer,
+                &QTimer::timeout,
+                this,
+                &SandboxControlSourceImpl::captureAndSendFrame);
         m_frameTimer->start(kFrameIntervalMs);
         captureAndSendFrame(); // 立即发一帧，不等第一个定时器 tick，减少用户能感知到的首帧延迟
     }
@@ -356,25 +414,59 @@ private:
             m_frameTimer->deleteLater();
             m_frameTimer = nullptr;
         }
-        m_surfaceWidget = nullptr; // 不 delete：widget 的生命周期属于插件自己，本类只是借用指针
+        if (m_surfaceWidget) {
+            m_surfaceWidget->removeEventFilter(this);
+            m_surfaceWidget->hide(); // 对应 startGuiSurfaceCaptureIfAvailable() 里的 show()
+        }
+        m_surfaceWidget    = nullptr; // 不 delete：widget 的生命周期属于插件自己，本类只是借用指针
+        m_pendingDirtyRect = QRect();
+    }
+
+    /// 监听 m_surfaceWidget 的 QEvent::Paint，累积脏区域；只观察不拦截
+    /// （永远返回 false，绝不吞掉事件——那会让 widget 真的没画上，画面出错）。
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == m_surfaceWidget && event->type() == QEvent::Paint && !m_capturingFrame) {
+            auto *paintEvent   = static_cast<QPaintEvent *>(event);
+            m_pendingDirtyRect = m_pendingDirtyRect.united(paintEvent->rect());
+        }
+        return PluginSandboxControlSimpleSource::eventFilter(watched, event);
     }
 
     void captureAndSendFrame()
     {
-        if (!m_surfaceWidget) {
+        if (!m_surfaceWidget || m_pendingDirtyRect.isEmpty()) {
+            return; // 变化检测：这段时间里 widget 没有任何真实重绘，直接跳过，
+                    // 不抓帧、不写共享内存、不发信号——这是本轮优化的核心。
+        }
+
+        // 和 widget 自身范围求交：event filter 累积的矩形理论上不会越界，这里只是
+        // 防御性裁剪，避免任何边界计算误差导致 grab() 越界。
+        const QRect dirtyRect = m_pendingDirtyRect.intersected(m_surfaceWidget->rect());
+        m_pendingDirtyRect    = QRect();
+        if (dirtyRect.isEmpty()) {
             return;
         }
-        const QImage image
-            = m_surfaceWidget->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+
+        m_capturingFrame   = true;
+        const QImage image = m_surfaceWidget->grab(dirtyRect).toImage().convertToFormat(
+            QImage::Format_ARGB32);
+        m_capturingFrame = false;
+
         const QByteArray raw(reinterpret_cast<const char *>(image.constBits()),
                              static_cast<qsizetype>(image.sizeInBytes()));
         if (auto err = m_frameChannel.writePayload(raw)) {
             Q_EMIT logMessage(1 /*Warning*/, QStringLiteral("帧数据写入共享内存失败：%1").arg(*err));
             return;
         }
-        Q_EMIT frameReady(m_frameChannel.key(), image.size(),
+        // size 字段的含义是"这次传输的像素数据尺寸"，不是 widget 的完整尺寸——
+        // 大多数帧只是局部更新，image.size() 就等于 dirtyRect.size()，Host 侧
+        // （TabContentWidget::GuiSurfaceView）按 dirtyRect 的位置把这块小图贴回
+        // 自己持有的完整画面缓冲，而不是整体替换，见该类的说明。
+        Q_EMIT frameReady(m_frameChannel.key(),
+                          image.size(),
                           static_cast<int>(QImage::Format_ARGB32),
-                          QRect(QPoint(0, 0), image.size()));
+                          dirtyRect);
     }
 
     [[nodiscard]] static Qt::MouseButtons toQtMouseButton(int button)
@@ -440,6 +532,8 @@ private:
     QWidget *m_surfaceWidget = nullptr; // 借用指针，生命周期属于插件
     SharedMemoryChannel m_frameChannel;
     QTimer *m_frameTimer = nullptr;
+    QRect m_pendingDirtyRect;      // 自上次发送以来累积的脏区域（并集）
+    bool m_capturingFrame = false; // grab() 期间守卫，见 eventFilter() 的说明
 };
 
 SandboxRuntime::SandboxRuntime(QString sandboxId, QObject *parent)

@@ -35,6 +35,15 @@ bool waitUntil(Predicate predicate, int timeoutMs = 5000)
     return predicate();
 }
 
+/// 单纯把事件循环晾一段时间，不等待任何成功条件——用于"验证在这段时间里
+/// 什么都没有发生"这类断言（变化检测：画面静止时不应该再收到新帧）。
+void spinWithoutExpectation(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
 QString sandboxRuntimePath()
 {
     return QString::fromLatin1(BAKUON_TEST_SANDBOX_RUNTIME_PATH);
@@ -88,6 +97,21 @@ TEST(GuiSurfaceCompositingTest, RenderAndInputRoundTripThroughSandbox)
         << "渲染方向没有打通——一直没收到任何一帧画面";
     EXPECT_EQ(firstFrame.size(), QSize(480, 360));
     EXPECT_FALSE(firstFrame.allGray()) << "首帧应该是有颜色的背景（蓝色调），不应该是灰阶/空白";
+
+    // show()（为了让 update() 真正生效，见 SandboxRuntime 里 WA_DontShowOnScreen 的说明）
+    // 自己会触发一次"自然"的首次真实重绘，和我们手动调用一次 captureAndSendFrame()
+    // 几乎同时发生，但走的是异步的事件循环调度，不一定卡在同一个时间点——这里先让
+    // 这个启动瞬态过去，再开始统计"画面静止时是否还在发新帧"，避免把这个良性的
+    // 一次性事件误判成变化检测没生效。
+    spinWithoutExpectation(300);
+
+    // 变化检测验证：画面完全静止的这段时间里，不应该再收到任何新的一帧——
+    // 这是本轮"优化方向"里分量最重的一项，光靠上面"收到过帧"不足以证明它生效，
+    // 必须反过来证明"没有变化就真的不再发送"。
+    const int idleFrameCount = frameCount;
+    spinWithoutExpectation(500);
+    EXPECT_EQ(frameCount, idleFrameCount)
+        << "画面静止期间不应该再收到新帧——变化检测没有生效，还在无脑轮询发送";
 
     // 发一次鼠标点击（在 widget 中心），validate 输入方向。
     ASSERT_TRUE(manager.dispatchInputEvent(tabId, static_cast<int>(GuiInputEventType::MousePress),
