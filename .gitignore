@@ -1,0 +1,4 @@
+/build
+/.vscode
+/.cache
+git_push.bat
