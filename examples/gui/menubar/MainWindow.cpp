@@ -1,0 +1,142 @@
+#include "MainWindow.h"
+#include "Constants.h"
+#include "CustomizeMenuDialog.h"
+#include "EditorSurface.h"
+
+#include <QtWidgets/QStatusBar>
+#include <QtWidgets/QTabWidget>
+
+namespace bakuon::examples {
+
+MainWindow::MainWindow()
+    : QMainWindow(nullptr)
+{
+    setWindowTitle(QStringLiteral("上下文感知命令系统 - 菜单自定义布局示例"));
+    resize(760, 520);
+
+    registerCommands(); // 先建立完整的命令目录（存在性 + 行为），与菜单布局的加载顺序无关
+
+    auto* tabs    = new QTabWidget(this);
+    auto welcome  = new QLabel(QStringLiteral("Welcome panel"));
+    m_imageCanvas = new EditorSurface(QStringLiteral("图像编辑器"),
+                                      kImageFocused,
+                                      kImageObjectSelected,
+                                      tabs);
+    m_scene3d     = new EditorSurface(QStringLiteral("3D 编辑器"),
+                                      kScene3dFocused,
+                                      kScene3dObjectSelected,
+                                      tabs);
+
+    welcome->setFocusPolicy(Qt::StrongFocus);
+    welcome->setAlignment(Qt::AlignCenter);
+    m_imageCanvas->setObjectName(QStringLiteral("Image Editor"));
+    m_scene3d->setObjectName(QStringLiteral("3D Editor"));
+    tabs->addTab(welcome, QStringLiteral("欢迎"));
+    tabs->addTab(m_imageCanvas, QStringLiteral("图像编辑"));
+    tabs->addTab(m_scene3d, QStringLiteral("3D 编辑"));
+    setCentralWidget(tabs);
+
+    buildDefaultMenuLayout(); // CommandManager -> CommandModel -> MenuBarBuilder -> QMenuBar
+    buildToolBar();           // 工具栏本次不纳入自定义范围，仍直接摆放代理 QAction
+
+    gui::CommandSystem::pushContext(kCtxGlobal, this);
+    statusBar()->showMessage(
+        QStringLiteral("提示：菜单(&V)视图 -> 自定义菜单布局…，可拖拽/重排/存盘"));
+}
+
+MainWindow::~MainWindow()
+{
+    gui::CommandSystem::releaseContext(this);
+}
+
+void MainWindow::registerCommands()
+{
+    auto& del = gui::CommandSystem::registerCommand(kCmdDelete, QStringLiteral("删除"));
+    del.setShortcut(QKeySequence::Delete);
+    del.setAttribute(gui::Command::Attribute::UpdateEnabled);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    del.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditDelete));
+#endif
+
+    auto& dup = gui::CommandSystem::registerCommand(kCmdDuplicate, QStringLiteral("复制"));
+    dup.setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
+    dup.setAttribute(gui::Command::Attribute::HideWhenIdle, true); // test hidden
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    dup.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditCopy));
+#endif
+
+    auto& paste = gui::CommandSystem::registerCommand(kCmdPaste, QStringLiteral("粘贴"));
+    del.setShortcut(QKeySequence::Paste);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    paste.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::EditPaste));
+#endif
+
+    auto& save = gui::CommandSystem::registerCommand(kCmdSave, QStringLiteral("保存"));
+    save.setShortcut(QKeySequence::Save);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    save.setDefaultIcon(QIcon::fromTheme(QIcon::ThemeIcon::DocumentSave));
+#endif
+
+    auto& customize = gui::CommandSystem::registerCommand(kCmdCustomize, QStringLiteral("自定义"));
+    customize.setShortcut(QKeySequence(Qt::Key_O));
+
+    m_saveRealAction = new QAction(QStringLiteral("保存"), this);
+    connect(m_saveRealAction, &QAction::triggered, this, [this]() {
+        statusBar()->showMessage(QStringLiteral("已保存"), 2000);
+    });
+
+    m_customizeAction = new QAction(QStringLiteral("自定义菜单布局…"), this);
+    connect(m_customizeAction, &QAction::triggered, this, [this]() {
+        CustomizeMenuDialog dlg(m_menuModel, this);
+        dlg.exec();
+    });
+
+    gui::CommandSystem::context(kCtxGlobal)->addAction(save.id(), m_saveRealAction);
+    gui::CommandSystem::context(kCtxGlobal)->addAction(customize.id(), m_customizeAction);
+}
+
+void MainWindow::buildDefaultMenuLayout()
+{
+    m_menuLayout  = new gui::CommandLayout;
+    auto fileMenu = m_menuLayout->addContainer(QStringLiteral("文件(&F)"));
+    m_menuLayout->addCommand(kCmdSave.toString(), fileMenu);
+
+    auto editMenu = m_menuLayout->addContainer(QStringLiteral("编辑(&E)"));
+    m_menuLayout->addCommand(kCmdDelete.toString(), editMenu);
+    m_menuLayout->addSeparator(editMenu);
+    m_menuLayout->addCommand(kCmdDuplicate.toString(), editMenu);
+    m_menuLayout->addCommand(kCmdPaste.toString(), editMenu);
+
+    auto viewMenu = m_menuLayout->addContainer(QStringLiteral("视图(&V)"));
+    m_menuLayout->addCommand(kCmdCustomize.toString(), viewMenu);
+
+    // 默认布局搭好之后，才创建 CommandModel 包一层——供"自定义菜单布局"对话框使用。
+    m_menuModel = new gui::CommandModel(m_menuLayout, this);
+
+    // 模型任何结构性变化（拖拽/上移下移/删除/改名/整体 loadLayoutFromFile 重置）
+    // 都重新整体渲染一次菜单栏，让"自定义菜单布局"对话框里的编辑实时生效。
+    auto rebuild = [this]() { rebuildMenuBar(); };
+    connect(m_menuModel, &QAbstractItemModel::dataChanged, this, rebuild);
+    connect(m_menuModel, &QAbstractItemModel::rowsInserted, this, rebuild);
+    connect(m_menuModel, &QAbstractItemModel::rowsRemoved, this, rebuild);
+    connect(m_menuModel, &QAbstractItemModel::rowsMoved, this, rebuild);
+    connect(m_menuModel, &QAbstractItemModel::modelReset, this, rebuild);
+
+    rebuildMenuBar();
+}
+
+void MainWindow::rebuildMenuBar()
+{
+    gui::CommandSystem::renderMenuBar(m_menuLayout, menuBar());
+}
+
+void MainWindow::buildToolBar()
+{
+    auto* toolBar = addToolBar(QStringLiteral("常用操作"));
+    toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    toolBar->addAction(gui::CommandSystem::command(kCmdDelete)->action());
+    toolBar->addAction(gui::CommandSystem::command(kCmdDuplicate)->action());
+    toolBar->addAction(gui::CommandSystem::command(kCmdPaste)->action());
+}
+
+} // namespace bakuon::examples

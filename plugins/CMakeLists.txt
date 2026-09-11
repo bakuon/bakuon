@@ -18,3 +18,6 @@ project(
     plugins
     VERSION 1.0.0
     LANGUAGES CXX)
+
+add_subdirectory(gui)
+add_subdirectory(sandbox)

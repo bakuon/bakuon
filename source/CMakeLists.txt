@@ -15,6 +15,9 @@ project(
     VERSION 1.0.0
     LANGUAGES CXX)
 
+option(BAKUON_BUILD_PLUGIN "构建 bakuon::plugin(原生插件基础设施静态库)" ON)
+option(BAKUON_BUILD_SANDBOX "构建 bakuon::sandbox(进程外插件沙箱隔离,依赖 Qt RemoteObjects)" ON)
+
 if(BAKUON_BUILD_CORE)
     add_subdirectory(core)
 endif()

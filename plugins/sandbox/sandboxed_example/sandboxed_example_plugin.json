@@ -1,0 +1,13 @@
+{
+    "Id": "com.bakuon.sandboxed_example",
+    "Name": "Sandboxed Example Plugin",
+    "Version": "1.0.0",
+    "CompatVersion": "1.0.0",
+    "Category": "SandboxExample",
+    "Description": "演示 ISandboxCommandHandler 扩展点的示例插件，注册一个共享内存 float 数组求和命令，供 sandbox_runtime 子进程加载。",
+    "Vendor": "bakuon team",
+    "Experimental": true,
+    "Required": false,
+    "DisabledByDefault": true,
+    "Dependencies": []
+}

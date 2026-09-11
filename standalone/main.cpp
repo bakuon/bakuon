@@ -1,13 +1,347 @@
-#pragma once
-
+#include <QtCore/QCommandLineParser>
+#include <QtCore/QDebug>
+#include <QtCore/QDir>
+#include <QtCore/QFileInfo>
+#include <QtCore/QLoggingCategory>
 #include <QtCore/QTimer>
 #include <QtWidgets/QApplication>
+
+#include "gui/b_pluginmetadata.h"
+#include "gui/b_pluginpipeline.h"
+#include "gui/b_pluginsystem.h"
+
+#if defined(BAKUON_STANDALONE_HAVE_SANDBOX)
+#include "sandbox/b_tabsandboxmanager.h"
+#endif
+
+namespace {
+
+Q_LOGGING_CATEGORY(lcStandalone, "bakuon.standalone")
+
+/**
+ * @brief standalone 目前是"最小验证版本"：QCoreApplication + 无窗口，对应项目目标里的
+ * "无窗口命令行启动"。它不创建任何 QWidget/QAction，只负责把宿主两条腿——
+ * 进程内插件（gui::PluginSystem）和进程外沙箱插件（sandbox::SandboxSystem）——
+ * 都跑起来一次，验证 gui 改成 SHARED 库之后插件/沙箱子进程能不能正确动态链接、
+ * 加载、运行。真正的 GUI 外壳（菜单/工具栏/标签页窗口）留给后续版本。
+ */
+
+/// 在候选目录列表里找第一个存在的目录；候选目录本身来自构建/安装两种可能的产物布局。
+QString firstExistingDir(const QStringList &candidates)
+{
+    for (const QString &candidate : candidates) {
+        QFileInfo info(candidate);
+        if (info.isDir()) {
+            return info.absoluteFilePath();
+        }
+    }
+    return {};
+}
+
+/// 在指定目录下，按候选文件名（不同平台的动态库后缀不同）找第一个存在的文件。
+QString firstExistingFile(const QString &directory, const QStringList &baseNames)
+{
+    if (directory.isEmpty()) {
+        return {};
+    }
+    QDir dir(directory);
+    const QStringList suffixes = {QStringLiteral(""),
+                                  QStringLiteral(".dll"),
+                                  QStringLiteral(".so"),
+                                  QStringLiteral(".dylib")};
+    for (const QString &baseName : baseNames) {
+        for (const QString &suffix : suffixes) {
+            QFileInfo info(dir.filePath(baseName + suffix));
+            if (info.isFile()) {
+                return info.absoluteFilePath();
+            }
+        }
+    }
+    return {};
+}
+
+QString sandboxRuntimeExecutableName()
+{
+#if defined(Q_OS_WIN)
+    return QStringLiteral("sandbox_runtime.exe");
+#else
+    return QStringLiteral("sandbox_runtime");
+#endif
+}
+
+/// 把 gui::PluginSystem 的批量编排结果打成一份人类可读的诊断日志，逐个插件报告
+/// 最终状态；这里只是诊断输出，不影响 startup() 本身的返回值判断。
+void logPluginDiagnostics(const bakuon::gui::PluginSystem &pluginSystem)
+{
+    const auto pipelines = pluginSystem.pipelines();
+    qCInfo(lcStandalone) << "共注册" << pipelines.size() << "个插件";
+    for (const auto &pipeline : pipelines) {
+        const bakuon::gui::PluginMetadata meta = pipeline->metadata();
+        const QString displayName              = meta.id.isEmpty() ? pipeline->filePath() : meta.id;
+        qCInfo(lcStandalone).noquote()
+            << QStringLiteral("  - [%1] %2  状态=%3")
+                   .arg(displayName,
+                        meta.name.isEmpty() ? QStringLiteral("<未知>") : meta.name,
+                        bakuon::gui::toString(pipeline->state()));
+        if (pipeline->state() == bakuon::gui::PluginState::ResolveFailed
+            || pipeline->state() == bakuon::gui::PluginState::LoadFailed
+            || pipeline->state() == bakuon::gui::PluginState::InitializeFailed
+            || pipeline->state() == bakuon::gui::PluginState::RunFailed) {
+            qCWarning(lcStandalone).noquote()
+                << QStringLiteral("    失败原因: %1").arg(pipeline->lastError());
+        }
+    }
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("bakuon-standalone"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
 
-    QTimer::singleShot(3000, &app, SLOT(quit()));
+    QCommandLineParser parser;
+    parser.setApplicationDescription(
+        QStringLiteral("bakuon 无窗口主进程：加载进程内插件，并（若已构建沙箱子系统）"
+                       "演示进程外沙箱插件的基础启动流程。"));
+    parser.addHelpOption();
+    parser.addVersionOption();
+
+    QCommandLineOption
+        pluginsDirOption(QStringList{QStringLiteral("plugins-dir")},
+                         QStringLiteral(
+                             "插件扫描目录（默认按构建树/安装布局自动探测 plugins/gui）"),
+                         QStringLiteral("path"));
+    parser.addOption(pluginsDirOption);
+
+    QCommandLineOption keepAliveOption(QStringList{QStringLiteral("keep-alive")},
+                                       QStringLiteral(
+                                           "完成一次演示流程后不自动退出，保持事件循环运行"));
+    parser.addOption(keepAliveOption);
+
+    QCommandLineOption
+        exitAfterOption(QStringList{QStringLiteral("exit-after-ms")},
+                        QStringLiteral("自动退出前的等待毫秒数（默认 2000，配合冒烟测试/CI 使用）"),
+                        QStringLiteral("ms"),
+                        QStringLiteral("2000"));
+    parser.addOption(exitAfterOption);
+
+    QCommandLineOption
+        sessionFileOption(QStringList{QStringLiteral("session-file")},
+                          QStringLiteral(
+                              "启用 Tab 会话持久化（原地恢复），指向记录文件路径；"
+                              "留空/不指定则不持久化（默认行为）。"
+                              "可以先用这个选项跑一次、Ctrl+C 强杀，再用同样的路径重跑一次，"
+                              "观察 Tab 是否原地恢复成同一个 tabId。"),
+                          QStringLiteral("path"));
+    parser.addOption(sessionFileOption);
+
+    parser.process(app);
+
+    // ------------------------------------------------------------------
+    // 第一条腿：进程内插件（gui::PluginSystem）
+    // ------------------------------------------------------------------
+    bakuon::gui::PluginSystem pluginSystem;
+    QObject::connect(&pluginSystem,
+                     &bakuon::gui::PluginSystem::pluginFailed,
+                     &pluginSystem,
+                     [](size_t id, bakuon::gui::PluginState failedState, const QString &reason) {
+                         qCWarning(lcStandalone).noquote()
+                             << QStringLiteral("插件 #%1 在 %2 阶段失败: %3")
+                                    .arg(id)
+                                    .arg(bakuon::gui::toString(failedState), reason);
+                     });
+    QObject::connect(&pluginSystem,
+                     &bakuon::gui::PluginSystem::pluginRunning,
+                     &pluginSystem,
+                     [](size_t id) { qCInfo(lcStandalone) << "插件 #" << id << "已进入 Running"; });
+
+    QString pluginsDir = parser.value(pluginsDirOption);
+    if (pluginsDir.isEmpty()) {
+        const QString appDir = QCoreApplication::applicationDirPath();
+        // 两种候选布局：
+        //   1) 构建树内运行：可执行文件在 <build>/bin/，插件在 <build>/plugins/gui/
+        //      （见根 CMakeLists.txt 里对 CMAKE_RUNTIME_OUTPUT_DIRECTORY 的说明，以及
+        //      bakuon_add_plugin() 按 CATEGORY 输出到 <build>/plugins/<CATEGORY>/）。
+        //   2) 假想的安装布局：插件和可执行文件在同一目录下的 plugins/gui 子目录。
+        pluginsDir = firstExistingDir({QDir(appDir).filePath(QStringLiteral("../plugins/gui")),
+                                       QDir(appDir).filePath(QStringLiteral("plugins/gui"))});
+    }
+
+    if (pluginsDir.isEmpty()) {
+        qCInfo(lcStandalone) << "未找到插件目录（可能 BAKUON_BUILD_PLUGINS 未开启），"
+                                "跳过插件加载，可用 --plugins-dir 显式指定。";
+    } else {
+        qCInfo(lcStandalone).noquote() << QStringLiteral("插件扫描目录: %1").arg(pluginsDir);
+        pluginSystem.registerDirectory(pluginsDir, /*recursive=*/false);
+        pluginSystem.startup(); // launchAll() + runAll()
+        logPluginDiagnostics(pluginSystem);
+    }
+
+#if defined(BAKUON_STANDALONE_HAVE_SANDBOX)
+    // ------------------------------------------------------------------
+    // 第二条腿：进程外沙箱插件 —— 用 TabSandboxManager 演示"一个标签一个进程"的
+    // 基础编排流程（openTab()/closeTab() 已经把 SandboxSystem 的点对点 spawn/run/
+    // shutdown 细节和 TabId <-> sandboxId 映射都封装掉了，standalone 这里只管
+    // 打开一个"演示标签"、订阅按 Tab 归类的事件、退出时统一 closeAll()）。
+    // ------------------------------------------------------------------
+    const QString appDir            = QCoreApplication::applicationDirPath();
+    // sandbox_runtime 和 standalone 一样落在统一的 bin/ 输出目录下（见根 CMakeLists.txt），
+    // 因此直接在自己所在目录里找即可，不需要额外的候选路径。
+    const QString sandboxRuntimeExe = firstExistingFile(appDir, {sandboxRuntimeExecutableName()});
+
+    bakuon::sandbox::TabSandboxManager tabManager(sandboxRuntimeExe, &app);
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabLaunching,
+                     &tabManager,
+                     [](uint64_t tabId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 启动中").arg(tabId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabRunning,
+                     &tabManager,
+                     [](uint64_t tabId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 已进入 Running").arg(tabId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabFaulted,
+                     &tabManager,
+                     [](uint64_t tabId, const QString &reason) {
+                         qCWarning(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 异常: %2").arg(tabId).arg(reason);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabClosed,
+                     &tabManager,
+                     [](uint64_t tabId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 已关闭").arg(tabId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabLogMessage,
+                     &tabManager,
+                     [](uint64_t tabId, int level, const QString &message) {
+                         qCInfo(lcStandalone).noquote() << QStringLiteral("Tab[%1] (level=%2) %3")
+                                                               .arg(tabId)
+                                                               .arg(level)
+                                                               .arg(message);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabRestoring,
+                     &tabManager,
+                     [](uint64_t tabId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 从会话文件里读回来了，等待匹配的孤儿沙箱…")
+                                    .arg(tabId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabRestored,
+                     &tabManager,
+                     [](uint64_t tabId, const QString &sandboxId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral("Tab[%1] 原地恢复成功！接上了 sandboxId=%2")
+                                    .arg(tabId)
+                                    .arg(sandboxId);
+                     });
+    QObject::connect(&tabManager,
+                     &bakuon::sandbox::TabSandboxManager::tabAdopted,
+                     &tabManager,
+                     [](uint64_t tabId, const QString &sandboxId) {
+                         qCInfo(lcStandalone).noquote()
+                             << QStringLiteral(
+                                    "Tab[%1] 收编了一个陌生孤儿 sandboxId=%2（文档信息不可用）")
+                                    .arg(tabId)
+                                    .arg(sandboxId);
+                     });
+
+    // ------------------------------------------------------------------
+    // 会话持久化演示（--session-file）：默认不启用，和 TabSandboxManager 本身
+    // "默认不持久化"的设计保持一致。启用后可以体会完整的"原地恢复"流程：
+    //   1. 第一次运行（会话文件还不存在）：restoreSession() 恢复 0 条，照常打开一个
+    //      演示 Tab；正常运行、跑到 Running 后，session 文件里就有它的记录了。
+    //   2. 这时候用 kill -9 强杀本进程（不要用 Ctrl+C——那是优雅退出，
+    //      SIGINT 默认会被 Qt 转成正常退出流程，不会模拟"崩溃"）。
+    //   3. 用同样的 --session-file 路径重新跑一次：restoreSession() 会恢复出 1 条
+    //      Restoring 记录，孤儿沙箱重新被发现后原地接上——tabRestored 里的 tabId
+    //      应该和上一次运行时打开的那个一模一样。
+    // ------------------------------------------------------------------
+    const QString sessionFilePath = parser.value(sessionFileOption);
+    bool skipDemoTabOpen          = false;
+    if (!sessionFilePath.isEmpty()) {
+        tabManager.setSessionFilePath(sessionFilePath);
+        const int restoredCount = tabManager.restoreSession();
+        qCInfo(lcStandalone).noquote() << QStringLiteral("会话文件: %1（恢复了 %2 条记录）")
+                                              .arg(sessionFilePath)
+                                              .arg(restoredCount);
+        if (restoredCount > 0) {
+            // 已经有历史记录了：这次不再额外打开一个新的演示 Tab，专心演示恢复流程，
+            // 避免日志里新旧 Tab 混在一起不好看。
+            skipDemoTabOpen = true;
+
+            // Host 层的"等多久放弃"策略：TabSandboxManager 本身不内置超时，这里给
+            // 一个 5 秒的宽限期，时间到了还停留在 Restoring 就主动放弃等待、
+            // 用持久化下来的 pluginFilePath 重新 spawn()。
+            QTimer::singleShot(5000, &tabManager, [&tabManager] {
+                if (tabManager.pendingRestoreCount() == 0) {
+                    return;
+                }
+                qCInfo(lcStandalone) << "还有" << tabManager.pendingRestoreCount()
+                                     << "个 Tab 没等到匹配的孤儿，放弃等待，改为重新 spawn()";
+                for (const uint64_t tabId : tabManager.tabIds()) {
+                    if (tabManager.tabState(tabId) == bakuon::sandbox::TabState::Restoring) {
+                        tabManager.respawnRestoredTab(tabId);
+                    }
+                }
+            });
+        }
+    }
+
+    // 演示用的沙箱化插件复用 plugins/gui 目录下的 sandboxed_example_plugin
+    // （见 plugins/sandbox/sandboxed_example/CMakeLists.txt 里的 CATEGORY gui）。
+    const QString sandboxedPluginFile = pluginsDir.isEmpty()
+                                            ? QString()
+                                            : firstExistingFile(pluginsDir,
+                                                                {QStringLiteral(
+                                                                    "sandboxed_example_plugin")});
+
+    if (skipDemoTabOpen) {
+        // 上面已经在 restoreSession() 分支里说明了原因，这里什么都不做。
+    } else if (sandboxRuntimeExe.isEmpty() || sandboxedPluginFile.isEmpty()) {
+        qCInfo(lcStandalone)
+            << "未找到 sandbox_runtime 可执行文件或 sandboxed_example_plugin"
+               "（可能 BAKUON_BUILD_SANDBOX_RUNTIME/BAKUON_BUILD_PLUGINS 未开启），"
+               "跳过沙箱启动流程演示。";
+    } else {
+        qCInfo(lcStandalone).noquote() << QStringLiteral("沙箱子进程: %1").arg(sandboxRuntimeExe);
+        qCInfo(lcStandalone).noquote() << QStringLiteral("沙箱化插件: %1").arg(sandboxedPluginFile);
+        const auto demoTabId = tabManager.openTab(sandboxedPluginFile);
+        if (demoTabId == 0) {
+            qCWarning(lcStandalone) << "openTab() 失败（未拿到有效 TabId）";
+        }
+    }
+
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&tabManager, &pluginSystem]() {
+        tabManager.closeAll();
+        pluginSystem.shutdown();
+    });
+#else
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&pluginSystem]() {
+        pluginSystem.shutdown();
+    });
+    qCInfo(lcStandalone) << "本次构建未启用 bakuon::sandbox（BAKUON_BUILD_SANDBOX=OFF），"
+                            "跳过沙箱启动流程演示。";
+#endif
+
+    if (!parser.isSet(keepAliveOption)) {
+        bool ok         = false;
+        const int ms    = parser.value(exitAfterOption).toInt(&ok);
+        const int delay = ok && ms >= 0 ? ms : 2000;
+        qCInfo(lcStandalone) << "将在" << delay << "ms 后自动退出（可用 --keep-alive 关闭此行为）";
+        QTimer::singleShot(delay, &app, &QCoreApplication::quit);
+    }
 
     return app.exec();
 }

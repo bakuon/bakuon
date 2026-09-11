@@ -1,4 +1,4 @@
-set(module "gui")
+set(TARGET_NAME "gui")
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -23,7 +23,7 @@ find_package(
 # "bakuon/b_gui_export.h"；哪些类/自由函数需要标注见各自声明处。
 bakuon_add_module(
     NAME
-    ${module}
+    ${TARGET_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     SHARED

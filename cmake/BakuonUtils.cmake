@@ -112,7 +112,7 @@ function(bakuon_add_module)
 
     # “聚合入口头”（MODULE_NAME.h 作为整个模块唯一的公共门面）是可选约定，不是强制要求：
     # 只有当它真实存在时才作为 PUBLIC 源加入、并从 PRIVATE 头文件列表中去重；模块内其余头文件
-    # 一律按 "MODULE_NAME/b_xxx.h" 这种模块前缀路径被直接 #include，不需要也不应该被强制归纳进一个总头文件。
+    # 一律按 "gui/b_xxx.h" 这种模块前缀路径被直接 #include，不需要也不应该被强制归纳进一个总头文件。
     #
     # 注意：这里不排除 MODULE_NAME.cpp —— 每个 .cpp 独立编译单元是本函数的核心语义，
     # 一个模块下允许存在恰好与模块同名的普通实现文件（例如 plugin/plugin.cpp），它必须被正常编译，
@@ -130,9 +130,10 @@ function(bakuon_add_module)
     endif()
 
     # SHARED（可选开关）：默认仍产出 STATIC 库，与现状保持兼容；传入 SHARED 后改为产出
-    # 动态库（.dll/.so/.dylib）——目前 bakuon 用它，是为了让插件 / 沙箱进程 / Host
-    # 应用程序都能共享同一份进程内单例（STATIC 库分别
-    # 静态链接进多个二进制时，每个二进制各自持有一份独立的单例）。
+    # 动态库（.dll/.so/.dylib）——目前 bakuon::gui 用它，是为了让插件 / 沙箱进程 / Host
+    # 应用程序都能共享同一份 ExtensionSystem::instance() 之类的进程内单例（STATIC 库分别
+    # 静态链接进多个二进制时，每个二进制各自持有一份独立的单例，见
+    # include/bakuon/gui/PluginContext.h 顶部关于这一点的详细说明）。
     set(_bakuon_lib_type STATIC)
     if(ARG_SHARED)
         set(_bakuon_lib_type SHARED)
@@ -146,7 +147,7 @@ function(bakuon_add_module)
         target_sources(${MODULE_NAME} PUBLIC ${PUBLIC_AMALGAM_HEADER})
     endif()
 
-    # PUBLIC 路径统一以仓库 source/ 为根，保持 "core/xxx.h" 这种模块前缀式 include 惯例；
+    # PUBLIC 路径统一以仓库 source/ 为根，保持 "gui/xxx.h" 这种模块前缀式 include 惯例；
     # 使用 BAKUON_ROOT_DIR 而非 CMAKE_SOURCE_DIR，确保被上层工程 add_subdirectory() 集成时依然正确。
     target_include_directories(
         ${MODULE_NAME}
@@ -156,8 +157,8 @@ function(bakuon_add_module)
     # PUBLIC_INCLUDE_DIRS：面向“第三方插件开发者”的稳定门面 API（include/bakuon/...），
     # 与上面 source/ 的内部实现路径分开传入是刻意的——
     # source/ 暴露的是内部实现（b_xxx.h 命名，随时可能重构），
-    # PUBLIC_INCLUDE_DIRS 暴露的是精心维护、尽量不破坏兼容性的转发门面（见 include/bakuon/*.h）。
-    # 二者当前都以 PUBLIC 方式传递给消费者（这意味着插件工程 link 了 bakuon 后两条路径都能拿到，
+    # PUBLIC_INCLUDE_DIRS 暴露的是精心维护、尽量不破坏兼容性的转发门面（见 include/bakuon/gui/*.h）。
+    # 二者当前都以 PUBLIC 方式传递给消费者（这意味着插件工程 link 了 bakuon::gui 后两条路径都能拿到，
     # 也就还没有做到“插件只能看到门面、看不到内部实现”的强隔离——真要做到这点，
     # 需要把 source/ 的 include 拆到单独的 PRIVATE/INTERFACE 目标里，目前先不做这个更大的改动，
     # 留给以后插件生态成型、确实需要收紧可见性时再处理）。
@@ -177,7 +178,7 @@ function(bakuon_add_module)
     # SHARED 专属收尾：生成导出宏 + 收紧默认符号可见性。
     #
     # 1. generate_export_header() 生成 BAKUON_<MODULE>_EXPORT，落在
-    #    "<module>/b_<module>_export.h"，与仓库既有的 "<module>/b_xxx.h" 模块前缀 include
+    #    "<module>/b_<module>_export.h"，与仓库既有的 "gui/b_xxx.h" 模块前缀 include
     #    惯例保持一致，跨动态库边界访问的类/自由函数需要在声明处加上这个宏——
     #    MSVC 上没有 __declspec(dllexport/dllimport) 就是链接错误，这一步不是可选项。
     # 2. CXX_VISIBILITY_PRESET hidden + VISIBILITY_INLINES_HIDDEN：GCC/Clang 下默认

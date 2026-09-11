@@ -100,9 +100,9 @@ if(BAKUON_BUILD_STANDALONE)
     add_subdirectory(standalone)
 endif()
 
-# if(BAKUON_BUILD_HOST)
-#     add_subdirectory(host)
-# endif()
+if(BAKUON_BUILD_HOST)
+    add_subdirectory(host)
+endif()
 
 if(BAKUON_BUILD_EXAMPLES)
     add_subdirectory(examples)

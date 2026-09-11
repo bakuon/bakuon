@@ -1,8 +1,8 @@
-set(module "core")
+set(TARGET_NAME "core")
 
 bakuon_add_module(
     NAME
-    ${module}
+    ${TARGET_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     DEPENDS
