@@ -125,6 +125,15 @@ if(TARGET core)
         "core/registry_test.cpp"
         DEPENDS
         bakuon::core)
+
+    bakuon_add_test(
+        NAME
+        test_core_result_status
+        SOURCES
+        "core/result_status_test.cpp"
+        DEPENDS
+        bakuon::core)
+
 endif()
 
 # example_plugin 只在 BAKUON_BUILD_PLUGINS 打开时才存在；测试用它验证 registerFile()/launch() 走
@@ -143,14 +152,6 @@ bakuon_add_test(
     USE_QT_CORE
     SOURCES
     "gui/extensionpoint_test.cpp"
-    DEPENDS
-    bakuon::gui)
-
-bakuon_add_test(
-    NAME
-    test_gui_result_status
-    SOURCES
-    "gui/result_status_test.cpp"
     DEPENDS
     bakuon::gui)
 
