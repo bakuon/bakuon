@@ -4,6 +4,10 @@ project(host VERSION 1.0.0)
 
 set(TARGET_NAME "bakuon_${PROJECT_NAME}")
 
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
 add_executable(
     ${TARGET_NAME}
     Constants.h
