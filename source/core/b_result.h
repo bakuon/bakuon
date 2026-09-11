@@ -13,7 +13,7 @@
 #include <utility>
 #include <variant>
 
-namespace bakuon::gui {
+namespace bakuon::core {
 
 // ============================================================================
 // 生产级 Stacktrace 捕获器（可替换实现）
@@ -782,4 +782,4 @@ template<typename T>
     return Result<T>(std::move(status));
 }
 
-} // namespace bakuon::gui
+} // namespace bakuon::core
