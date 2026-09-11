@@ -195,11 +195,11 @@ function(bakuon_add_module)
             BASE_NAME
             ${MODULE_NAME}
             EXPORT_MACRO_NAME
-            BAKUON_EXPORT
+            BAKUON_${_bakuon_module_upper}_EXPORT
             EXPORT_FILE_NAME
             ${_bakuon_export_header}
             DEPRECATED_MACRO_NAME
-            BAKUON_DEPRECATED)
+            BAKUON_${_bakuon_module_upper}_DEPRECATED)
 
         # BUILD_INTERFACE 即可：生成头只在构建这份源码时用得到，装 SDK 包的场景等
         # BAKUON_INSTALL_SDK 真正打开时再一并处理导出头的安装路径（见 bakuon_install_module()）。

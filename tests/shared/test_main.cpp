@@ -1,10 +1,11 @@
-
-#include <QTimer>
-
 #if defined(USE_QT_GUI_APP)
 #include <QApplication>
+#include <QTimer>
+
 #elif defined(USE_QT_CORE_APP)
 #include <QCoreApplication>
+#include <QTimer>
+
 #endif
 
 #include <gtest/gtest.h>

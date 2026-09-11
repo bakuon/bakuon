@@ -18,7 +18,8 @@ cmake -S . -B build
 # 只想集成 core+gui+plugin 三个库到别的项目里（比如被上层工程 add_subdirectory）
 cmake -S . -B build -DBAKUON_BUILD_TESTS=OFF -DBAKUON_BUILD_EXAMPLES=OFF -DBAKUON_BUILD_STANDALONE=OFF
 
-# core 目录补齐实现代码后
+# core（基于 EnTT 的实体-组件状态容器）默认已随主构建一起打开；
+# 只是想临时关掉它（比如排查问题）时才需要显式传 OFF
 cmake -S . -B build -DBAKUON_BUILD_CORE=ON
 
 # 想把警告当错误处理，尽早暴露隐患（比如 CI）
