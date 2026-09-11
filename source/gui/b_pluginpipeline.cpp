@@ -154,7 +154,7 @@ bool PluginPipeline::processQueue()
         recordTimestamp(m_state);
         Q_EMIT stateChanged(m_id, m_state);
 
-        if (!stateReact()) {
+        if (!reactState()) {
             overallOk = false;
         }
         if (isFailed()) {
@@ -180,7 +180,7 @@ void PluginPipeline::recordTimestamp(PluginState state)
     }
 }
 
-bool PluginPipeline::stateReact()
+bool PluginPipeline::reactState()
 {
     // clang(-Wswitch-enum)
     switch (m_state) {

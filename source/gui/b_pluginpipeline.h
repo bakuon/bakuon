@@ -384,7 +384,7 @@ Q_SIGNALS:
 
 private:
     bool processQueue();
-    bool stateReact();
+    bool reactState();
     void recordTimestamp(PluginState state);
 
     // 管线分流

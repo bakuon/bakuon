@@ -25,9 +25,10 @@ private:
     void buildToolBar();
 
 private:
-    EditorSurface* m_imageCanvas     = nullptr;
-    EditorSurface* m_scene3d         = nullptr;
-    gui::CommandLayout* m_menuLayout = nullptr; // 纯数据层：菜单布局的真正持有者
+    EditorSurface* m_imageCanvas        = nullptr;
+    EditorSurface* m_scene3d            = nullptr;
+    gui::CommandLayout* m_menuLayout    = nullptr; // 纯数据层：菜单布局的真正持有者
+    gui::CommandLayout* m_toolbarLayout = nullptr;
     gui::CommandModel* m_menuModel = nullptr; // Qt 视图适配层：包装 m_menuLayout，供自定义对话框使用
     QAction* m_saveRealAction  = nullptr;
     QAction* m_customizeAction = nullptr;

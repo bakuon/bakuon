@@ -82,6 +82,10 @@ public:
         : PluginSandboxControlSimpleSource(parent)
         , m_sandboxId(std::move(sandboxId))
     {
+        // TODO: ExtensionSystem 实例从外部注入或按需分配扩展实例，尽可能的减少单例的出现，
+        // 明确的依赖关系使得逻辑清晰，保证构造和析构顺序有迹可循，
+        // 并且未来可能"扩展"会按角色类型开放访问权限。
+
         // ExtensionSystem::instance() 是进程内单例；沙箱是独立 OS 进程，天然与主程序及
         // 其他沙箱隔离，这里统一注册好 ISandboxCommandHandler 扩展点，插件在 initialize()
         // 里直接 extensionPoint<ISandboxCommandHandler>()->registerExtension() 即可，

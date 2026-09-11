@@ -83,6 +83,8 @@ class BAKUON_GUI_EXPORT ExtensionSystem : public IExtensionSystem
 public:
     /**
      * @brief 获取全局单例（Meyers' Singleton，线程安全、自动析构）
+     * @todo 不要做成单例，在程序启动入口处实例化，
+     *       其他类使用依赖注入方式传入。见 SandboxControlSourceImpl 构造函数内的 TODO 注释。
      *
      * @note 本类必须带 BAKUON_GUI_EXPORT：instance() 虽然写在类体内、语义上是
      *       inline，但一旦类被标注导出，MSVC 会把它当成 dllexport/dllimport 的

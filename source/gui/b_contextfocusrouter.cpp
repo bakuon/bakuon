@@ -23,7 +23,7 @@ void ContextFocusRouter::addProviderWidget(QObject* widget, const Context& conte
 
     m_providers[widget] = context;
     // 部件析构时必须摘掉 map 里的裸指针，否则后续查找会读到悬空 key。
-    QObject::disconnect(widget, &QObject::destroyed, this, nullptr);
+    disconnect(widget, &QObject::destroyed, this, nullptr);
     connect(widget, &QObject::destroyed, this, [this, widget]() { removeProviderWidget(widget); });
 }
 

@@ -47,6 +47,8 @@ MainWindow::MainWindow()
 MainWindow::~MainWindow()
 {
     gui::CommandSystem::releaseContext(this);
+    delete m_menuLayout;
+    delete m_toolbarLayout;
 }
 
 void MainWindow::registerCommands()
@@ -134,9 +136,15 @@ void MainWindow::buildToolBar()
 {
     auto* toolBar = addToolBar(QStringLiteral("常用操作"));
     toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    toolBar->addAction(gui::CommandSystem::command(kCmdDelete)->action());
-    toolBar->addAction(gui::CommandSystem::command(kCmdDuplicate)->action());
-    toolBar->addAction(gui::CommandSystem::command(kCmdPaste)->action());
+
+    m_toolbarLayout = new gui::CommandLayout;
+    auto general    = m_toolbarLayout->addContainer(QStringLiteral("常用操作"));
+    m_toolbarLayout->addCommand(kCmdSave.toString(), general);
+    m_toolbarLayout->addSeparator(general);
+    m_toolbarLayout->addCommand(kCmdDelete.toString(), general);
+    m_toolbarLayout->addCommand(kCmdDuplicate.toString(), general);
+    m_toolbarLayout->addCommand(kCmdPaste.toString(), general);
+    gui::CommandSystem::renderToolBar(m_toolbarLayout->node(general), toolBar);
 }
 
 } // namespace bakuon::examples

@@ -6,7 +6,6 @@
 #include <QtCore/QDebug>
 #include <QtCore/QEvent>
 #include <QtCore/QPointer>
-#include <QtWidgets/QWidget>
 
 #include "gui/b_context.h"
 #include "gui/b_gui_export.h"
