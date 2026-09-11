@@ -20,7 +20,7 @@ cmake -S . -B build -DBAKUON_BUILD_TESTS=OFF -DBAKUON_BUILD_EXAMPLES=OFF -DBAKUO
 
 # core（基于 EnTT 的实体-组件状态容器）默认已随主构建一起打开；
 # 只是想临时关掉它（比如排查问题）时才需要显式传 OFF
-cmake -S . -B build -DBAKUON_BUILD_CORE=ON
+cmake -S . -B build -DBAKUON_BUILD_CORE=OFF
 
 # 想把警告当错误处理，尽早暴露隐患（比如 CI）
 cmake -S . -B build -DBAKUON_WARNINGS_AS_ERRORS=ON

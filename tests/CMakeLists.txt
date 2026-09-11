@@ -283,18 +283,6 @@ endif()
 if(BAKUON_BUILD_HOST
    AND TARGET sandbox_runtime
    AND TARGET sandboxed_example_plugin)
-    find_package(
-        QT
-        NAMES
-        Qt6
-        Qt5
-        COMPONENTS Core Gui Widgets
-        REQUIRED)
-    find_package(
-        Qt${QT_VERSION_MAJOR}
-        COMPONENTS Core Gui Widgets
-        REQUIRED)
-
     bakuon_add_test(
         NAME
         test_host_command_wiring
@@ -304,9 +292,6 @@ if(BAKUON_BUILD_HOST
         "${CMAKE_SOURCE_DIR}/host/MainWindow.cpp"
         "${CMAKE_SOURCE_DIR}/host/TabContentWidget.cpp"
         DEPENDS
-        Qt${QT_VERSION_MAJOR}::Core
-        Qt${QT_VERSION_MAJOR}::Gui
-        Qt${QT_VERSION_MAJOR}::Widgets
         bakuon::gui
         bakuon::sandbox)
 
