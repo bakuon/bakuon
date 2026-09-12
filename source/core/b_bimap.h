@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace bakuon::gui::detail {
+namespace bakuon::core::detail {
 
 /**
  * @brief 通用双向映射容器（轻量级 Boost::Bimap 替代）
@@ -405,4 +405,4 @@ private:
     };
 };
 
-} // namespace bakuon::gui::detail
+} // namespace bakuon::core::detail
