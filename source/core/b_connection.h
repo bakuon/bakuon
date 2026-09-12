@@ -60,7 +60,7 @@ public:
     explicit Connection(std::function<void()> disconnector,
                         std::function<void()> onDismiss = {}) noexcept
         : m_disconnector(std::move(disconnector))
-        , m_onDismiss(std::move(onDismiss))
+        , m_dismissing(std::move(onDismiss))
     {
     }
 
@@ -69,10 +69,10 @@ public:
 
     Connection(Connection&& other) noexcept
         : m_disconnector(std::move(other.m_disconnector))
-        , m_onDismiss(std::move(other.m_onDismiss))
+        , m_dismissing(std::move(other.m_dismissing))
     {
         other.m_disconnector = nullptr;
-        other.m_onDismiss    = nullptr;
+        other.m_dismissing   = nullptr;
     }
 
     Connection& operator=(Connection&& other) noexcept
@@ -80,9 +80,9 @@ public:
         if (this != &other) {
             disconnect();
             m_disconnector       = std::move(other.m_disconnector);
-            m_onDismiss          = std::move(other.m_onDismiss);
+            m_dismissing         = std::move(other.m_dismissing);
             other.m_disconnector = nullptr;
-            other.m_onDismiss    = nullptr;
+            other.m_dismissing   = nullptr;
         }
         return *this;
     }
@@ -100,7 +100,7 @@ public:
         // 移交去哪"，既然已经走了断开路径、资源已经安全释放，这份"移交指引"
         // 也不再有意义，一并清空，避免调用方之后误调 dismiss() 又把（可能是
         // 别的连接复用的）资源重复移交一次。
-        m_onDismiss = nullptr;
+        m_dismissing = nullptr;
     }
 
     /**
@@ -111,18 +111,18 @@ public:
      */
     void dismiss() noexcept
     {
-        if (m_onDismiss) {
-            m_onDismiss();
+        if (m_dismissing) {
+            m_dismissing();
         }
         m_disconnector = nullptr;
-        m_onDismiss    = nullptr;
+        m_dismissing   = nullptr;
     }
 
     [[nodiscard]] bool isConnected() const noexcept { return static_cast<bool>(m_disconnector); }
 
 private:
     std::function<void()> m_disconnector;
-    std::function<void()> m_onDismiss;
+    std::function<void()> m_dismissing;
 };
 
 } // namespace bakuon::core
