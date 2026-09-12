@@ -29,9 +29,9 @@ TEST(BimapTest, RejectsConflictingInsert)
     Bimap<std::string, int> bm;
     ASSERT_TRUE(bm.insert("a", 1));
 
-    // ×ó¼üÒÑ´æÔÚ
+    // å·¦é”®å·²å­˜åœ¨
     EXPECT_FALSE(bm.insert("a", 2));
-    // ÓÒ¼üÒÑ±»Õ¼ÓÃ
+    // å³é”®å·²è¢«å ç”¨
     EXPECT_FALSE(bm.insert("b", 1));
     EXPECT_EQ(bm.size(), 1u);
 }
@@ -42,8 +42,8 @@ TEST(BimapTest, InsertOrReplaceClearsBothStaleSides)
     bm.insert("a", 1);
     bm.insert("b", 2);
 
-    // "a" Ô­±¾¶ÔÓ¦ 1£¬"b" Ô­±¾¶ÔÓ¦ 2£»°Ñ "a" ÖØÐÂ°ó¶¨µ½ 2 Ó¦¸ÃÍ¬Ê±Çåµô
-    // "a"->1 ºÍ "b"->2 ÕâÁ½Ìõ¾ÉÓ³Éä£¬Ö»ÁôÏÂÎ¨Ò»µÄ "a"->2¡£
+    // "a" åŽŸæœ¬å¯¹åº” 1ï¼Œ"b" åŽŸæœ¬å¯¹åº” 2ï¼›æŠŠ "a" é‡æ–°ç»‘å®šåˆ° 2 åº”è¯¥åŒæ—¶æ¸…æŽ‰
+    // "a"->1 å’Œ "b"->2 è¿™ä¸¤æ¡æ—§æ˜ å°„ï¼Œåªç•™ä¸‹å”¯ä¸€çš„ "a"->2ã€‚
     bm.insertOrReplace("a", 2);
 
     EXPECT_EQ(bm.size(), 1u);
@@ -61,7 +61,7 @@ TEST(BimapTest, EraseLeftAndRightAreSymmetric)
     EXPECT_TRUE(bm.eraseLeft("a"));
     EXPECT_FALSE(bm.left().contains("a"));
     EXPECT_FALSE(bm.right().contains(1));
-    EXPECT_FALSE(bm.eraseLeft("a")) << "ÖØ¸´É¾³ýÓ¦·µ»Ø false";
+    EXPECT_FALSE(bm.eraseLeft("a")) << "é‡å¤åˆ é™¤åº”è¿”å›ž false";
 
     EXPECT_TRUE(bm.eraseRight(2));
     EXPECT_TRUE(bm.empty());
@@ -99,7 +99,7 @@ TEST(BimapTest, ConstBimapOnlyExposesReadOnlyViews)
     EXPECT_TRUE(cbm.left().contains("a"));
     EXPECT_EQ(cbm.left().at("a"), 1);
     EXPECT_EQ(cbm.right().at(1), "a");
-    // cbm.left().erase("a"); // Ó¦µ±ÎÞ·¨±àÒë£ºconst ÊÓÍ¼²»Ìá¹© erase()
+    // cbm.left().erase("a"); // åº”å½“æ— æ³•ç¼–è¯‘ï¼šconst è§†å›¾ä¸æä¾› erase()
 }
 
 TEST(BimapTest, AtThrowsOnMissingKey)
