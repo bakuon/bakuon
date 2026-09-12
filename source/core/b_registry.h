@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -8,6 +9,7 @@
 
 #include <entt/entity/entity.hpp>
 #include <entt/entity/registry.hpp>
+#include <entt/signal/dispatcher.hpp>
 
 #include "core/b_connection.h"
 #include "core/b_handle.h"
@@ -123,22 +125,46 @@ public:
     }
 
     /// 该实体是否携带指定组件类型。
-    template<typename T>
+    template<typename... Ts>
     [[nodiscard]] bool has(Handle handle) const
     {
-        return m_registry.all_of<T>(handle.native());
+        return m_registry.template all_of<Ts...>(handle.native());
+    }
+
+    template<typename... Ts>
+    [[nodiscard]] bool hasAny(Handle handle) const
+    {
+        return m_registry.template any_of<Ts...>(handle);
+    }
+
+    template<typename T, typename... Args>
+    [[nodiscard]] decltype(auto) getOrEmplace(Handle handle, Args&&... args)
+    {
+        return m_registry.get_or_emplace<T>(handle.native(), std::forward<Args>(args)...);
+    }
+
+    template<typename... Ts>
+    [[nodiscard]] decltype(auto) get(Handle handle)
+    {
+        return m_registry.template get<Ts...>(handle.native());
+    }
+
+    template<typename... Ts>
+    [[nodiscard]] decltype(auto) get(Handle handle) const
+    {
+        return m_registry.template get<Ts...>(handle.native());
     }
 
     /// 取组件指针；不存在（或 handle 本身无效）时返回 nullptr，不抛异常、不断言。
-    template<typename T>
-    [[nodiscard]] T* tryGet(Handle handle)
+    template<typename... Ts>
+    [[nodiscard]] auto tryGet(Handle handle)
     {
-        return m_registry.try_get<T>(handle.native());
+        return m_registry.template try_get<Ts...>(handle.native());
     }
-    template<typename T>
-    [[nodiscard]] const T* tryGet(Handle handle) const
+    template<typename... Ts>
+    [[nodiscard]] auto tryGet(Handle handle) const
     {
-        return m_registry.try_get<T>(handle.native());
+        return m_registry.template try_get<Ts...>(handle.native());
     }
 
     /**
@@ -218,6 +244,46 @@ public:
         return bindSink<T>(m_registry.template on_destroy<T>(), std::forward<Handler>(handler));
     }
 
+    /// 前置声明；完整定义在本文件末尾（class Registry::BatchGuard），因为它
+    /// 需要调用 beginBatch()/endBatch()，必须等 Registry 的完整定义之后才能写。
+    class BatchGuard;
+
+    /**
+     * @brief 开启一次批次：批次期间，同一个 (订阅, 实体) 组合无论触发多少次
+     * onConstruct/onUpdate/onDestroy，都只会在批次结束（配对的 endBatch()
+     * 让批次深度归零）时最多回调一次——用于"一次用户操作改了好几个组件"
+     * 这类场景（拖拽同时改 X/Y/Rotation），避免观察者收到成串的中间态通知、
+     * GUI 抖动式地反复刷新。
+     *
+     * 支持嵌套调用（beginBatch() 计数、endBatch() 递减，只有回到 0 才真正
+     * flush），方便"高层批次里嵌套低层批次"的组合场景——比如一次"拖拽结束"
+     * 的大批次内部，每一帧鼠标移动各自也走一次小批次，只有最外层结束时才
+     * 真正通知观察者。
+     *
+     * @warning 当前实现按"信号类型独立去重"：onConstruct/onUpdate/onDestroy
+     * 各自的订阅分别去重合并，不做跨信号类型的净效应折叠——如果同一个实体的
+     * 同一个组件在同一批次内先 emplace() 又被 remove()，onConstruct 和
+     * onDestroy 两边的订阅仍然都会各自触发一次（尽管净效果其实什么也没变），
+     * 这是刻意简化的 v1 行为边界，不是遗漏。
+     * @note 推荐配合 BatchGuard 使用而不是直接调用 beginBatch()/endBatch()，
+     * 后者要求调用方自己保证异常安全下的严格配对。
+     */
+    void beginBatch() noexcept { ++m_batchDepth; }
+
+    /// 结束一次批次；对没有匹配 beginBatch() 的调用是安全的空操作。批次深度
+    /// 归零时才真正把本批次内积攒的通知一次性 flush 给各自的订阅者。
+    void endBatch()
+    {
+        if (m_batchDepth == 0) {
+            return;
+        }
+        if (--m_batchDepth == 0) {
+            flushPendingNotifications();
+        }
+    }
+
+    [[nodiscard]] bool isBatching() const noexcept { return m_batchDepth > 0; }
+
     /// 逃生舱口：极少数需要直接使用 entt 原生 API（比如 entt::organizer、
     /// 自定义 view 组合）的场景可以拿到底层 entt::registry；日常业务代码应优先
     /// 使用本类已封装的接口，不要绕开它直接操作 native()——那样会让"core 不依赖
@@ -231,16 +297,64 @@ private:
     // "跳板"：把消费者的 handler 存进一个堆上分配的 Slot，用 Slot::invoke 去满足
     // entt 的连接签名，Slot 的生命周期由返回的 Connection（内部用 shared_ptr 延长）
     // 接管——这样消费者完全不需要知道这层间接。
+    //
+    // Slot 同时也是批次（beginBatch()/endBatch()）去重的落点：批次期间 invoke()
+    // 不立即触发 callback，而是把 Handle 记进 pending（去重），并且只在"本 Slot
+    // 本批次第一次"产生 pending 项时，把自己的 flush() 登记进 Registry 的
+    // 待冲洗列表——避免每次事件都重复登记同一个 Slot。
     template<typename T>
-    struct Slot
+    struct Slot : std::enable_shared_from_this<Slot<T>>
     {
         std::function<void(Registry&, Handle)> callback;
         Registry* owner = nullptr;
+        std::vector<Handle> pending;  // 当前批次内已经去重的待通知列表
+        bool flushRegistered = false; // 本批次内是否已经把 flush() 登记给了 owner
 
         void invoke(entt::registry&, entt::entity entity)
         {
-            if (owner && callback) {
-                callback(*owner, Handle{entity});
+            if (!owner) {
+                return;
+            }
+            const Handle id{entity};
+
+            if (!owner->isBatching()) {
+                if (callback) {
+                    callback(*owner, id);
+                }
+                return;
+            }
+
+            if (std::find(pending.begin(), pending.end(), id) == pending.end()) {
+                pending.push_back(id);
+            }
+            if (!flushRegistered) {
+                flushRegistered = true;
+                // 捕获 weak_ptr 而不是裸 this：如果调用方在本批次结束之前就
+                // 显式 disconnect() 了这次订阅，Connection::disconnect() 会
+                // 同时释放 disconnector/onDismiss 两个闭包各自持有的
+                // shared_ptr<Slot> 副本——一旦这是最后一份引用，Slot 会在
+                // disconnect() 内部同步被销毁，而这里登记进 Registry 的 flush
+                // 回调却要等到 endBatch() 才会被调用，中间这段时间窗口如果
+                // 只捕获裸指针，flush() 执行时就是一次悬空访问。weak_ptr +
+                // lock() 让这种情况下的 flush 安全地变成空操作，而不是崩溃。
+                owner->registerPendingFlush([weak = this->weak_from_this()]() {
+                    if (auto locked = weak.lock()) {
+                        locked->flush();
+                    }
+                });
+            }
+        }
+
+        void flush()
+        {
+            flushRegistered = false;
+            std::vector<Handle> toNotify;
+            toNotify.swap(pending);
+            if (!callback) {
+                return;
+            }
+            for (Handle id : toNotify) {
+                callback(*owner, id);
             }
         }
     };
@@ -264,12 +378,93 @@ private:
         return Connection(std::move(disconnector), std::move(onDismiss));
     }
 
+    /// bindSink()/Slot<T>::invoke() 共用：把"本 Slot 需要 flush"登记进批次待办列表。
+    void registerPendingFlush(std::function<void()> flush)
+    {
+        m_pendingFlushes.push_back(std::move(flush));
+    }
+
+    /// endBatch() 批次深度归零时调用：把本批次内积攒的全部 flush 回调依次执行。
+    void flushPendingNotifications()
+    {
+        // 先整体搬空再执行：flush() 内部触发的用户回调完全可能反过来又调用
+        // beginBatch()/endBatch()，或者产生新的组件变更（进而在 isBatching()
+        // 为 false 的这一刻——注意 flush 期间 m_batchDepth 已经是 0——直接同步
+        // 触发别的 Slot::invoke()，走的是"立即回调"分支，不会再次污染本次
+        // 正在遍历的 pending 列表）。即便如此，先搬空再遍历仍然是防御性的
+        // 最佳实践，与仓库别处 PluginSystem::idSnapshot() 等既有模式一致。
+        std::vector<std::function<void()>> pending;
+        pending.swap(m_pendingFlushes);
+        for (auto& flush : pending) {
+            flush();
+        }
+    }
+
 private:
     entt::registry m_registry;
+    // entt::dispatcher m_dispatcher;
+
     // 被 dismiss() 的连接背后的 Slot<T> 在此长期挂靠，见 bindSink() 的说明；
     // 类型擦除成 shared_ptr<void> 是因为不同 T 对应不同的 Slot<T> 特化，
     // 这里不需要、也不应该关心具体是哪一种。
     std::vector<std::shared_ptr<void>> m_pinnedSlots;
+    std::size_t m_batchDepth = 0;
+    std::vector<std::function<void()>> m_pendingFlushes;
+};
+
+/**
+ * @brief beginBatch()/endBatch() 的 RAII 包装：构造时开启批次，析构时结束批次
+ * （无论是正常离开作用域还是异常展开都会执行），避免调用方自己配对
+ * beginBatch()/endBatch() 时因为提前 return/抛异常而忘记 endBatch()。
+ *
+ * @code
+ *   {
+ *       Registry::BatchGuard batch(registry);
+ *       registry.patch<Position>(node, [](Position& p) { p.x += dx; });
+ *       registry.patch<Position>(node, [](Position& p) { p.y += dy; });
+ *       registry.patch<Rotation>(node, [](Rotation& r) { r.angle += dr; });
+ *   } // 离开作用域：批次结束，onUpdate<Position>/onUpdate<Rotation> 各自最多回调一次
+ * @endcode
+ */
+class Registry::BatchGuard
+{
+public:
+    explicit BatchGuard(Registry& registry) noexcept
+        : m_registry(&registry)
+    {
+        m_registry->beginBatch();
+    }
+
+    ~BatchGuard() { dismiss_and_end(); }
+
+    BatchGuard(const BatchGuard&)            = delete;
+    BatchGuard& operator=(const BatchGuard&) = delete;
+
+    BatchGuard(BatchGuard&& other) noexcept
+        : m_registry(other.m_registry)
+    {
+        other.m_registry = nullptr;
+    }
+    BatchGuard& operator=(BatchGuard&& other) noexcept
+    {
+        if (this != &other) {
+            dismiss_and_end();
+            m_registry       = other.m_registry;
+            other.m_registry = nullptr;
+        }
+        return *this;
+    }
+
+private:
+    void dismiss_and_end()
+    {
+        if (m_registry) {
+            m_registry->endBatch();
+            m_registry = nullptr;
+        }
+    }
+
+    Registry* m_registry;
 };
 
 } // namespace bakuon::core
