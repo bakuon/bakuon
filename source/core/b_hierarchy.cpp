@@ -830,24 +830,26 @@ void destroy(Registry& registry, Handle node)
 
 void collect(const Registry& registry, Handle node, std::vector<Handle>& out, bool with_self)
 {
-    std::stack<Handle> stack;
+    std::vector<Handle> stack;
     if (with_self) {
-        stack.push(node);
+        stack.push_back(node);
     } else {
-        // eachChild(registry, node, [&](Handle h) { stack.push(h); });
-        for (auto child : children(registry, node)) {
-            stack.push(child);
+        std::vector<Handle> rootChildren;
+        eachChild(registry, node, [&](Handle h) { rootChildren.push_back(h); });
+        for (auto it = rootChildren.rbegin(); it != rootChildren.rend(); ++it) {
+            stack.push_back(*it);
         }
     }
 
     while (!stack.empty()) {
-        const auto current = stack.top();
-        stack.pop();
+        const auto current = stack.back();
+        stack.pop_back();
         out.push_back(current);
 
-        // eachChild(registry, current, [&](Handle h) { stack.push(h); });
-        for (auto child : children(registry, current)) {
-            stack.push(child);
+        std::vector<Handle> children;
+        eachChild(registry, current, [&](Handle h) { children.push_back(h); });
+        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+            stack.push_back(*it);
         }
     }
 }

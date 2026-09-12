@@ -454,8 +454,7 @@ void destroy(Registry& registry, Handle node);
  * @param out 后代节点列表
  * @param with_self 是否包含当前节点
  */
-void collect(const Registry& registry, Handle node, std::vector<Handle>& out,
-             bool with_self = false);
+void collect(const Registry& registry, Handle node, std::vector<Handle>& out, bool with_self = true);
 
 /**
  * @brief 遍历 parent 的直接子节点，回调签名为 void(Handle child)。
@@ -468,8 +467,15 @@ void collect(const Registry& registry, Handle node, std::vector<Handle>& out,
 template<typename Func>
 void eachChild(const Registry& registry, Handle parent, Func&& func)
 {
-    // registry.native().view<Hierarchy>().each(std::forward<Func>(func));
-    for (Handle child : children(registry, parent)) {
+    std::vector<Handle> snapshot;
+    if (const Hierarchy* hier = registry.tryGet<Hierarchy>(parent)) {
+        for (Handle current = hier->first_child; current.isValid();) {
+            snapshot.push_back(current);
+            const Hierarchy* childHier = registry.tryGet<Hierarchy>(current);
+            current                    = childHier ? childHier->next_sibling : Handle{};
+        }
+    }
+    for (Handle child : snapshot) {
         func(child);
     }
 }
@@ -479,7 +485,7 @@ void eachDescendant(const Registry& registry, Handle parent, Func&& func,
                     TraversalOrder order = TraversalOrder::PreOrder)
 {
     std::vector<Handle> descendants;
-    collect(registry, parent, descendants);
+    collect(registry, parent, descendants, false);
 
     if (order == TraversalOrder::PreOrder) {
         for (Handle h : descendants) {
