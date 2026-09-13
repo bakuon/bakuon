@@ -52,32 +52,6 @@ jobs:
         if: runner.os == 'Windows'
         uses: seanmiddleditch/gha-setup-ninja@master
 
-      - name: Set up sccache (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          # 下载 sccache 并加入 PATH，用于 MSVC 编译缓存（对应 Linux 侧的 ccache）
-          $version = "v0.8.1"
-          $url = "https://github.com/mozilla/sccache/releases/download/$version/sccache-$version-x86_64-pc-windows-msvc.tar.gz"
-          Write-Host "Downloading sccache $version..."
-          Invoke-WebRequest -Uri $url -OutFile sccache.tar.gz -UseBasicParsing
-          tar -xzf sccache.tar.gz
-          $dir = (Get-ChildItem -Directory sccache-* | Select-Object -First 1).FullName
-          echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # 设置缓存目录，方便后续 actions/cache 接管
-          $cacheDir = Join-Path $env:RUNNER_TEMP "sccache"
-          echo "SCCACHE_DIR=$cacheDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        shell: pwsh
-
-      - name: Cache sccache (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          # 精确 key：用 commit sha，确保本次构建缓存独立；restore-keys 回退到历史缓存实现增量
-          key: sccache-${{ matrix.name }}-${{ github.sha }}
-          restore-keys: |
-            sccache-${{ matrix.name }}-
-
       - name: Cache apt packages (Linux)
         if: runner.os == 'Linux'
         uses: actions/cache@v3
@@ -132,16 +106,12 @@ jobs:
             -DBAKUON_BUILD_EXAMPLES=OFF \
             -DBAKUON_BUILD_STANDALONE=OFF
 
-      # 使用 sccache 这类编译缓存工具工作时，多个并行的 cl.exe 进程会同时尝试写入同一个 .pdb 调试数据库文件，
-      # 文件被互斥占用后就会抛出 cannot open program database '*.pdb'... 错误。
-      # 尝试加入这个 -DCMAKE_CXX_FLAGS="/FS" 编译标志看是否能解决
       - name: Configure (MSVC)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="/FS" \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DBAKUON_BUILD_CORE=ON \
