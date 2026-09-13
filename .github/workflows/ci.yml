@@ -132,12 +132,16 @@ jobs:
             -DBAKUON_BUILD_EXAMPLES=OFF \
             -DBAKUON_BUILD_STANDALONE=OFF
 
+      # 使用 sccache 这类编译缓存工具工作时，多个并行的 cl.exe 进程会同时尝试写入同一个 .pdb 调试数据库文件，
+      # 文件被互斥占用后就会抛出 cannot open program database '*.pdb'... 错误。
+      # 尝试加入这个 -DCMAKE_CXX_FLAGS="/FS" 编译标志看是否能解决
       - name: Configure (MSVC)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="/FS" \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DBAKUON_BUILD_CORE=ON \
