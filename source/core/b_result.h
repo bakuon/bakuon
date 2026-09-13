@@ -150,7 +150,7 @@ struct Status
      */
     [[nodiscard]] bool ok() const noexcept { return code == StatusCode::Ok; }
 
-    /** 
+    /**
      * @brief 流输出运算符（供日志框架使用）
      */
     friend std::ostream& operator<<(std::ostream& os, const Status& status)
@@ -179,7 +179,7 @@ public:
     {
     }
 
-    /** 
+    /**
      * @brief 获取关联的状态对象
      */
     [[nodiscard]] const Status& status() const noexcept { return m_status; }
@@ -189,72 +189,156 @@ private:
 };
 
 // ============================================================================
-// 线程安全的通用 Result 类
+// Result 类型萃取：把 T 与 void 映射到同一套存储 / 调用签名
 // ============================================================================
-// 前向声明
+
 template<typename T>
 class Result;
 
+namespace detail {
+
+/**
+ * @brief 成功载荷的存储类型
+ * @details void 无法放入 std::variant，用 std::monostate 作为空成功标记，
+ *          使 Result<T> 与 Result<void> 共用同一套实现。
+ */
+template<typename T>
+struct result_payload
+{
+    using type                    = T;
+    static constexpr bool is_void = false;
+};
+
+template<>
+struct result_payload<void>
+{
+    using type                    = std::monostate;
+    static constexpr bool is_void = true;
+};
+
+template<typename T>
+using result_payload_t = typename result_payload<T>::type;
+
+template<typename T>
+inline constexpr bool result_is_void_v = result_payload<T>::is_void;
+
+/**
+ * @brief 以成功值调用回调的签名
+ * @details Result<T>    -> Func(const T&)
+ *          Result<void> -> Func()
+ */
+template<typename T, typename Func>
+struct result_invoke
+{
+    using type = std::invoke_result_t<Func, const T&>;
+};
+
+template<typename Func>
+struct result_invoke<void, Func>
+{
+    using type = std::invoke_result_t<Func>;
+};
+
+template<typename T, typename Func>
+using result_invoke_t = typename result_invoke<T, Func>::type;
+
+template<typename T, typename Func>
+using result_mapped_t = std::decay_t<result_invoke_t<T, Func>>;
+
+/**
+ * @brief 按载荷类型分发回调：void 无参，其余传入 payload
+ */
+template<typename T, typename Func, typename Payload>
+constexpr decltype(auto) invoke_value(Func&& func, [[maybe_unused]] Payload&& payload)
+{
+    if constexpr (std::is_void_v<T>) {
+        return std::invoke(std::forward<Func>(func));
+    } else {
+        return std::invoke(std::forward<Func>(func), std::forward<Payload>(payload));
+    }
+}
+
+template<typename R>
+struct is_result : std::false_type
+{
+};
+
+template<typename U>
+struct is_result<Result<U>> : std::true_type
+{
+};
+
+template<typename R>
+inline constexpr bool is_result_v = is_result<std::remove_cvref_t<R>>::value;
+
+} // namespace detail
+
+// ============================================================================
+// 线程安全的通用 Result 类（T 与 void 共用一份实现）
+// ============================================================================
+
 /**
  * @brief 线程安全的结果类型
- * @tparam T 成功时持有的值类型
- * @details 使用 std::variant 复用内存，成功时持有 T，失败时持有 Status。
- *          内置 shared_mutex 保护，支持多线程并发读取。
+ * @tparam T 成功时持有的值类型；T = void 表示无载荷的成功/失败
+ * @details 通过类型萃取将 void 存储为 std::monostate，成功时持有 payload，
+ *          失败时持有 Status。内置 shared_mutex 保护，支持多线程并发读取。
  *          被标记为 [[nodiscard]]，防止调用方忽略返回值。
  */
 template<typename T>
 class [[nodiscard]] Result
 {
 public:
-    // ------------------------------------------------------------------------
-    // 类型约束
-    // ------------------------------------------------------------------------
-    static_assert(std::move_constructible<T> || std::copy_constructible<T>,
-                  "Result payload must be move or copy constructible.");
+    using value_type   = T;
+    using storage_type = detail::result_payload_t<T>;
+    using variant_type = std::variant<Status, storage_type>;
 
-    /** 
-     * @brief 值类型
-     */
-    using value_type = T;
+    static constexpr bool is_void_value = detail::result_is_void_v<T>;
+
+    static_assert(!std::is_reference_v<T>, "Result payload cannot be a reference type.");
+    static_assert(!std::is_array_v<T>, "Result payload cannot be an array type.");
+    static_assert(is_void_value || std::move_constructible<T> || std::copy_constructible<T>,
+                  "Result payload must be void, or move/copy constructible.");
 
     // ------------------------------------------------------------------------
-    // 构造函数群
+    // 构造函数
     // ------------------------------------------------------------------------
 
     /**
-     * @brief 成功值移动构造
-     * @param val 成功值（右值）
+     * @brief 默认构造：仅 Result<void> 可用，表示成功
      */
-    Result(T&& val)
-        : m_data(std::move(val))
+    Result()
+    requires is_void_value
+        : m_data(std::in_place_type<storage_type>)
     {
     }
 
     /**
-     * @brief 成功值拷贝构造
-     * @param val 成功值（左值）
+     * @brief 成功值构造（隐式，仅非 void）
+     * @tparam U 可构造为 T 的类型
      */
-    Result(const T& val)
-        : m_data(val)
+    template<typename U>
+    requires(!is_void_value && !std::is_same_v<std::remove_cvref_t<U>, Result>
+             && !std::is_same_v<std::remove_cvref_t<U>, Status>
+             && !std::is_same_v<std::remove_cvref_t<U>, StatusCode>
+             && !std::is_same_v<std::remove_cvref_t<U>, std::in_place_t>
+             && std::constructible_from<T, U>)
+    Result(U&& val)
+        : m_data(std::in_place_type<storage_type>, std::forward<U>(val))
     {
     }
 
     /**
-     * @brief 原地构造成功值
-     * @tparam Args 构造 T 的参数类型
-     * @param args 构造 T 的参数
+     * @brief 原地构造成功值（仅非 void）
      */
     template<typename... Args>
-    requires std::constructible_from<T, Args...>
+    requires(!is_void_value && std::constructible_from<T, Args...>)
     explicit Result(std::in_place_t, Args&&... args)
-        : m_data(std::in_place_type<T>, std::forward<Args>(args)...)
+        : m_data(std::in_place_type<storage_type>, std::forward<Args>(args)...)
     {
     }
 
     /**
      * @brief 失败状态构造（状态码 + 消息）
-     * @param code 错误码
-     * @param msg 错误消息
      */
     Result(StatusCode code, std::string msg)
         : m_data(std::in_place_type<Status>, code, std::move(msg))
@@ -263,7 +347,6 @@ public:
 
     /**
      * @brief 失败状态构造（Status 对象）
-     * @param status 状态对象
      */
     explicit Result(Status status)
         : m_data(std::in_place_type<Status>, std::move(status))
@@ -271,37 +354,19 @@ public:
     }
 
     // ------------------------------------------------------------------------
-    // 拷贝 / 移动构造与赋值（遵循 Rule of Five）
+    // 拷贝 / 移动 / 赋值（mutex 不可拷贝，需手写；数据在锁保护下复制）
     // ------------------------------------------------------------------------
 
-    /**
-     * @brief 拷贝构造函数
-     * @param other 源对象
-     * @note 构造时本对象无并发访问，只需对源对象加读锁
-     */
     Result(const Result& other)
+        : m_data(copy_payload(other))
     {
-        std::shared_lock<std::shared_mutex> lock(other.m_mutex);
-        m_data = other.m_data;
     }
 
-    /**
-     * @brief 移动构造函数
-     * @param other 源对象（将被移入本对象）
-     * @note 对源对象加写锁，确保移动操作的原子性
-     */
     Result(Result&& other) noexcept
+        : m_data(move_payload(other))
     {
-        std::unique_lock<std::shared_mutex> lock(other.m_mutex);
-        m_data = std::move(other.m_data);
     }
 
-    /**
-     * @brief 拷贝赋值运算符
-     * @param other 源对象
-     * @return *this
-     * @note 采用 copy-and-swap 思想，使用 std::lock 同时获取两把锁避免死锁
-     */
     Result& operator=(const Result& other)
     {
         if (this != &other) {
@@ -313,12 +378,6 @@ public:
         return *this;
     }
 
-    /**
-     * @brief 移动赋值运算符
-     * @param other 源对象（将被移入本对象）
-     * @return *this
-     * @note 两个对象都加写锁，确保移动操作的原子性
-     */
     Result& operator=(Result&& other) noexcept
     {
         if (this != &other) {
@@ -330,50 +389,40 @@ public:
         return *this;
     }
 
-    /** @brief 析构函数 */
     ~Result() = default;
 
     // ------------------------------------------------------------------------
-    // 静态辅助工厂方法
+    // 静态工厂
     // ------------------------------------------------------------------------
 
     /**
-     * @brief 构造成功的 Result<T>
-     * @param val 成功值
-     * @return 持有 val 的 Result<T>
+     * @brief 构造成功的 Result
+     * @details Result<void>::Ok()；Result<T>::Ok(args...) 转发构造 T
      */
-    [[nodiscard]] static Result<std::decay_t<T>> Ok(T&& val)
+    template<typename... Args>
+    [[nodiscard]] static Result Ok(Args&&... args)
+    requires((is_void_value && sizeof...(Args) == 0)
+             || (!is_void_value && sizeof...(Args) >= 1 && std::constructible_from<T, Args...>) )
     {
-        return Result<std::decay_t<T>>(std::forward<T>(val));
+        if constexpr (is_void_value) {
+            return Result{};
+        } else {
+            return Result(std::in_place, std::forward<Args>(args)...);
+        }
     }
 
     /**
-     * @brief 构造成功的 Result<T>
-     * @param val 成功值
-     * @return 持有 val 的 Result<T>
+     * @brief 构造失败的 Result
      */
-    [[nodiscard]] static Result<std::decay_t<T>> Ok(const T& val)
+    [[nodiscard]] static Result Fail(StatusCode code, std::string msg)
     {
-        return Result<std::decay_t<T>>(val);
+        return Result(code, std::move(msg));
     }
 
     /**
-    * @brief 构造失败的 Result<T>
-    * @param code 错误码
-    * @param msg 错误消息
-    * @return 失败状态的 Result<T>
-    */
-    [[nodiscard]] static Result<T> Fail(StatusCode code, std::string msg)
-    {
-        return Result<T>(code, std::move(msg));
-    }
-
-    /**
-    * @brief 构造失败的 Result<T>（从 Status 构造）
-    * @param status 状态对象
-    * @return 失败状态的 Result<T>
-    */
-    [[nodiscard]] static Result<T> Fail(Status status) { return Result<T>(std::move(status)); }
+     * @brief 构造失败的 Result（从 Status）
+     */
+    [[nodiscard]] static Result Fail(Status status) { return Result(std::move(status)); }
 
     // ------------------------------------------------------------------------
     // 状态查询
@@ -387,17 +436,16 @@ public:
 
     /**
      * @brief 判断是否为成功状态
-     * @return true 表示 variant 中持有 T
+     * @return true 表示 variant 中持有成功载荷
      */
     [[nodiscard]] bool success() const noexcept
     {
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        return std::holds_alternative<T>(m_data);
+        return holds_value();
     }
 
     /**
-     * @brief 判断是否为失败状态（success 的反义，提高可读性）
-     * @return true 表示失败
+     * @brief 判断是否为失败状态
      */
     [[nodiscard]] bool error() const noexcept { return !success(); }
 
@@ -407,7 +455,7 @@ public:
 
     /**
      * @brief 获取状态（线程安全，返回副本）
-     * @return 若成功返回默认 Status(Ok)，否则返回错误状态
+     * @return 成功时返回默认 Status(Ok)，否则返回错误状态
      */
     [[nodiscard]] Status status() const
     {
@@ -419,79 +467,80 @@ public:
     }
 
     /**
-     * @brief 获取成功值（左值版本，返回拷贝）
-     * @return 成功值的拷贝
+     * @brief 获取成功值（左值：拷贝 T；void：仅校验）
      * @throws ResultError 若为失败状态
      */
-    [[nodiscard]] T value() const&
+    [[nodiscard]] auto value() const&
     {
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        if (!std::holds_alternative<T>(m_data)) [[unlikely]] {
-            throw ResultError(std::get<Status>(m_data));
+        throw_if_error();
+        if constexpr (is_void_value) {
+            return;
+        } else {
+            return storage_type(std::get<storage_type>(m_data));
         }
-        return std::get<T>(m_data);
     }
 
     /**
-     * @brief 获取成功值（右值版本，移动返回）
-     * @return 成功值（通过移动转出）
+     * @brief 获取成功值（右值：移动 T；void：仅校验）
      * @throws ResultError 若为失败状态
-     * @note 对本对象加写锁确保移动时无并发读取
      */
-    [[nodiscard]] T value() &&
+    [[nodiscard]] auto value() &&
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
-        if (!std::holds_alternative<T>(m_data)) [[unlikely]] {
-            throw ResultError(std::get<Status>(m_data));
+        throw_if_error();
+        if constexpr (is_void_value) {
+            return;
+        } else {
+            return std::get<storage_type>(std::move(m_data));
         }
-        return std::get<T>(std::move(m_data));
     }
 
     /**
-     * @brief 获取成功值，失败时返回默认值
-     * @tparam U 默认值类型（可转换为 T）
-     * @param default_value 失败时的默认值
-     * @return 成功值或默认值
+     * @brief 获取成功值，失败时返回默认值（void 不可用）
      */
     template<typename U>
     [[nodiscard]] T valueOr(U&& default_value) const&
+    requires(!is_void_value && std::convertible_to<U, T>)
     {
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        if (std::holds_alternative<T>(m_data)) {
-            return std::get<T>(m_data);
+        if (holds_value()) {
+            return std::get<storage_type>(m_data);
         }
         return static_cast<T>(std::forward<U>(default_value));
     }
 
-    /** @brief 获取成功值，失败时返回默认值（右值重载） */
+    /**
+     * @brief 获取成功值，失败时返回默认值（右值重载，void 不可用）
+     */
     template<typename U>
     [[nodiscard]] T valueOr(U&& default_value) &&
+    requires(!is_void_value && std::convertible_to<U, T>)
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
-        if (std::holds_alternative<T>(m_data)) {
-            return std::get<T>(std::move(m_data));
+        if (holds_value()) {
+            return std::get<storage_type>(std::move(m_data));
         }
         return static_cast<T>(std::forward<U>(default_value));
     }
 
     // ------------------------------------------------------------------------
-    // 受控访问（回调式，零拷贝）
+    // 受控访问（回调式，零拷贝；回调期间持有读锁）
     // ------------------------------------------------------------------------
 
     /**
      * @brief 在锁保护下访问成功值
-     * @tparam Func 回调类型
-     * @param func 回调函数，接收 const T& 作为参数
-     * @return 回调的返回值，失败时返回默认构造值
+     * @param func Result<T> 接收 const T&；Result<void> 无参
+     * @return 回调的返回值；失败时非 void 返回值默认构造
      * @note 回调在持有读锁期间执行，期间禁止再次访问本 Result 对象
      */
     template<typename Func>
-    auto withValue(Func&& func) const -> std::invoke_result_t<Func, const T&>
+    auto withValue(Func&& func) const -> detail::result_invoke_t<T, Func>
     {
-        using ReturnType = std::invoke_result_t<Func, const T&>;
+        using ReturnType = detail::result_invoke_t<T, Func>;
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        if (std::holds_alternative<T>(m_data)) {
-            return std::invoke(std::forward<Func>(func), std::get<T>(m_data));
+        if (holds_value()) {
+            return detail::invoke_value<T>(std::forward<Func>(func), std::get<storage_type>(m_data));
         }
         if constexpr (!std::is_void_v<ReturnType>) {
             return ReturnType{};
@@ -500,9 +549,8 @@ public:
 
     /**
      * @brief 在锁保护下访问失败状态
-     * @tparam Func 回调类型
-     * @param func 回调函数，接收 const Status& 作为参数
-     * @return 回调的返回值，成功时返回默认构造值
+     * @param func 接收 const Status&
+     * @return 回调的返回值；成功时非 void 返回值默认构造
      */
     template<typename Func>
     auto withError(Func&& func) const -> std::invoke_result_t<Func, const Status&>
@@ -522,55 +570,76 @@ public:
     // ------------------------------------------------------------------------
 
     /**
-     * @brief 转换成功值（类似 Rust 的 map / transform）
-     * @tparam Func 转换函数类型
-     * @param func 转换函数，接收 const T& 返回 U
-     * @return Result<U>，失败时原样传递错误
+     * @brief 转换成功值（类似 Rust map / C++ transform）
+     * @param func Result<T> 接收 const T& 返回 U；Result<void> 无参返回 U
+     * @return Result<U>，失败时原样传递错误。U 可为 void
      */
     template<typename Func>
-    [[nodiscard]] auto transform(Func&& func) const
-        -> Result<std::decay_t<std::invoke_result_t<Func, const T&>>>
+    [[nodiscard]] auto transform(Func&& func) const -> Result<detail::result_mapped_t<T, Func>>
     {
-        using U = std::decay_t<std::invoke_result_t<Func, const T&>>;
+        using U = detail::result_mapped_t<T, Func>;
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        if (std::holds_alternative<T>(m_data)) {
-            return Result<U>(std::invoke(std::forward<Func>(func), std::get<T>(m_data)));
+        if (holds_value()) {
+            storage_type payload = std::get<storage_type>(m_data);
+            lock.unlock();
+            if constexpr (std::is_void_v<U>) {
+                detail::invoke_value<T>(std::forward<Func>(func), payload);
+                return Result<U>{};
+            } else {
+                return Result<U>(detail::invoke_value<T>(std::forward<Func>(func), payload));
+            }
         }
-        return Result<U>(std::get<Status>(m_data));
+        Status err = std::get<Status>(m_data);
+        lock.unlock();
+        return Result<U>(std::move(err));
     }
 
     /**
-     * @brief 链式调用（类似 Rust 的 and_then）
-     * @tparam Func 转换函数类型
-     * @param func 接收 const T& 返回 Result<U>
+     * @brief 链式调用（类似 Rust and_then）
+     * @param func Result<T> 接收 const T& 返回 Result<U>；Result<void> 无参
      * @return Result<U>，失败时原样传递错误
      */
     template<typename Func>
-    [[nodiscard]] auto andThen(Func&& func) const
-        -> std::decay_t<std::invoke_result_t<Func, const T&>>
+    [[nodiscard]] auto andThen(Func&& func) const -> std::decay_t<detail::result_invoke_t<T, Func>>
     {
-        using ResultU = std::decay_t<std::invoke_result_t<Func, const T&>>;
+        using ResultU = std::decay_t<detail::result_invoke_t<T, Func>>;
+        static_assert(detail::is_result_v<ResultU>, "andThen callback must return Result<U>");
+
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        if (std::holds_alternative<T>(m_data)) {
-            return std::invoke(std::forward<Func>(func), std::get<T>(m_data));
+        if (holds_value()) {
+            storage_type payload = std::get<storage_type>(m_data);
+            lock.unlock();
+            return detail::invoke_value<T>(std::forward<Func>(func), payload);
         }
-        return ResultU(std::get<Status>(m_data));
+        Status err = std::get<Status>(m_data);
+        lock.unlock();
+        return ResultU(std::move(err));
     }
 
     /**
-     * @brief 失败时的恢复操作（类似 Rust 的 or_else）
-     * @tparam Func 恢复函数类型
+     * @brief 失败时的恢复操作（类似 Rust or_else）
      * @param func 接收 const Status& 返回 Result<T>
-     * @return Result<T>，成功时原样返回，失败时调用 func 恢复
+     * @return 成功时原样返回，失败时调用 func 恢复
      */
     template<typename Func>
     [[nodiscard]] Result orElse(Func&& func) const
     {
+        static_assert(std::is_same_v<std::decay_t<std::invoke_result_t<Func, const Status&>>, Result>,
+                      "orElse callback must return Result<T>");
+
         std::shared_lock<std::shared_mutex> lock(m_mutex);
-        if (std::holds_alternative<T>(m_data)) {
-            return *this;
+        if (holds_value()) {
+            [[maybe_unused]] storage_type payload = std::get<storage_type>(m_data);
+            lock.unlock();
+            if constexpr (is_void_value) {
+                return Result{};
+            } else {
+                return Result(std::move(payload));
+            }
         }
-        return std::invoke(std::forward<Func>(func), std::get<Status>(m_data));
+        Status err = std::get<Status>(m_data);
+        lock.unlock();
+        return std::invoke(std::forward<Func>(func), err);
     }
 
     // ------------------------------------------------------------------------
@@ -579,7 +648,6 @@ public:
 
     /**
      * @brief 交换两个 Result
-     * @param other 另一个 Result 对象
      */
     void swap(Result& other) noexcept
     {
@@ -592,155 +660,48 @@ public:
         }
     }
 
-    /** @brief 全局 swap 重载 */
     friend void swap(Result& a, Result& b) noexcept { a.swap(b); }
 
 private:
+    [[nodiscard]] bool holds_value() const noexcept
+    {
+        return std::holds_alternative<storage_type>(m_data);
+    }
+
+    void throw_if_error() const
+    {
+        if (!holds_value()) [[unlikely]] {
+            throw ResultError(std::get<Status>(m_data));
+        }
+    }
+
+    static variant_type copy_payload(const Result& other)
+    {
+        std::shared_lock<std::shared_mutex> lock(other.m_mutex);
+        return other.m_data;
+    }
+
+    static variant_type move_payload(Result& other) noexcept
+    {
+        std::unique_lock<std::shared_mutex> lock(other.m_mutex);
+        return std::move(other.m_data);
+    }
+
     /**
-     * @brief 数据存储：成功时为 T，失败时为 Status
-     * @note 顺序不重要，holds_alternative 和 get 都可正常工作
+     * @brief 数据存储：成功为 storage_type（T 或 monostate），失败为 Status
      */
-    std::variant<Status, T> m_data;
+    variant_type m_data;
 
     /** @brief 读写锁：支持多线程并发读取，独占写入/移动 */
     mutable std::shared_mutex m_mutex;
 };
 
 // ============================================================================
-// Result<void> 特化（无返回值场景）
+// 辅助工厂函数
 // ============================================================================
 
 /**
- * @brief void 类型的 Result 特化
- * @details 用于无返回值的函数，仍然携带成功/失败状态信息
- */
-template<>
-class [[nodiscard]] Result<void>
-{
-public:
-    /**
-     * @brief 值类型
-     */
-    using value_type = void;
-
-    /**
-     * @brief 默认构造：成功状态
-     */
-    Result() = default;
-
-    /**
-     * @brief 失败状态构造
-     * @param code 错误码
-     * @param msg 错误消息
-     */
-    Result(StatusCode code, std::string msg)
-        : m_status(code, std::move(msg))
-    {
-    }
-
-    /**
-     * @brief 失败状态构造（Status 对象）
-     * @param status 状态对象
-     */
-    explicit Result(Status status)
-        : m_status(std::move(status))
-    {
-    }
-
-    /** @brief 显式布尔转换 */
-    explicit operator bool() const noexcept { return success(); }
-
-    /** @brief 判断是否成功 */
-    [[nodiscard]] bool success() const noexcept { return m_status.ok(); }
-
-    /** @brief 判断是否失败 */
-    [[nodiscard]] bool error() const noexcept { return !m_status.ok(); }
-
-    /** @brief 获取状态 */
-    [[nodiscard]] const Status& status() const noexcept { return m_status; }
-
-    /** @brief 无操作（用于统一接口，void 无值可获取） */
-    void value() const
-    {
-        if (!m_status.ok()) [[unlikely]] {
-            throw ResultError(m_status);
-        }
-    }
-
-    /**
-     * @brief 失败时的恢复操作
-     * @tparam Func 恢复函数类型
-     * @param func 接收 const Status& 返回 Result<void>
-     * @return 成功时原样返回，失败时调用 func 恢复
-     */
-    template<typename Func>
-    [[nodiscard]] Result orElse(Func&& func) const
-    {
-        if (m_status.ok()) {
-            return *this;
-        }
-        return std::invoke(std::forward<Func>(func), m_status);
-    }
-
-    /**
-     * @brief 链式调用（void 版本）
-     * @tparam Func 函数类型
-     * @param func 无参数，返回 Result<void>
-     * @return 成功时继续执行 func，失败时传递错误
-     */
-    template<typename Func>
-    [[nodiscard]] Result andThen(Func&& func) const
-    {
-        if (m_status.ok()) {
-            return std::invoke(std::forward<Func>(func));
-        }
-        return *this;
-    }
-
-    // ------------------------------------------------------------------------
-    // 静态辅助工厂方法
-    // ------------------------------------------------------------------------
-
-    /**
-     * @brief 创建成功的 void Result
-     * @return 成功状态的 Result<void>
-     */
-    [[nodiscard]] static Result OK() { return {}; }
-
-    /**
-    * @brief 构造失败的 Result<void>
-    * @param code 错误码
-    * @param msg 错误消息
-    * @return 失败状态的 Result<void>
-    */
-    [[nodiscard]] static Result<void> Fail(StatusCode code, std::string msg)
-    {
-        return {code, std::move(msg)};
-    }
-
-    /**
-    * @brief 构造失败的 Result<void>（从 Status 构造）
-    * @param status 状态对象
-    * @return 失败状态的 Result<void>
-    */
-    [[nodiscard]] static Result<void> Fail(Status status)
-    {
-        return Result<void>(std::move(status));
-    }
-
-private:
-    Status m_status; /** 状态对象 */
-};
-
-// ============================================================================
-// 辅助工厂函数 ---- 注：类自身也提供了工厂成员函数
-// ============================================================================
-
-/**
- * @brief 构造成功的 Result<T>
- * @tparam T 值类型（自动推导）
- * @param val 成功值
- * @return 持有 val 的 Result<T>
+ * @brief 构造成功的 Result<T>（由值推导 T）
  */
 template<typename T>
 [[nodiscard]] Result<std::decay_t<T>> Ok(T&& val)
@@ -750,7 +711,6 @@ template<typename T>
 
 /**
  * @brief 构造成功的 Result<void>
- * @return 成功状态的 Result<void>
  */
 [[nodiscard]] inline Result<void> Ok()
 {
@@ -759,10 +719,6 @@ template<typename T>
 
 /**
  * @brief 构造失败的 Result<T>
- * @tparam T 值类型（通常由调用方显式指定或推导）
- * @param code 错误码
- * @param msg 错误消息
- * @return 失败状态的 Result<T>
  */
 template<typename T>
 [[nodiscard]] Result<T> Fail(StatusCode code, std::string msg)
@@ -771,10 +727,7 @@ template<typename T>
 }
 
 /**
- * @brief 构造失败的 Result<T>（从 Status 构造）
- * @tparam T 值类型
- * @param status 状态对象
- * @return 失败状态的 Result<T>
+ * @brief 构造失败的 Result<T>（从 Status）
  */
 template<typename T>
 [[nodiscard]] Result<T> Fail(Status status)

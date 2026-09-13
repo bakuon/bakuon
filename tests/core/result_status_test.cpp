@@ -1,11 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <future>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include <core/b_result.h>
+#include <bakuon/core/Result.h>
 
 /**
  * @file result_status_test.cpp
@@ -16,12 +18,13 @@
  *   2. 构造 / 拷贝 / 移动 / 赋值
  *   3. 状态查询（success / error / bool 转换）
  *   4. 值获取（value / valueOr / 异常）
- *   5. 受控访问（with_value / with_error）
- *   6. 函数式链式调用（transform / andThen / or_else）
- *   7. 工厂函数（Ok / Err）
+ *   5. 受控访问（withValue / withError）
+ *   6. 函数式链式调用（transform / andThen / orElse）
+ *   7. 工厂函数（Ok / Fail）
  *   8. swap
- *   9. Result<void> 特化
+ *   9. Result<void>（与 Result<T> 同一套实现）
  *  10. 多线程并发读写（验证互斥锁安全性）
+ *  11. T / void 交叉链式调用
  */
 
 using namespace bakuon::core;
@@ -282,7 +285,7 @@ TEST(ResultValueTest, ValueThrowsOnFailure)
 TEST(ResultValueTest, RValueValueThrowsOnFailure)
 {
     Result<std::string> r(StatusCode::DataLoss, "corrupted");
-    EXPECT_THROW({ std::move(r).value(); }, ResultError);
+    EXPECT_THROW({ (void) std::move(r).value(); }, ResultError);
 }
 
 TEST(ResultValueTest, ValueOrReturnsValueOnSuccess)
@@ -307,7 +310,7 @@ TEST(ResultValueTest, RValueValueOr)
 }
 
 // ============================================================================
-// 5. 受控访问（with_value / with_error）
+// 5. 受控访问（withValue / withError）
 // ============================================================================
 
 TEST(ResultAccessTest, WithValueCallsCallbackOnSuccess)
@@ -546,7 +549,7 @@ TEST(SwapTest, SwapSelfNoOp)
 }
 
 // ============================================================================
-// 9. Result<void> 特化
+// 9. Result<void>（与 Result<T> 共用同一套实现，接口对齐）
 // ============================================================================
 
 TEST(ResultVoidTest, DefaultIsSuccess)
@@ -594,9 +597,9 @@ TEST(ResultVoidTest, OkFactory)
     EXPECT_TRUE(r2.error());
 }
 
-TEST(ResultVoidTest, OKStaticFactory)
+TEST(ResultVoidTest, OkStaticFactory)
 {
-    auto r1 = Result<void>::OK();
+    auto r1 = Result<void>::Ok();
     EXPECT_TRUE(r1.success());
 
     auto r2 = Result<void>::Fail(StatusCode::Cancelled, "cancelled");
@@ -650,6 +653,67 @@ TEST(ResultVoidTest, OrElsePassThroughOnSuccess)
     });
     EXPECT_FALSE(called);
     EXPECT_TRUE(same.success());
+}
+
+TEST(ResultVoidTest, CopyMoveSwap)
+{
+    Result<void> a;
+    Result<void> b(StatusCode::Aborted, "ab");
+    Result<void> c(a);
+    EXPECT_TRUE(c.success());
+    Result<void> d(std::move(b));
+    EXPECT_TRUE(d.error());
+    EXPECT_EQ(d.status().code, StatusCode::Aborted);
+
+    Result<void> ok;
+    Result<void> err(StatusCode::NotFound, "n");
+    swap(ok, err);
+    EXPECT_TRUE(ok.error());
+    EXPECT_TRUE(err.success());
+}
+
+TEST(ResultVoidTest, WithValueAndWithError)
+{
+    Result<void> ok;
+    int seen = 0;
+    int ret  = ok.withValue([&] {
+        seen = 1;
+        return 11;
+    });
+    EXPECT_EQ(seen, 1);
+    EXPECT_EQ(ret, 11);
+
+    bool value_called = false;
+    Result<void> err(StatusCode::InternalError, "boom");
+    int skipped = err.withValue([&] {
+        value_called = true;
+        return 5;
+    });
+    EXPECT_FALSE(value_called);
+    EXPECT_EQ(skipped, 0);
+
+    StatusCode code = StatusCode::Ok;
+    err.withError([&](const Status& s) { code = s.code; });
+    EXPECT_EQ(code, StatusCode::InternalError);
+
+    bool error_called = false;
+    ok.withError([&](const Status&) { error_called = true; });
+    EXPECT_FALSE(error_called);
+}
+
+TEST(ResultVoidTest, TransformToValue)
+{
+    auto r = Ok().transform([] { return 42; });
+    static_assert(std::is_same_v<decltype(r), Result<int>>);
+    EXPECT_TRUE(r.success());
+    EXPECT_EQ(r.value(), 42);
+}
+
+TEST(ResultVoidTest, TransformPropagatesError)
+{
+    auto r = Fail<void>(StatusCode::Timeout, "t").transform([] { return 1; });
+    EXPECT_TRUE(r.error());
+    EXPECT_EQ(r.status().code, StatusCode::Timeout);
 }
 
 // ============================================================================
@@ -772,4 +836,82 @@ TEST(ConcurrencyTest, MoveAssignFromTemporary)
     stop.store(true);
     reader.get();
     SUCCEED();
+}
+
+TEST(ConcurrencyTest, ConcurrentReadsOnVoidResult)
+{
+    const Result<void> shared;
+    constexpr int kThreads    = 8;
+    constexpr int kIterations = 1000;
+
+    std::vector<std::future<bool>> futures;
+    futures.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        futures.push_back(std::async(std::launch::async, [&]() {
+            for (int j = 0; j < kIterations; ++j) {
+                if (!shared.success())
+                    return false;
+                if (!shared.status().ok())
+                    return false;
+                try {
+                    shared.value();
+                } catch (...) {
+                    return false;
+                }
+            }
+            return true;
+        }));
+    }
+
+    for (auto& f : futures) {
+        EXPECT_TRUE(f.get());
+    }
+}
+
+// ============================================================================
+// 11. T / void 交叉链式调用（统一接口的核心验证）
+// ============================================================================
+
+TEST(ResultUnifiedTest, TransformValueToVoid)
+{
+    bool called = false;
+    auto r      = Ok(7).transform([&](const int& v) { called = v == 7; });
+    static_assert(std::is_same_v<decltype(r), Result<void>>);
+    EXPECT_TRUE(r.success());
+    EXPECT_TRUE(called);
+    EXPECT_NO_THROW(r.value());
+}
+
+TEST(ResultUnifiedTest, AndThenVoidToValue)
+{
+    auto r = Ok().andThen([]() -> Result<int> { return Ok(9); });
+    static_assert(std::is_same_v<decltype(r), Result<int>>);
+    EXPECT_TRUE(r.success());
+    EXPECT_EQ(r.value(), 9);
+}
+
+TEST(ResultUnifiedTest, AndThenValueToVoid)
+{
+    auto r = Ok(1).andThen([](const int&) -> Result<void> { return Ok(); });
+    static_assert(std::is_same_v<decltype(r), Result<void>>);
+    EXPECT_TRUE(r.success());
+}
+
+TEST(ResultUnifiedTest, AndThenVoidPropagatesErrorIntoValueResult)
+{
+    auto r = Fail<void>(StatusCode::NotFound, "missing").andThen([]() -> Result<int> {
+        return Ok(1);
+    });
+    EXPECT_TRUE(r.error());
+    EXPECT_EQ(r.status().code, StatusCode::NotFound);
+}
+
+TEST(ResultUnifiedTest, TraitsPayloadMapping)
+{
+    static_assert(std::is_same_v<Result<int>::storage_type, int>);
+    static_assert(std::is_same_v<Result<void>::storage_type, std::monostate>);
+    static_assert(!Result<int>::is_void_value);
+    static_assert(Result<void>::is_void_value);
+    static_assert(std::is_same_v<Result<int>::value_type, int>);
+    static_assert(std::is_same_v<Result<void>::value_type, void>);
 }
