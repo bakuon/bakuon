@@ -15,43 +15,19 @@
 #include <bakuon/gui/IPlugin.h>
 #include <bakuon/gui/PluginContext.h>
 
-#include "gui/b_gui_export.h"
 #include "core/b_pluginlifecycle.h"
+#include "gui/b_gui_export.h"
 #include "gui/b_pluginmetadata.h"
 
 namespace bakuon::gui {
 
-/// ----------------------------------------------------------------------------
-/// Pipeline 管道流转
-///  事件是以 “多米诺骨牌（Pipeline）” 方式流转的,分为两类状态角色：
-/// 1.过程态（-ing 状态，如 Validating, Resolving）：这类状态由主动事件（
-/// 如 StartValidate）触发进入。进入后，状态机立刻执行对应的阻塞同步业务函数
-/// （如执行 executeValidate()）。业务函数执行完毕后，根据其内部的
-/// true/false 结果，主动向状态机投递 Success 或 Fail 事件。
-///
-/// 2.稳定态/结果态（-ed 状态，如 Validated, Resolved, Loaded）：这类状态由上一阶段
-/// 的 Success 事件驱动进入。一旦进入结果态，onStateEntered/stateReact 路由表会
-/// 立刻自动向下投递下一阶段的启动事件（如进入 Validated 后自动投递 StartResolve）。
-/// -----------------------------------------------------------------------------
-
-// 状态机枚举与转移表已抽到 core（纯 C++，无 Qt）。gui 再导出同名类型，保持既有调用点不变。
-using PluginState = core::PluginState;
-using PluginEvent = core::PluginEvent;
+// State machine enums + transition table live in core (pure C++, no Qt).
+using PluginState          = core::PluginState;
+using PluginEvent          = core::PluginEvent;
 using PluginLifecycleRules = core::PluginLifecycleRules;
 
-/// 供日志/UI/测试使用；不参与状态机逻辑本身。
 BAKUON_GUI_EXPORT QString toString(PluginState state);
 
-/**
- * @brief 单个插件从发现到卸载的完整生命周期管道。
- *
- * 用法（动态库插件）：
- *   PluginPipeline pipeline(id, filePath);
- *   pipeline.launch();           // 自动跑完 Discovering → ... → Initialized
- *   pipeline.run();              // Initialized → Running
- *   pipeline.stop();
- *   pipeline.unload();
- */
 class BAKUON_GUI_EXPORT PluginPipeline : public QObject
 {
     Q_OBJECT
