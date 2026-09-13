@@ -5,6 +5,10 @@ with section("parse"):
 
     # Specify structure for custom cmake functions
     additional_commands = {
+        "foo": {
+            "flags": ["BAR", "BAZ"],
+            "kwargs": {"DEPENDS": "*", "HEADERS": "*", "SOURCES": "*"},
+        },
         "CPMAddPackage": {
             "kwargs": {
                 "NAME": "*",
@@ -21,76 +25,9 @@ with section("parse"):
                 "FIND_PACKAGE_ARGUMENTS": "*"
             },
         },
-        "bakuon_add_library": {
-            "pargs": 0,
-            "kwargs": {
-                "NAME": "1",
-                "TYPE": "1",
-                "INCLUDE_DIRECTORIES": "*",
-                "COMPILE_DEFINITIONS": "*",
-                "COMPILE_FEATURES": "*",
-                "COMPILE_OPTIONS": "*",
-                "PRECOMPILE_HEADERS": "*",
-                "SOURCES": "*",
-                "LINK_LIBRARIES": "*",
-                "LINK_OPTIONS": "*",
-                "LINK_DIRECTORIES": "*",
-                "SANITIZERS": "*",
-                "DEPENDENCIES": "*",
-                "INSTALL": "*",
-            },
-        },
-        "bakuon_add_executable": {
-            "pargs": 0,
-            "kwargs": {
-                "NAME": "1",
-                "INCLUDE_DIRECTORIES": "*",
-                "COMPILE_DEFINITIONS": "*",
-                "COMPILE_FEATURES": "*",
-                "COMPILE_OPTIONS": "*",
-                "PRECOMPILE_HEADERS": "*",
-                "SOURCES": "*",
-                "LINK_LIBRARIES": "*",
-                "LINK_OPTIONS": "*",
-                "LINK_DIRECTORIES": "*",
-                "SANITIZERS": "*",
-                "DEPENDENCIES": "*",
-                "INSTALL": "*",
-                "DISCOVER_TESTS": "*",
-            },
-        },
-        "bakuon_add_file_pass": {
-            "pargs": 0,
-            "kwargs": {
-                "PRE_SEQUENTIAL": "0",
-                "SEQUENTIAL": "0",
-                "POST_SEQUENTIAL": "0",
-                "PRE_REDIRECT_OUTPUT": "0",
-                "REDIRECT_OUTPUT": "0",
-                "POST_REDIRECT_OUTPUT": "0",
-                "NAME": "1",
-                "GROUPS": "*",
-                "PRE_COMMANDS": "*",
-                "COMMANDS": "*",
-                "POST_COMMANDS": "*",
-                "GLOBS": "*",
-                "FILES": "*",
-                "DEPENDENCIES": "*",
-            },
-        },
-        "bakuon_add_formatter": {
-            "pargs": 0,
-            "kwargs": {
-                "NAME": "1",
-                "EXECUTABLE": "1",
-                "PROGRAMS": "*",
-                "CHECK_ARGS": "*",
-                "FIX_ARGS": "*",
-                "POSTFIX_COMMAND": "*",
-                "GLOBS": "*",
-                "FILES": "*",
-            },
-        },
+        "set": {
+            "flags": ["* OFF", "* ON"]
+        }
     }
 
     # Override configurations per-command where available
@@ -111,7 +48,7 @@ with section("format"):
     disable = False
 
     # How wide to allow formatted cmake files
-    line_width = 100
+    line_width = 120
 
     # How many spaces to tab for indent
     tab_size = 4
@@ -135,7 +72,7 @@ with section("format"):
 
     # If a positional argument group contains more than this many arguments, then
     # force it to a vertical layout.
-    max_pargs_hwrap = 3
+    max_pargs_hwrap = 4
 
     # If a cmdline positional group consumes more than this many lines without
     # nesting, then invalidate the layout (and nest)
@@ -149,7 +86,7 @@ with section("format"):
 
     # If a statement is wrapped to more than one line, than dangle the closing
     # parenthesis on its own line.
-    dangle_parens = False
+    dangle_parens = True
 
     # If the trailing parenthesis must be 'dangled' on its on line, then align it
     # to this reference: `prefix`: the start of the statement,  `prefix-indent`:
@@ -180,7 +117,14 @@ with section("format"):
     keyword_case = "upper"
 
     # A list of command names which should always be wrapped
-    always_wrap = []
+    always_wrap = [
+        "CPMAddPackage"
+        "add_executable",
+        "add_library",
+        "target_link_libraries",
+        "target_include_directories",
+        "install",
+    ]
 
     # If true, the argument lists which are known to be sortable will be sorted
     # lexicographicall
@@ -256,7 +200,7 @@ with section("lint"):
     function_pattern = "[0-9a-z_]+"
 
     # regular expression pattern describing valid macro names
-    macro_pattern = "[0-9A-Z_]+"
+    macro_pattern = "[0-9a-z_]+"
 
     # regular expression pattern describing valid names for variables with global
     # (cache) scope
@@ -264,23 +208,23 @@ with section("lint"):
 
     # regular expression pattern describing valid names for variables with global
     # scope (but internal semantic)
-    internal_var_pattern = "_[A-Z][0-9A-Z_]+"
+    internal_var_pattern = "[A-Z][0-9A-Z_]+"
 
     # regular expression pattern describing valid names for variables with local
     # scope
-    local_var_pattern = "[a-z][a-z0-9_]+"
+    local_var_pattern = "[A-Za-z][A-Za-z0-9_]+"
 
     # regular expression pattern describing valid names for privatedirectory
     # variables
-    private_var_pattern = "_[0-9a-z_]+"
+    private_var_pattern = "[0-9a-z_]+"
 
     # regular expression pattern describing valid names for public directory
     # variables
-    public_var_pattern = "[A-Z][0-9A-Z_]+"
+    public_var_pattern = ".*"
 
     # regular expression pattern describing valid names for function/macro
     # arguments and loop variables.
-    argument_var_pattern = "[a-z][a-z0-9_]+"
+    argument_var_pattern = "[a-z_][a-z0-9_]+"
 
     # regular expression pattern describing valid names for keywords used in
     # functions or macros
@@ -296,10 +240,10 @@ with section("lint"):
     # Require no more than this many newlines between statements
     max_statement_spacing = 2
     max_returns = 6
-    max_branches = 12
-    max_arguments = 5
+    max_branches = 15
+    max_arguments = 10
     max_localvars = 15
-    max_statements = 50
+    max_statements = 100
 
 # -------------------------------
 # Options affecting file encoding
