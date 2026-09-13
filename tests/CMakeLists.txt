@@ -155,6 +155,14 @@ if(TARGET core)
         DEPENDS
         bakuon::core)
 
+    bakuon_add_test(
+        NAME
+        test_core_identity
+        SOURCES
+        "core/identity_test.cpp"
+        DEPENDS
+        bakuon::core)
+
     # P0：场景/文档树父子层级（Hierarchy 组件 + 自由函数），见
     # source/core/b_hierarchy.h 的设计文档。
     bakuon_add_test(

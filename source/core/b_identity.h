@@ -28,30 +28,22 @@ struct StableId
     friend constexpr bool operator!=(StableId lhs, StableId rhs) noexcept { return !(lhs == rhs); }
 };
 
-class Identity
-{
-public:
-    explicit Identity(Registry& registry);
-    ~Identity() = default;
+namespace identity {
+/**
+ * @brief 保证 handle 带有 StableId：已有则原样返回，没有就 mint 一个并 emplace。
+ * @return 无效 handle 时返回 StableId{0}。
+ *
+ * 第一次在某个 Registry 上调用 ensure/bind/mint 时会自动装好销毁钩子，
+ * 之后 Registry::destroy() 会把索引摘干净，避免 Handle 回收后 find() 指到新实体。
+ */
+StableId ensure(Registry &registry, Handle handle);
 
-    /**
-     * @brief 保证 handle 带有 StableId：已有则原样返回，没有就 mint 一个并 emplace。
-     * @return 无效 handle 时返回 StableId{0}。
-     *
-     * 第一次在某个 Registry 上调用 ensure/bind/mint 时会自动装好销毁钩子，
-     * 之后 Registry::destroy() 会把索引摘干净，避免 Handle 回收后 find() 指到新实体。
-     */
-    StableId ensure(Handle handle);
+/// 按稳定身份反查当前 Handle；未绑定或对应实体已销毁时返回无效 Handle。
+[[nodiscard]] Handle find(const Registry &registry, StableId id);
 
-    /// 按稳定身份反查当前 Handle；未绑定或对应实体已销毁时返回无效 Handle。
-    [[nodiscard]] Handle find(StableId id) const;
-
-    /// 读实体当前的 StableId；尚未 ensure() 时返回 {0}。
-    [[nodiscard]] StableId get(Handle handle) const;
-
-private:
-    Registry& m_reg;
-};
+/// 读实体当前的 StableId；尚未 ensure() 时返回 {0}。
+[[nodiscard]] StableId get(const Registry &registry, Handle handle);
+} // namespace identity
 
 } // namespace bakuon::core
 

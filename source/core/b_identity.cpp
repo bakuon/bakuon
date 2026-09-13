@@ -74,28 +74,25 @@ inline void installHooks(Registry& registry)
 
 } // namespace detail
 
-Identity::Identity(Registry& registry)
-    : m_reg(registry)
-{
-}
+namespace identity {
 
-StableId Identity::ensure(Handle handle)
+StableId ensure(Registry& registry, Handle handle)
 {
-    if (!m_reg.valid(handle)) {
+    if (!registry.valid(handle)) {
         return {};
     }
-    if (const StableId* existing = m_reg.tryGet<StableId>(handle)) {
+    if (const StableId* existing = registry.tryGet<StableId>(handle)) {
         return *existing;
     }
-    return m_reg.emplace<StableId>(handle, detail::mint(m_reg));
+    return registry.emplace<StableId>(handle, detail::mint(registry));
 }
 
-Handle Identity::find(StableId id) const
+Handle find(const Registry& registry, StableId id)
 {
     if (!id.isValid()) {
         return {};
     }
-    const detail::Index* index = detail::indexOf(static_cast<const Registry&>(m_reg));
+    const detail::Index* index = detail::indexOf(registry);
     if (index == nullptr) {
         return {};
     }
@@ -106,10 +103,11 @@ Handle Identity::find(StableId id) const
     return it->second;
 }
 
-StableId Identity::get(Handle handle) const
+StableId get(const Registry& registry, Handle handle)
 {
-    const StableId* id = m_reg.tryGet<StableId>(handle);
+    const StableId* id = registry.tryGet<StableId>(handle);
     return id ? *id : StableId{};
 }
 
+} // namespace identity
 } // namespace bakuon::core
