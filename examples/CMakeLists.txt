@@ -1,9 +1,4 @@
-cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
-
-project(
-    examples
-    VERSION 1.0.0
-    LANGUAGES CXX)
-
 add_subdirectory(gui/menubar)
 add_subdirectory(example1)
+
+bakuon_apply_targets_folder(${CMAKE_CURRENT_LIST_DIR})

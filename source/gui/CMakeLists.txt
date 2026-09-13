@@ -1,4 +1,9 @@
-set(TARGET_NAME "gui")
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+project(
+    gui
+    VERSION 1.0.0
+    LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -23,7 +28,7 @@ find_package(
 # "bakuon/b_gui_export.h"；哪些类/自由函数需要标注见各自声明处。
 bakuon_add_module(
     NAME
-    ${TARGET_NAME}
+    ${PROJECT_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     SHARED

@@ -3,11 +3,16 @@
 # 注：目标名由 bakuon_plugin 改为 plugin，与 core / gui 保持一致的命名习惯，
 # 对外别名相应变为 bakuon::plugin（原 bakuon::bakuon_plugin 未被其他 CMakeLists 引用，重命名安全）。
 # ============================================================================
-set(TARGET_NAME "plugin")
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+project(
+    plugin
+    VERSION 1.0.0
+    LANGUAGES CXX)
 
 bakuon_add_module(
     NAME
-    ${TARGET_NAME}
+    ${PROJECT_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     INCLUDE_DIRS

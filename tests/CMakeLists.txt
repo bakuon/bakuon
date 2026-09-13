@@ -344,3 +344,6 @@ if(BAKUON_BUILD_HOST
                 BAKUON_TEST_SANDBOXED_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:sandboxed_example_plugin>")
     add_dependencies(test_host_command_wiring sandbox_runtime sandboxed_example_plugin)
 endif()
+
+# 保证在末尾调用，否则不会自动发现目标
+bakuon_apply_targets_folder(${CMAKE_CURRENT_LIST_DIR})

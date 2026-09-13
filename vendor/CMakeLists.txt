@@ -1,7 +1,6 @@
 # ============================================================================
 # vendor —— 第三方依赖的统一入口
 # ============================================================================
-add_library(bakuon_vendor INTERFACE)
 
 # 仅在需要构建测试时才拉取 googletest，避免非测试场景下的无谓下载/编译开销。
 if(BAKUON_BUILD_TESTS)
@@ -26,4 +25,18 @@ if(BAKUON_BUILD_CORE)
         VERSION 3.16.0
         OPTIONS "ENTT_INSTALL OFF" "ENTT_BUILD_TESTING OFF"
         EXCLUDE_FROM_ALL YES)
+
+    # nlohmann::json —— header-only、MIT 协议的 JSON 库，用于 core::DocumentSerializer
+    # 的落盘格式（entt::snapshot/snapshot_loader 的 JSON 归档器实现），见
+    # source/core/b_serializer.h 的类文档。与 EnTT 同样按需拉取，不强加给不需要
+    # core 的下游集成。
+    cpmaddpackage(
+        NAME nlohmann_json
+        GITHUB_REPOSITORY nlohmann/json
+        GIT_TAG v3.11.3
+        VERSION 3.11.3
+        OPTIONS "JSON_BuildTests OFF" "JSON_Install OFF"
+        EXCLUDE_FROM_ALL YES)
 endif()
+
+bakuon_apply_targets_folder(${CMAKE_CURRENT_LIST_DIR} ALIAS "vendor")

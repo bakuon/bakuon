@@ -1,5 +1,12 @@
-add_executable(example1 main.cpp)
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
-# target_link_libraries(example1 PRIVATE bakuon::bakuon)
-target_compile_features(example1 PRIVATE cxx_std_20)
-bakuon_apply_warnings(example1)
+project(
+    example1
+    VERSION 1.0.0
+    LANGUAGES CXX)
+
+add_executable(${PROJECT_NAME} main.cpp)
+
+# target_link_libraries(${PROJECT_NAME} PRIVATE bakuon::bakuon)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+bakuon_apply_warnings(${PROJECT_NAME})

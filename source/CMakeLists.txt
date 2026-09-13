@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
-
 # ============================================================================
 # bakuon 的三个物理静态库：
 #   core   —— 纯标准 C++，无 Qt 依赖（当前是空目录，尚无实现代码，默认不构建）
@@ -10,10 +8,6 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 # 一旦 source/core 下补齐了第一批实现文件，直接 -DBAKUON_BUILD_CORE=ON 即可，
 # 好过每次都要来回增删注释、还容易忘记同步。
 # ============================================================================
-project(
-    bakuon
-    VERSION 1.0.0
-    LANGUAGES CXX)
 
 option(BAKUON_BUILD_PLUGIN "构建 bakuon::plugin(原生插件基础设施静态库)" ON)
 option(BAKUON_BUILD_SANDBOX "构建 bakuon::sandbox(进程外插件沙箱隔离,依赖 Qt RemoteObjects)" ON)
@@ -33,3 +27,5 @@ endif()
 if(BAKUON_BUILD_SANDBOX)
     add_subdirectory(sandbox)
 endif()
+
+bakuon_apply_targets_folder(${CMAKE_CURRENT_LIST_DIR} ALIAS "bakuon")

@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
-
 # ============================================================================
 # sandboxed_example_plugin —— ISandboxCommandHandler 扩展点的最小可用示例。
 #
@@ -10,13 +8,18 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 # 之类只有 sandbox_runtime 子进程才用得到的依赖一并塞进这个插件的动态库里，
 # 违反"依赖应尽量窄"的原则。
 # ============================================================================
-set(TARGET_NAME "sandboxed_example_plugin")
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+project(
+    sandboxed_example_plugin
+    VERSION 1.0.0
+    LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 
 bakuon_add_plugin(
     NAME
-    ${TARGET_NAME}
+    ${PROJECT_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     CATEGORY

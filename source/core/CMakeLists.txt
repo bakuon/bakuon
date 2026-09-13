@@ -10,15 +10,21 @@
 # 选 EnTT 而不是自研一套观察者/属性系统：契合"避免造轮子、已有 STL 不重复造"的
 # 项目原则；EnTT 本身零外部依赖，与 core "不依赖 Qt" 的定位天然契合。
 # ============================================================================
-set(TARGET_NAME "core")
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+project(
+    core
+    VERSION 1.0.0
+    LANGUAGES CXX)
 
 bakuon_add_module(
     NAME
-    ${TARGET_NAME}
+    ${PROJECT_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     DEPENDS
     EnTT::EnTT
+    nlohmann_json::nlohmann_json
     INCLUDE_DIRS
     ${BAKUON_ROOT_DIR}/include
     # 面向消费者（gui/plugin/sandbox）的稳定门面头文件根目录：include/bakuon/core/*.h，

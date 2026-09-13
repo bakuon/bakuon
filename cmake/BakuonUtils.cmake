@@ -28,6 +28,75 @@ function(
 endfunction()
 
 # ============================================================================
+# IDE 项目分组
+# ============================================================================
+
+# Collect all currently added targets in all subdirectories
+# Parameters:
+# - _result the list containing all found targets
+# - _dir root directory to start looking from
+function(_bakuon_get_targets_by_directory _result _dir)
+    get_property(
+        _subdirs
+        DIRECTORY ${_dir}
+        PROPERTY SUBDIRECTORIES)
+    foreach(_subdir IN LISTS _subdirs)
+        _bakuon_get_targets_by_directory(${_result} ${_subdir})
+    endforeach()
+
+    get_directory_property(_sub_targets DIRECTORY ${_dir} BUILDSYSTEM_TARGETS)
+    set(${_result}
+        ${${_result}} ${_sub_targets}
+        PARENT_SCOPE)
+endfunction()
+
+function(bakuon_apply_targets_folder _dir)
+    cmake_parse_arguments(
+        ARG
+        ""
+        "ALIAS"
+        ""
+        ${ARGN})
+
+    _bakuon_get_targets_by_directory(ALL_TARGETS ${_dir})
+
+    foreach(target IN LISTS ALL_TARGETS)
+
+        # 获取该 Target 所在的源目录
+        get_target_property(TARGET_SOURCE_DIR ${target} SOURCE_DIR)
+
+        # 计算相对路径
+        if(TARGET_SOURCE_DIR)
+            file(
+                RELATIVE_PATH
+                REL_DIR
+                ${CMAKE_SOURCE_DIR}
+                ${TARGET_SOURCE_DIR})
+
+            get_target_property(TARGET_TYPE ${target} TYPE)
+            message(
+                STATUS
+                    "[${PROJECT_NAME}] Found target: (${TARGET_TYPE}, ${target}, ${TARGET_SOURCE_DIR})"
+            )
+
+            # 排除根目录下的 Target
+            if(REL_DIR
+               AND NOT
+                   REL_DIR
+                   STREQUAL
+                   ".")
+                # 别名
+                if(ARG_ALIAS)
+                    set(REL_DIR ${ARG_ALIAS})
+                endif()
+                # 设置 FOLDER 属性
+                set_target_properties(${target} PROPERTIES FOLDER "${REL_DIR}")
+            endif()
+        endif()
+    endforeach()
+endfunction()
+
+# ============================================================================
 # 内部辅助：目标的公共基础设置（C++ 标准 / 警告开关）
 # 统一入口，避免 bakuon_add_module 与 bakuon_add_amalgamated_module 各写一份、逐渐漂移。
 # ============================================================================

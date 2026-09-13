@@ -1,7 +1,12 @@
 # ============================================================================
 # bakuon::sandbox —— 进程外插件沙箱隔离：QtRO 控制平面 + QSharedMemory 数据平面。
 # ============================================================================
-set(TARGET_NAME "sandbox")
+cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+
+project(
+    sandbox
+    VERSION 1.0.0
+    LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 
@@ -25,7 +30,7 @@ find_package(
 
 bakuon_add_module(
     NAME
-    ${TARGET_NAME}
+    ${PROJECT_NAME}
     PATH
     ${CMAKE_CURRENT_SOURCE_DIR}
     DEPENDS
@@ -57,12 +62,12 @@ bakuon_add_module(
 # ============================================================================
 set(BAKUON_SANDBOX_REP "${CMAKE_CURRENT_SOURCE_DIR}/b_pluginsandboxcontrol.rep")
 
-qt6_add_repc_sources(${TARGET_NAME} ${BAKUON_SANDBOX_REP})
-qt6_add_repc_replicas(${TARGET_NAME} ${BAKUON_SANDBOX_REP})
+qt6_add_repc_sources(${PROJECT_NAME} ${BAKUON_SANDBOX_REP})
+qt6_add_repc_replicas(${PROJECT_NAME} ${BAKUON_SANDBOX_REP})
 
 # 生成头位于 ${CMAKE_CURRENT_BINARY_DIR}，对 sandbox 目标已由 qt*_add_repc_* 注入；
 # 显式再加一次 PUBLIC，方便下游 target（examples / tests）直接 #include "rep_PluginSandbox_*.h"
-target_include_directories(${TARGET_NAME} PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
+target_include_directories(${PROJECT_NAME} PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 
 # ============================================================================
 # SandBox Runtime 可执行文件构建配置

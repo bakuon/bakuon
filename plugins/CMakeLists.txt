@@ -12,12 +12,8 @@
 # add_subdirectory()，导致 sandboxed_example_plugin 无论 BAKUON_BUILD_SANDBOX 开没开
 # 都不会被构建——这里补上。
 # ============================================================================
-cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
-
-project(
-    plugins
-    VERSION 1.0.0
-    LANGUAGES CXX)
 
 add_subdirectory(gui)
 add_subdirectory(sandbox)
+
+bakuon_apply_targets_folder(${CMAKE_CURRENT_LIST_DIR})
