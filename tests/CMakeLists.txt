@@ -56,51 +56,68 @@ function(bakuon_add_test)
 endfunction(bakuon_add_test)
 
 # TODO 根据每个目录模块和文件名使用循环自动批量增加测试
+# ============================================================================
+# gui 模块测试
+#
+# bakuon::gui 依赖 Qt；tests/shared/test_main.cpp
+# 现在只在 USE_QT_GUI/USE_QT_CORE 被显式打开时才触碰任何 Qt 头文件（见该文件），
+# DEPENDS 只需要 bakuon::gui 本身。
+# ============================================================================
+if(TARGET gui)
+    bakuon_add_test(
+        NAME
+        test_gui_treenode
+        USE_QT_CORE
+        SOURCES
+        "gui/treenode_test.cpp"
+        DEPENDS
+        bakuon::gui)
 
-bakuon_add_test(
-    NAME
-    test_gui_treenode
-    USE_QT_CORE
-    SOURCES
-    "gui/treenode_test.cpp"
-    DEPENDS
-    bakuon::gui)
+    bakuon_add_test(
+        NAME
+        test_gui_context
+        USE_QT_GUI
+        SOURCES
+        "gui/context_test.cpp"
+        DEPENDS
+        bakuon::gui)
 
-bakuon_add_test(
-    NAME
-    test_gui_context
-    USE_QT_GUI
-    SOURCES
-    "gui/context_test.cpp"
-    DEPENDS
-    bakuon::gui)
+    bakuon_add_test(
+        NAME
+        test_gui_commandsystem
+        USE_QT_GUI
+        SOURCES
+        "gui/commandsystem_test.cpp"
+        DEPENDS
+        bakuon::gui)
 
-bakuon_add_test(
-    NAME
-    test_gui_commandsystem
-    USE_QT_GUI
-    SOURCES
-    "gui/commandsystem_test.cpp"
-    DEPENDS
-    bakuon::gui)
+    bakuon_add_test(
+        NAME
+        test_gui_pluginpipeline
+        USE_QT_CORE
+        SOURCES
+        "gui/pluginpipeline_test.cpp"
+        DEPENDS
+        bakuon::gui)
 
-bakuon_add_test(
-    NAME
-    test_gui_pluginpipeline
-    USE_QT_CORE
-    SOURCES
-    "gui/pluginpipeline_test.cpp"
-    DEPENDS
-    bakuon::gui)
+    bakuon_add_test(
+        NAME
+        test_gui_pluginsystem
+        USE_QT_CORE
+        SOURCES
+        "gui/pluginsystem_test.cpp"
+        DEPENDS
+        bakuon::gui)
 
-bakuon_add_test(
-    NAME
-    test_gui_pluginsystem
-    USE_QT_CORE
-    SOURCES
-    "gui/pluginsystem_test.cpp"
-    DEPENDS
-    bakuon::gui)
+    bakuon_add_test(
+        NAME
+        test_gui_extensionpoint
+        USE_QT_CORE
+        SOURCES
+        "gui/extensionpoint_test.cpp"
+        DEPENDS
+        bakuon::gui)
+endif()
 
 # ============================================================================
 # core 模块测试
@@ -180,15 +197,6 @@ if(TARGET example_plugin)
         add_dependencies(${t} example_plugin)
     endforeach()
 endif()
-
-bakuon_add_test(
-    NAME
-    test_gui_extensionpoint
-    USE_QT_CORE
-    SOURCES
-    "gui/extensionpoint_test.cpp"
-    DEPENDS
-    bakuon::gui)
 
 # ============================================================================
 # sandbox 模块测试

@@ -32,6 +32,16 @@ option(BAKUON_ENABLE_WARNINGS "启用 -Wall -Wextra / W4 等编译警告" ON)
 option(BAKUON_WARNINGS_AS_ERRORS "将编译警告视为错误" OFF)
 option(BAKUON_INSTALL_SDK "安装 core/gui/plugin 的头文件与导出 target(打包方案未定，默认关闭)" OFF)
 
+add_definitions(
+    -DBAKUON_BUILD_TESTS
+    -DBAKUON_BUILD_EXAMPLES
+    -DBAKUON_BUILD_STANDALONE
+    -DBAKUON_BUILD_CORE
+    -DBAKUON_BUILD_GUI
+    -DBAKUON_BUILD_PLUGINS
+    -DBAKUON_BUILD_HOST
+    -DBAKUON_BUILD_SANDBOX_RUNTIME)
+
 # ----------------------------------------------------------------------------
 # C++ 标准通过 target_compile_features(cxx_std_20) 按目标下发（见
 # cmake/BakuonUtils.cmake），刻意不设置全局 CMAKE_CXX_STANDARD， 以免连带影响 vendor 下第三方依赖（如

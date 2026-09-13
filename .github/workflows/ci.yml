@@ -77,15 +77,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-      - name: Configure (MSVC)
-        if: runner.os == 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-
-      - name: Build
-        run: |
-          cmake --build build \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBAKUON_BUILD_CORE=ON \
             -DBAKUON_BUILD_GUI=OFF \
             -DBAKUON_BUILD_PLUGINS=OFF \
@@ -94,6 +86,22 @@ jobs:
             -DBAKUON_BUILD_SANDBOX=OFF \
             -DBAKUON_BUILD_EXAMPLES=OFF \
             -DBAKUON_BUILD_STANDALONE=OFF
+
+      - name: Configure (MSVC)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBAKUON_BUILD_CORE=ON \
+            -DBAKUON_BUILD_GUI=OFF \
+            -DBAKUON_BUILD_PLUGINS=OFF \
+            -DBAKUON_BUILD_HOST=OFF \
+            -DBAKUON_BUILD_SANDBOX_RUNTIME=OFF \
+            -DBAKUON_BUILD_SANDBOX=OFF \
+            -DBAKUON_BUILD_EXAMPLES=OFF \
+            -DBAKUON_BUILD_STANDALONE=OFF
+
+      - name: Build
+        run: cmake --build build 
 
       - name: Test
         env:
