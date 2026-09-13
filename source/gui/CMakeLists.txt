@@ -36,6 +36,11 @@ bakuon_add_module(
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Gui
     Qt${QT_VERSION_MAJOR}::Widgets
+    # RegistryBridge（b_registrybridge.h）把 core::Registry 的观察者转成 Qt 信号，
+    # 是 gui 目前唯一真正依赖 core 的地方——core 本身仍然完全不知道 Qt 的存在，
+    # 依赖方向是单向的（gui -> core，core 不反向依赖 gui）。见根 source/CMakeLists.txt
+    # 里对应的 BAKUON_BUILD_GUI 需要 BAKUON_BUILD_CORE=ON 的显式校验。
+    bakuon::core
     # 面向插件开发者的稳定门面头文件根目录：include/bakuon/gui/*.h，
     # 以 PUBLIC 方式传播给 target_link_libraries(... bakuon::gui) 的消费者，
     # 让第三方插件写 #include "bakuon/gui/Plugin.h" 而不是 #include "gui/b_plugin.h"。

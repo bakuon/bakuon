@@ -3,28 +3,12 @@
 # CONFIGURE_DEPENDS：新增/删除源文件时自动触发 cmake 重新配置，
 # 早期孵化阶段文件变动频繁，这个便利性优先于极少数场景下的重新配置开销。
 # ============================================================================
-function(
-    _bakuon_glob_module_files
-    MODULE_PATH
-    OUT_HEADERS
-    OUT_SOURCES)
-    file(
-        GLOB_RECURSE
-        HEADERS
-        CONFIGURE_DEPENDS
-        "${MODULE_PATH}/*.h")
-    file(
-        GLOB_RECURSE
-        SOURCES
-        CONFIGURE_DEPENDS
-        "${MODULE_PATH}/*.cpp")
+function(_bakuon_glob_module_files MODULE_PATH OUT_HEADERS OUT_SOURCES)
+    file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS "${MODULE_PATH}/*.h")
+    file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "${MODULE_PATH}/*.cpp")
 
-    set(${OUT_HEADERS}
-        "${HEADERS}"
-        PARENT_SCOPE)
-    set(${OUT_SOURCES}
-        "${SOURCES}"
-        PARENT_SCOPE)
+    set(${OUT_HEADERS} "${HEADERS}" PARENT_SCOPE)
+    set(${OUT_SOURCES} "${SOURCES}" PARENT_SCOPE)
 endfunction()
 
 # ============================================================================
@@ -39,15 +23,14 @@ function(_bakuon_get_targets_by_directory _result _dir)
     get_property(
         _subdirs
         DIRECTORY ${_dir}
-        PROPERTY SUBDIRECTORIES)
+        PROPERTY SUBDIRECTORIES
+    )
     foreach(_subdir IN LISTS _subdirs)
         _bakuon_get_targets_by_directory(${_result} ${_subdir})
     endforeach()
 
     get_directory_property(_sub_targets DIRECTORY ${_dir} BUILDSYSTEM_TARGETS)
-    set(${_result}
-        ${${_result}} ${_sub_targets}
-        PARENT_SCOPE)
+    set(${_result} ${${_result}} ${_sub_targets} PARENT_SCOPE)
 endfunction()
 
 function(bakuon_apply_targets_folder _dir)
@@ -56,7 +39,8 @@ function(bakuon_apply_targets_folder _dir)
         ""
         "ALIAS"
         ""
-        ${ARGN})
+        ${ARGN}
+    )
 
     _bakuon_get_targets_by_directory(ALL_TARGETS ${_dir})
 
@@ -67,24 +51,13 @@ function(bakuon_apply_targets_folder _dir)
 
         # 计算相对路径
         if(TARGET_SOURCE_DIR)
-            file(
-                RELATIVE_PATH
-                REL_DIR
-                ${CMAKE_SOURCE_DIR}
-                ${TARGET_SOURCE_DIR})
+            file(RELATIVE_PATH REL_DIR ${CMAKE_SOURCE_DIR} ${TARGET_SOURCE_DIR})
 
             get_target_property(TARGET_TYPE ${target} TYPE)
-            message(
-                STATUS
-                    "[${PROJECT_NAME}] Found target: (${TARGET_TYPE}, ${target}, ${TARGET_SOURCE_DIR})"
-            )
+            # message(STATUS "[${PROJECT_NAME}] Found target: (${TARGET_TYPE}, ${target}, ${TARGET_SOURCE_DIR})")
 
             # 排除根目录下的 Target
-            if(REL_DIR
-               AND NOT
-                   REL_DIR
-                   STREQUAL
-                   ".")
+            if(REL_DIR AND NOT REL_DIR STREQUAL ".")
                 # 别名
                 if(ARG_ALIAS)
                     set(REL_DIR ${ARG_ALIAS})
@@ -116,15 +89,11 @@ function(bakuon_apply_warnings TARGET_NAME)
     endif()
 
     if(MSVC)
-        target_compile_options(${TARGET_NAME} PRIVATE /W4
-                                                      $<$<BOOL:${BAKUON_WARNINGS_AS_ERRORS}>:/WX>)
+        target_compile_options(${TARGET_NAME} PRIVATE /W4 $<$<BOOL:${BAKUON_WARNINGS_AS_ERRORS}>:/WX>)
     else()
         target_compile_options(
-            ${TARGET_NAME}
-            PRIVATE -Wall
-                    -Wextra
-                    -Wpedantic
-                    $<$<BOOL:${BAKUON_WARNINGS_AS_ERRORS}>:-Werror>)
+            ${TARGET_NAME} PRIVATE -Wall -Wextra -Wpedantic $<$<BOOL:${BAKUON_WARNINGS_AS_ERRORS}>:-Werror>
+        )
     endif()
 endfunction()
 
@@ -154,7 +123,8 @@ function(bakuon_install_module TARGET_NAME PUBLIC_HEADER_DIR)
         EXPORT bakuonTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
 
     if(PUBLIC_HEADER_DIR AND EXISTS "${PUBLIC_HEADER_DIR}")
         install(DIRECTORY "${PUBLIC_HEADER_DIR}/" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
@@ -171,7 +141,8 @@ function(bakuon_add_module)
         "SHARED"
         "NAME;PATH"
         "DEPENDS;INCLUDE_DIRS;PUBLIC_INCLUDE_DIRS"
-        ${ARGN})
+        ${ARGN}
+    )
 
     set(MODULE_NAME ${ARG_NAME})
     set(MODULE_PATH ${ARG_PATH})
@@ -195,7 +166,8 @@ function(bakuon_add_module)
 
     if(NOT ALL_SOURCES AND NOT PUBLIC_AMALGAM_HEADER)
         message(FATAL_ERROR "bakuon_add_module(${MODULE_NAME}): 在 ${MODULE_PATH} 下没有找到任何 .cpp 文件，"
-                            "无法创建库；该模块尚无实现代码前不要 add_subdirectory() 它。")
+                            "无法创建库；该模块尚无实现代码前不要 add_subdirectory() 它。"
+        )
     endif()
 
     # SHARED（可选开关）：默认仍产出 STATIC 库，与现状保持兼容；传入 SHARED 后改为产出
@@ -221,7 +193,8 @@ function(bakuon_add_module)
     target_include_directories(
         ${MODULE_NAME}
         PUBLIC $<BUILD_INTERFACE:${BAKUON_ROOT_DIR}/source>
-        PRIVATE ${ARG_INCLUDE_DIRS})
+        PRIVATE ${ARG_INCLUDE_DIRS}
+    )
 
     # PUBLIC_INCLUDE_DIRS：面向“第三方插件开发者”的稳定门面 API（include/bakuon/...），
     # 与上面 source/ 的内部实现路径分开传入是刻意的——
@@ -234,7 +207,8 @@ function(bakuon_add_module)
     if(ARG_PUBLIC_INCLUDE_DIRS)
         target_include_directories(
             ${MODULE_NAME} PUBLIC $<BUILD_INTERFACE:${ARG_PUBLIC_INCLUDE_DIRS}>
-                                  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+                                  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+        )
     endif()
 
     if(ARG_DEPENDS)
@@ -269,7 +243,8 @@ function(bakuon_add_module)
             EXPORT_FILE_NAME
             ${_bakuon_export_header}
             DEPRECATED_MACRO_NAME
-            BAKUON_${_bakuon_module_upper}_DEPRECATED)
+            BAKUON_${_bakuon_module_upper}_DEPRECATED
+        )
 
         # BUILD_INTERFACE 即可：生成头只在构建这份源码时用得到，装 SDK 包的场景等
         # BAKUON_INSTALL_SDK 真正打开时再一并处理导出头的安装路径（见 bakuon_install_module()）。
@@ -281,15 +256,13 @@ function(bakuon_add_module)
                        VISIBILITY_INLINES_HIDDEN ON
                        # SOVERSION 用于 Linux/macOS 的 SONAME；早期孵化阶段版本号还会频繁
                        # 变动，先固定在与模块 VERSION 的主版本一致即可。
-                       SOVERSION ${PROJECT_VERSION_MAJOR})
+                       SOVERSION ${PROJECT_VERSION_MAJOR}
+        )
     endif()
 
     bakuon_install_module(${MODULE_NAME} "${ARG_PUBLIC_INCLUDE_DIRS}")
 
-    message(
-        STATUS
-            "[Build] ${MODULE_NAME} (${_bakuon_lib_type}, Non unity build, ${CMAKE_CURRENT_LIST_FILE})"
-    )
+    message(STATUS "[Build] ${MODULE_NAME} (${_bakuon_lib_type}, Non unity build, ${CMAKE_CURRENT_LIST_FILE})")
 endfunction()
 
 # ============================================================================
@@ -304,7 +277,8 @@ function(bakuon_add_amalgamated_module)
         ""
         "NAME;PATH"
         "DEPENDS;INCLUDE_DIRS"
-        ${ARGN})
+        ${ARGN}
+    )
 
     set(MODULE_NAME ${ARG_NAME})
     set(MODULE_PATH ${ARG_PATH})
@@ -336,7 +310,8 @@ function(bakuon_add_amalgamated_module)
     target_include_directories(
         ${MODULE_NAME}
         PUBLIC $<BUILD_INTERFACE:${BAKUON_ROOT_DIR}/source> # 外部用 <core/${MODULE_NAME}.h>
-        PRIVATE ${ARG_INCLUDE_DIRS})
+        PRIVATE ${ARG_INCLUDE_DIRS}
+    )
 
     if(ARG_DEPENDS)
         target_link_libraries(${MODULE_NAME} PUBLIC ${ARG_DEPENDS})
@@ -357,8 +332,7 @@ function(bakuon_add_amalgamated_module)
         target_compile_options(${IDE_TARGET} PRIVATE "SHELL:-include ${AMALGAM_H}")
 
         # 复制与主目标相同的 include 路径
-        target_include_directories(${IDE_TARGET} PRIVATE ${BAKUON_ROOT_DIR}/source
-                                                         ${ARG_INCLUDE_DIRS})
+        target_include_directories(${IDE_TARGET} PRIVATE ${BAKUON_ROOT_DIR}/source ${ARG_INCLUDE_DIRS})
 
         if(ARG_DEPENDS)
             target_link_libraries(${IDE_TARGET} PRIVATE ${ARG_DEPENDS})
@@ -426,7 +400,8 @@ function(bakuon_add_plugin)
         ""
         "NAME;PATH;CATEGORY;METADATA"
         "DEPENDS;INCLUDE_DIRS"
-        ${ARGN})
+        ${ARGN}
+    )
 
     set(PLUGIN_NAME ${ARG_NAME})
     set(PLUGIN_PATH ${ARG_PATH})
@@ -477,4 +452,79 @@ function(bakuon_add_plugin)
     endif()
 
     message(STATUS "[Plugin] ${PLUGIN_NAME} (${ARG_CATEGORY}, ${CMAKE_CURRENT_LIST_FILE})")
+endfunction()
+
+function(bakuon_add_test)
+    cmake_parse_arguments(
+        ARG
+        "USE_QT_GUI;USE_QT_CORE"
+        "NAME"
+        "SOURCES;DEPENDS;LABELS"
+        ${ARGN}
+    )
+
+    if(NOT ARG_NAME)
+        message(FATAL_ERROR "bakuon_add_test: NAME parameter is required")
+    endif()
+
+    if(NOT ARG_SOURCES)
+        message(FATAL_ERROR "bakuon_add_test: SOURCES parameter is required")
+    endif()
+
+    # 处理 Qt 自动化编译与链接
+    if(ARG_USE_QT_GUI)
+        set(CMAKE_AUTOMOC ON)
+        set(CMAKE_AUTORCC ON)
+        set(CMAKE_AUTOUIC ON)
+    elseif(ARG_USE_QT_CORE)
+        set(CMAKE_AUTOMOC ON)
+    endif()
+
+    # 定位通用的 test_main.cpp 路径
+    # TODO: 该文件不要藏在这里使用
+    set(TEST_MAIN_CPP_PATH "${CMAKE_SOURCE_DIR}/tests/shared/test_main.cpp")
+
+    # 创建可执行文件
+    add_executable(${ARG_NAME} ${ARG_SOURCES} ${TEST_MAIN_CPP_PATH})
+
+    # 注入对应的宏和链接 Qt::Test
+    if(ARG_USE_QT_CORE OR ARG_USE_QT_GUI)
+        find_package(
+            QT NAMES Qt6 Qt5
+            COMPONENTS Test
+            REQUIRED
+        )
+        find_package(
+            Qt${QT_VERSION_MAJOR}
+            COMPONENTS Test
+            REQUIRED
+        )
+    endif()
+
+    if(ARG_USE_QT_GUI)
+        target_compile_definitions(${ARG_NAME} PRIVATE USE_QT_GUI_APP)
+        target_link_libraries(${ARG_NAME} PRIVATE Qt::Test) # 自动追加测试模块
+    elseif(ARG_USE_QT_CORE)
+        target_compile_definitions(${ARG_NAME} PRIVATE USE_QT_CORE_APP)
+        target_link_libraries(${ARG_NAME} PRIVATE Qt::Test) # 自动追加测试模块
+    endif()
+
+    target_link_libraries(${ARG_NAME} PRIVATE gtest ${ARG_DEPENDS})
+    target_compile_features(${ARG_NAME} PRIVATE cxx_std_20)
+
+    if(COMMAND bakuon_apply_warnings)
+        bakuon_apply_warnings(${ARG_NAME})
+    endif()
+
+    # 利用 gtest_discover_tests 优化测试过滤标签
+    set(test_labels "bakuon_all") # 所有测试的通标签
+    if(ARG_LABELS)
+        list(APPEND test_labels ${ARG_LABELS}) # 用户自定义标签（如 core, gui, p0 等）
+    endif()
+    if(ARG_USE_QT_GUI OR ARG_USE_QT_CORE)
+        list(APPEND test_labels "qt") # 自动为依赖 Qt 的测试加上 qt 标签
+    endif()
+
+    # 利用 gtest_discover_tests 注入 CTest 属性
+    gtest_discover_tests(${ARG_NAME} PROPERTIES LABELS "${test_labels}")
 endfunction()
