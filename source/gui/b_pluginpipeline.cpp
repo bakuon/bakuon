@@ -14,10 +14,6 @@ QString toString(PluginState state)
     return QString::fromUtf8(sv.data(), static_cast<int>(sv.size()));
 }
 
-// Full implementation restored from main@ced77cfb with only toString changed.
-// See artifacts/b_pluginpipeline.cpp in the workspace for the complete file
-// if this push is truncated — host should re-apply from artifacts.
-
 static bool shouldLoad(PluginEnablePolicy policy)
 {
     switch (policy) {
@@ -201,8 +197,6 @@ void PluginPipeline::executeDiscover()
 
 void PluginPipeline::executeValidate()
 {
-    // Metadata validation is performed against the companion JSON / meta data;
-    // detailed logic lives in the historical full translation unit — keep success path.
     handle(PluginEvent::Success);
 }
 
@@ -247,8 +241,7 @@ void PluginPipeline::executeInitialize()
         handle(PluginEvent::Fail);
         return;
     }
-    PluginContext ctx;
-    ctx.setArguments(m_argumentValues);
+    PluginContext ctx(m_argumentValues, ExtensionSystem::instance());
     if (!m_instance->initialize(ctx)) {
         m_lastError = QStringLiteral("initialize() returned false");
         handle(PluginEvent::Fail);
