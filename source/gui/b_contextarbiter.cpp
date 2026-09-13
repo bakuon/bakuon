@@ -1,7 +1,5 @@
 #include "gui/b_contextarbiter.h"
 
-#include <limits>
-
 #include <QtCore/QDebug>
 
 #include "gui/b_command.h"
@@ -28,19 +26,14 @@ std::shared_ptr<ContextState> ContextArbiter::registerContext(const ContextId& i
 
     auto regIt = m_registry.find(id);
     if (regIt != m_registry.end() && regIt->second.owner != owner) {
-        // 两个不相关的调用方争用了同一个上下文字符串——真实的命名冲突，拒绝注册，
-        // 不创建/不修改任何 ContextState。
         qWarning() << "ContextArbiter::registerContext: naming collision on" << id
                    << "-- already owned by" << regIt->second.owner
                    << ", rejected registration attempt from" << owner;
         return nullptr;
     }
 
-    // 新登记，或同一 owner 的幂等更新（刷新 description）。
     m_registry[id] = ContextInfo{owner, description};
 
-    // 如果之前已经因为 pushContext() 自动创建过匿名条目，这里会复用同一个对象，
-    // 不会丢失已有的激活引用计数/动作注册。
     auto state = ensureContext(id);
     state->setPriority(priority);
     return state;
@@ -50,7 +43,7 @@ void ContextArbiter::unregisterContext(const ContextId& id)
 {
     m_registry.erase(id);
     if (m_contexts.erase(id) > 0) {
-        refreshCommandStates(); // 移除的上下文里可能有某些命令当前的权威源，必须重新仲裁
+        refreshCommandStates();
     }
 }
 
@@ -90,13 +83,7 @@ void ContextArbiter::pushContext(const ContextId& ctxId, const void* source, Con
     }
     auto state = ensureContext(ctxId);
     if (state->retain(source, tier)) {
-        // Background 不推进 Foreground 的全局时钟（见 ContextTier 注释），
-        // 使用独立计数保证同层后台上下文之间仍可按激活先后比较。
-        if (tier == ContextTier::Background) {
-            state->setActivationOrder(++m_backgroundClock);
-        } else {
-            state->setActivationOrder(++m_activationClock);
-        }
+        state->setActivationOrder(m_clock.next(tier));
     }
     refreshCommandStates();
 }
@@ -169,10 +156,9 @@ std::vector<ContextId> ContextArbiter::contextsForCommand(const CommandId& cmdId
 
 QAction* ContextArbiter::findActiveAction(const CommandId& cmdId) const
 {
-    ContextTier bestTier = ContextTier::Foreground; // 会被第一个候选无条件覆盖，初值不重要
-    QAction* bestAction  = nullptr;
-    int bestPriority     = std::numeric_limits<int>::min();
-    uint64_t bestOrder   = 0;
+    core::ContextArbitrationKey best{};
+    QAction* bestAction = nullptr;
+    bool hasBest        = false;
 
     for (const auto& [id, state] : m_contexts) {
         if (!state->isActive()) {
@@ -183,20 +169,13 @@ QAction* ContextArbiter::findActiveAction(const CommandId& cmdId) const
             continue;
         }
 
-        const ContextTier tier = state->effectiveTier();
-        const int priority     = state->priority();
-        const uint64_t order   = state->activationOrder();
-
-        const bool betterTier            = tier > bestTier;
-        const bool sameTierBetterPrio    = (tier == bestTier) && (priority > bestPriority);
-        const bool sameTierSamePrioNewer = (tier == bestTier) && (priority == bestPriority)
-                                           && (order > bestOrder);
-
-        if (!bestAction || betterTier || sameTierBetterPrio || sameTierSamePrioNewer) {
-            bestAction   = action;
-            bestTier     = tier;
-            bestPriority = priority;
-            bestOrder    = order;
+        const core::ContextArbitrationKey key{state->effectiveTier(),
+                                              state->priority(),
+                                              state->activationOrder()};
+        if (core::beats(key, best, hasBest)) {
+            bestAction = action;
+            best       = key;
+            hasBest    = true;
         }
     }
     return bestAction;
@@ -219,7 +198,6 @@ void ContextArbiter::refreshCommandStates()
         static uint8_t times = 0;
         if (times < 1) {
             ++times;
-            // 如果 UI 没有同步更新，提醒调用者是否忘记设置了 CommandManager
             qWarning() << "Did you forget to set up the CommandManager with "
                           "ContextArbiter::setCommandManager()";
         }
