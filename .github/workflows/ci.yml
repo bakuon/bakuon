@@ -61,16 +61,6 @@ jobs:
           restore-keys: |
             apt-${{ runner.os }}-
 
-      - name: Cache CMake build directory
-        uses: actions/cache@v3
-        with:
-          path: build
-          # key 包含：平台、编译器、Qt 版本、所有 CMakeLists.txt 和 main CMake 配置文件的哈希
-          # 只要其中任意一项变了，缓存就会失效并重新 configure
-          key: cmake-build-${{ matrix.name }}-qt${{ env.BAKUON_CI_QT_VERSION }}-${{ hashFiles('**/CMakeLists.txt', 'cmake/**/*.cmake', 'CMakePresets.json') }}
-          restore-keys: |
-            cmake-build-${{ matrix.name }}-qt${{ env.BAKUON_CI_QT_VERSION }}-
-
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
