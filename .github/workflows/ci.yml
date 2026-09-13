@@ -81,7 +81,16 @@ jobs:
 
       - name: Configure (MSVC)
         if: runner.os == 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+          -DBAKUON_BUILD_CORE=ON \
+          -DBAKUON_BUILD_GUI=OFF \
+          -DBAKUON_BUILD_PLUGINS=OFF \
+          -DBAKUON_BUILD_HOST=OFF \
+          -DBAKUON_BUILD_SANDBOX_RUNTIME=OFF \
+          -DBAKUON_BUILD_SANDBOX=OFF \
+          -DBAKUON_BUILD_EXAMPLES=OFF \
+          -DBAKUON_BUILD_STANDALONE=OFF
 
       - name: Build
         run: cmake --build build
