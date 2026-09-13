@@ -52,6 +52,51 @@ jobs:
         if: runner.os == 'Windows'
         uses: seanmiddleditch/gha-setup-ninja@master
 
+      - name: Set up sccache (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # 下载 sccache 并加入 PATH，用于 MSVC 编译缓存（对应 Linux 侧的 ccache）
+          $version = "v0.8.1"
+          $url = "https://github.com/mozilla/sccache/releases/download/$version/sccache-$version-x86_64-pc-windows-msvc.tar.gz"
+          Write-Host "Downloading sccache $version..."
+          Invoke-WebRequest -Uri $url -OutFile sccache.tar.gz -UseBasicParsing
+          tar -xzf sccache.tar.gz
+          $dir = (Get-ChildItem -Directory sccache-* | Select-Object -First 1).FullName
+          echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # 设置缓存目录，方便后续 actions/cache 接管
+          $cacheDir = Join-Path $env:RUNNER_TEMP "sccache"
+          echo "SCCACHE_DIR=$cacheDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        shell: pwsh
+
+      - name: Cache sccache (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          # 精确 key：用 commit sha，确保本次构建缓存独立；restore-keys 回退到历史缓存实现增量
+          key: sccache-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            sccache-${{ matrix.name }}-
+
+      - name: Cache apt packages (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v3
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            apt-${{ runner.os }}-
+
+      - name: Cache CMake build directory
+        uses: actions/cache@v3
+        with:
+          path: build
+          # key 包含：平台、编译器、Qt 版本、所有 CMakeLists.txt 和 main CMake 配置文件的哈希
+          # 只要其中任意一项变了，缓存就会失效并重新 configure
+          key: cmake-build-${{ matrix.name }}-qt${{ env.BAKUON_CI_QT_VERSION }}-${{ hashFiles('**/CMakeLists.txt', 'cmake/**/*.cmake', 'CMakePresets.json') }}
+          restore-keys: |
+            cmake-build-${{ matrix.name }}-qt${{ env.BAKUON_CI_QT_VERSION }}-
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -93,6 +138,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DBAKUON_BUILD_CORE=ON \
             -DBAKUON_BUILD_GUI=OFF \
             -DBAKUON_BUILD_PLUGINS=OFF \
