@@ -1,6 +1,7 @@
 #include "core/b_hierarchy.h"
 
 #include <cstdint>
+#include <limits>
 
 namespace bakuon::core {
 
@@ -266,83 +267,41 @@ namespace hierarchy {
 // 内部实现细节
 // ==============================================
 namespace detail {
-/**
- * @brief 检查挂载操作是否会形成循环引用
- * @param registry EnTT注册表引用
- * @param parent 目标父节点
- * @param child 待挂载子节点
- * @return true 会形成环（禁止挂载）；false 挂载合法
- */
-inline bool check_cycle(Registry& registry, Handle parent, Handle child)
-{
-    if (!parent.isValid() || !child.isValid() || parent == child)
-        return true;
 
-    auto current = parent;
-    while (current.isValid()) {
-        if (current == child)
-            return true;
-        current = registry.get<Hierarchy>(current).parent;
-    }
-    return false;
-}
-
-inline size_t safe_add(size_t a, int b, bool* ok = nullptr)
+/// size_t += int，带下溢/上溢保护。下溢时钳制为 0。
+inline std::size_t safe_add(std::size_t a, int b) noexcept
 {
     if (b < 0) {
-        const auto abs_b = static_cast<size_t>(-static_cast<long long>(b));
-        if (a < abs_b) {
-            // 溢出
-            if (ok) {
-                *ok = false;
-            }
-            return 0;
-        }
-
-        return a - abs_b;
+        const auto abs_b = static_cast<std::size_t>(-static_cast<long long>(b));
+        return a < abs_b ? 0 : a - abs_b;
     }
-
-    // b >= 0
-    const auto bb = static_cast<size_t>(b);
-    if (a > SIZE_MAX - bb) {
-        // 溢出
-        if (ok) {
-            *ok = false;
-        }
-        return 0;
-    }
-
-    return a + bb;
+    const auto bb = static_cast<std::size_t>(b);
+    return a > (std::numeric_limits<std::size_t>::max() - bb) ? a : a + bb;
 }
 
 /**
- * @brief 迭代式更新子树所有节点的depth缓存（避免递归栈溢出）
- * @param registry EnTT注册表引用
- * @param root 子树根节点
- * @param delta depth偏移量（正增负减）
- * @note 采用DFS前序遍历，支持任意深度子树，无栈溢出风险
+ * @brief 迭代式更新子树（含 root 自身）所有节点的 depth 缓存。
+ * @param delta 深度偏移量（正增负减）
+ * @note DFS 前序，无递归栈溢出风险。调用方不要再单独给 root 写 depth。
  */
 inline void update_subtree_depth(Registry& registry, Handle root, int delta)
 {
-    if (!registry.valid(root) || delta == 0)
+    if (!registry.valid(root) || delta == 0) {
         return;
+    }
 
     std::stack<Handle> stack;
     stack.push(root);
 
     while (!stack.empty()) {
-        auto node = stack.top();
+        const Handle node = stack.top();
         stack.pop();
 
         auto& hier = registry.get<Hierarchy>(node);
-        // warning: 严禁直接  static_cast<size_t>(delta)。
-        // 禁止直接使用 size_t 无符号类型的 depth 直接
-        // 与 static_cast<size_t>(delta) 转换相加，
-        // int 类型 delta 可能是负数转成 size_t 无符号类型结果是无法预知的。
         hier.depth = safe_add(hier.depth, delta);
 
-        // 逆序压入子节点，保证遍历顺序与逻辑顺序一致
-        for (auto it = hier.last_child; it.isValid();) {
+        // 逆序压栈，使出栈顺序与兄弟逻辑顺序一致（可选，仅影响遍历顺序）
+        for (Handle it = hier.last_child; it.isValid();) {
             stack.push(it);
             it = registry.get<Hierarchy>(it).prev_sibling;
         }
@@ -350,43 +309,50 @@ inline void update_subtree_depth(Registry& registry, Handle root, int delta)
 }
 
 /**
- * @brief 更新从起始节点开始所有后续兄弟节点的index缓存
- * @param registry EnTT注册表引用
- * @param start 起始节点
- * @param delta index偏移量（+1插入/-1删除）
+ * @brief 从 start 起（含）到同级末尾，所有兄弟的 index += delta。
  */
-inline void update_sibling_indices_after(Registry& registry, Handle start, int delta)
+inline void update_sibling_indices_from(Registry& registry, Handle start, int delta)
 {
-    for (auto current = start; current.isValid();) {
+    if (delta == 0) {
+        return;
+    }
+    for (Handle current = start; current.isValid();) {
         auto& hier = registry.get<Hierarchy>(current);
-        // warning: 严禁直接 hier.index += static_cast<size_t>(delta); 原因同上
-        hier.index = safe_add(hier.depth, delta);
+        hier.index = safe_add(hier.index, delta);
         current    = hier.next_sibling;
     }
 }
 
+/// 确保节点带有 Hierarchy 组件；若是新建则已是根状态（全 null / 0）。
+inline Hierarchy& ensure(Registry& registry, Handle node)
+{
+    return registry.getOrEmplace<Hierarchy>(node);
+}
+
 } // namespace detail
+
+// ==============================================
+// 查询
+// ==============================================
 
 Handle parent(const Registry& registry, Handle child)
 {
-    const auto* hy = registry.tryGet<Hierarchy>(child);
-    return hy ? Handle{hy->parent} : Handle{};
+    const Hierarchy* hy = registry.tryGet<Hierarchy>(child);
+    return hy ? hy->parent : Handle{};
 }
 
 Handle child(const Registry& registry, std::size_t index, Handle parent)
 {
-    if (!registry.valid(parent) || !registry.has<Hierarchy>(parent))
+    const Hierarchy* hy = registry.tryGet<Hierarchy>(parent);
+    if (!hy || index >= hy->child_count) {
         return {};
-
-    const auto* hy = registry.tryGet<Hierarchy>(parent);
-    if (index >= hy->child_count)
-        return {};
-
-    auto current = hy->first_child;
-    for (uint32_t i = 0; i < index; ++i) {
-        current = registry.get<Hierarchy>(Handle{current}).next_sibling;
     }
-    return Handle{current};
+
+    Handle current = hy->first_child;
+    for (std::size_t i = 0; i < index; ++i) {
+        current = registry.get<Hierarchy>(current).next_sibling;
+    }
+    return current;
 }
 
 bool hasParent(const Registry& registry, Handle node)
@@ -401,27 +367,28 @@ bool hasChildren(const Registry& registry, Handle parent)
 
 std::size_t childCount(const Registry& registry, Handle parent)
 {
-    const auto* hy = registry.tryGet<Hierarchy>(parent);
+    const Hierarchy* hy = registry.tryGet<Hierarchy>(parent);
     return hy ? hy->child_count : 0;
 }
 
 ChildRange children(const Registry& registry, Handle parent)
 {
+    // ChildIterator 只读访问组件，const_cast 仅用于适配非 const 引用成员。
     return {const_cast<Registry&>(registry), parent};
 }
 
 std::optional<std::size_t> index(const Registry& registry, Handle node)
 {
-    if (!registry.valid(node))
+    if (!registry.valid(node)) {
         return std::nullopt;
-
-    const auto* hy = registry.tryGet<Hierarchy>(node);
-    return hy ? std::optional(hy->index) : std::nullopt;
+    }
+    const Hierarchy* hy = registry.tryGet<Hierarchy>(node);
+    return hy ? std::optional<std::size_t>{hy->index} : std::nullopt;
 }
 
 bool isDescendant(const Registry& registry, Handle node, Handle ancestor)
 {
-    if (!ancestor.isValid()) {
+    if (!ancestor.isValid() || node == ancestor) {
         return false;
     }
     for (Handle p = parent(registry, node); p.isValid(); p = parent(registry, p)) {
@@ -434,26 +401,27 @@ bool isDescendant(const Registry& registry, Handle node, Handle ancestor)
 
 std::size_t depth(const Registry& registry, Handle node)
 {
-    const auto* hy = registry.tryGet<Hierarchy>(node);
+    const Hierarchy* hy = registry.tryGet<Hierarchy>(node);
     return hy ? hy->depth : 0;
 }
 
 std::size_t size(const Registry& registry, Handle node)
 {
     std::vector<Handle> out;
-    collect(registry, node, out);
+    collect(registry, node, out, /*with_self=*/true);
     return out.size();
 }
 
 std::vector<std::size_t> path(const Registry& registry, Handle node)
 {
     std::vector<std::size_t> out;
-    if (!registry.valid(node) || !registry.has<Hierarchy>(node))
+    if (!registry.valid(node) || !registry.has<Hierarchy>(node)) {
         return out;
+    }
 
-    for (auto current = node; hasParent(registry, current); current = parent(registry, current)) {
-        auto& hier = registry.get<Hierarchy>(current);
-        out.push_back(hier.index);
+    for (Handle current = node; hasParent(registry, current);
+         current = parent(registry, current)) {
+        out.push_back(registry.get<Hierarchy>(current).index);
     }
     std::ranges::reverse(out);
     return out;
@@ -461,18 +429,19 @@ std::vector<std::size_t> path(const Registry& registry, Handle node)
 
 Handle pathNode(const Registry& registry, Handle root, std::span<const std::size_t> path)
 {
-    if (!registry.valid(root) || !registry.has<Hierarchy>(root))
+    if (!registry.valid(root) || !registry.has<Hierarchy>(root)) {
         return {};
+    }
 
-    auto current = root;
-    for (auto index : path) {
-        auto& hier = registry.get<Hierarchy>(current);
-        if (index >= hier.child_count)
+    Handle current = root;
+    for (const std::size_t idx : path) {
+        const Hierarchy& hier = registry.get<Hierarchy>(current);
+        if (idx >= hier.child_count) {
             return {};
-
+        }
         current = hier.first_child;
-        for (std::size_t i = 0; i < index; ++i) {
-            current = registry.get<Hierarchy>(Handle{current}).next_sibling;
+        for (std::size_t i = 0; i < idx; ++i) {
+            current = registry.get<Hierarchy>(current).next_sibling;
         }
     }
     return current;
@@ -482,174 +451,59 @@ std::string pathString(std::span<const std::size_t> path)
 {
     std::string s;
     for (std::size_t i = 0; i < path.size(); ++i) {
-        if (i > 0)
+        if (i > 0) {
             s += '/';
+        }
         s += std::to_string(path[i]);
     }
     return s;
 }
 
-bool append(Registry& registry, Handle child, Handle parent)
+// ==============================================
+// 修改：以 attach / detach 为唯一链接入口
+// ==============================================
+
+void detach(Registry& registry, Handle node)
 {
-    if (!registry.valid(parent) || !registry.valid(child) || parent == child) {
-        return false;
+    if (!registry.valid(node)) {
+        return;
     }
-    // 检测循环
-    if (isDescendant(registry, parent, child)) {
-        // parent 现在是 child 的后代：把 child 挂到 parent 下会形成环，拒绝。
-        return false;
-    }
-
-    // 若子节点已有父节点先脱离
-    detach(registry, child);
-
-    // 确保父子节点都有组件
-    Hierarchy& childHier  = registry.getOrEmplace<Hierarchy>(child);
-    Hierarchy& parentHier = registry.getOrEmplace<Hierarchy>(parent);
-
-    // 更新父子关系
-    childHier.parent           = parent;
-    const auto old_child_depth = childHier.depth;
-    const auto new_child_depth = parentHier.depth + 1;
-    childHier.depth            = new_child_depth;
-
-    // 批量更新子树深度
-    if (childHier.hasChildren()) {
-        detail::update_subtree_depth(registry,
-                                     child,
-                                     static_cast<int>(new_child_depth - old_child_depth));
+    Hierarchy* nodeHier = registry.tryGet<Hierarchy>(node);
+    if (!nodeHier || !nodeHier->parent.isValid()) {
+        return; // 本就是根 / 未参与层级
     }
 
-    // 父节点无子节点场景
-    if (parentHier.isLeaf()) {
-        parentHier.first_child = child;
-        parentHier.last_child  = child;
-        childHier.prev_sibling = Handle::null;
-        childHier.next_sibling = Handle::null;
-        childHier.index        = 0;
+    Hierarchy& parentHier = registry.get<Hierarchy>(nodeHier->parent);
+
+    // 断前驱
+    if (nodeHier->prev_sibling.isValid()) {
+        registry.get<Hierarchy>(nodeHier->prev_sibling).next_sibling = nodeHier->next_sibling;
     } else {
-        // 追加到末尾
-        const auto last        = parentHier.last_child;
-        auto& lastHier         = registry.get<Hierarchy>(last);
-        lastHier.next_sibling  = child;
-        childHier.prev_sibling = last;
-        childHier.next_sibling = Handle::null;
-        parentHier.last_child  = child;
-        childHier.index        = parentHier.child_count;
+        parentHier.first_child = nodeHier->next_sibling;
     }
 
-    parentHier.child_count++;
-    return true;
-}
-
-bool insertBefore(Registry& registry, Handle child, Handle target)
-{
-    if (!registry.valid(target) || !registry.valid(child) || child == target)
-        return false;
-    if (!registry.has<Hierarchy>(target))
-        return false;
-
-    const auto parent = registry.get<Hierarchy>(target).parent;
-    if (!parent.isValid())
-        return false;
-
-    // 检测循环
-    if (isDescendant(registry, parent, child)) {
-        // parent 现在是 child 的后代：把 child 挂到 parent 下会形成环，拒绝。
-        return false;
-    }
-
-    // 若子节点已有父节点先脱离
-    detach(registry, child);
-
-    // 确保父子节点都有组件
-    auto& parentHier = registry.get<Hierarchy>(parent);
-    auto& targetHier = registry.get<Hierarchy>(target);
-    auto& childHier  = registry.getOrEmplace<Hierarchy>(child);
-
-    // 更新父子关系
-    childHier.parent           = parent;
-    const auto old_child_depth = childHier.depth;
-    const auto new_child_depth = parentHier.depth + 1;
-    childHier.depth            = new_child_depth;
-
-    // 更新子树深度
-    if (childHier.hasChildren()) {
-        detail::update_subtree_depth(registry,
-                                     child,
-                                     static_cast<int>(new_child_depth - old_child_depth));
-    }
-
-    // 链接前后节点
-    childHier.prev_sibling = targetHier.prev_sibling;
-    childHier.next_sibling = target;
-    if (targetHier.prev_sibling.isValid()) {
-        registry.get<Hierarchy>(targetHier.prev_sibling).next_sibling = child;
+    // 断后继，并让后续兄弟 index - 1
+    if (nodeHier->next_sibling.isValid()) {
+        registry.get<Hierarchy>(nodeHier->next_sibling).prev_sibling = nodeHier->prev_sibling;
+        detail::update_sibling_indices_from(registry, nodeHier->next_sibling, -1);
     } else {
-        parentHier.first_child = child;
-    }
-    targetHier.prev_sibling = child;
-
-    // 更新索引
-    childHier.index = targetHier.index;
-    detail::update_sibling_indices_after(registry, target, 1);
-    parentHier.child_count++;
-
-    return true;
-}
-
-bool insertAfter(Registry& registry, Handle child, Handle target)
-{
-    if (!registry.valid(target) || !registry.valid(child) || child == target)
-        return false;
-    if (!registry.has<Hierarchy>(target))
-        return false;
-    const auto parent = registry.get<Hierarchy>(target).parent;
-    if (!parent.isValid())
-        return false;
-    // 检测循环
-    if (isDescendant(registry, parent, child)) {
-        // parent 现在是 child 的后代：把 child 挂到 parent 下会形成环，拒绝。
-        return false;
+        parentHier.last_child = nodeHier->prev_sibling;
     }
 
-    // 若子节点已有父节点先脱离
-    detach(registry, child);
-
-    // 确保父子节点都有组件
-    auto& parentHier = registry.get<Hierarchy>(parent);
-    auto& targetHier = registry.get<Hierarchy>(target);
-    auto& childHier  = registry.getOrEmplace<Hierarchy>(child);
-
-    // 更新父子关系
-    childHier.parent           = parent;
-    const auto old_child_depth = childHier.depth;
-    const auto new_child_depth = parentHier.depth + 1;
-    childHier.depth            = new_child_depth;
-
-    // 更新子树深度
-    if (childHier.hasChildren()) {
-        detail::update_subtree_depth(registry,
-                                     child,
-                                     static_cast<int>(new_child_depth - old_child_depth));
+    if (parentHier.child_count > 0) {
+        --parentHier.child_count;
     }
 
-    // 链接前后节点
-    childHier.next_sibling = targetHier.next_sibling;
-    childHier.prev_sibling = target;
-    if (targetHier.next_sibling.isValid()) {
-        registry.get<Hierarchy>(targetHier.next_sibling).prev_sibling = child;
-    } else {
-        parentHier.last_child = child;
+    // 成为独立根：清空链接字段，depth 整棵子树相对归零
+    const int depthDelta = -static_cast<int>(nodeHier->depth);
+    nodeHier->parent       = Handle{};
+    nodeHier->prev_sibling = Handle{};
+    nodeHier->next_sibling = Handle{};
+    nodeHier->index        = 0;
+
+    if (depthDelta != 0) {
+        detail::update_subtree_depth(registry, node, depthDelta);
     }
-    targetHier.next_sibling = child;
-
-    // 更新索引
-    childHier.index = targetHier.index + 1;
-    detail::update_sibling_indices_after(registry, childHier.next_sibling, 1);
-    parentHier.child_count++;
-
-    return true;
 }
 
 bool attach(Registry& registry, Handle child, Handle parent, Handle before)
@@ -657,8 +511,8 @@ bool attach(Registry& registry, Handle child, Handle parent, Handle before)
     if (!registry.valid(parent) || !registry.valid(child) || parent == child) {
         return false;
     }
+    // 禁止把祖先挂到自己的后代下
     if (isDescendant(registry, parent, child)) {
-        // parent 现在是 child 的后代：把 child 挂到 parent 下会形成环，拒绝。
         return false;
     }
 
@@ -669,123 +523,88 @@ bool attach(Registry& registry, Handle child, Handle parent, Handle before)
         }
         beforeHier = registry.tryGet<Hierarchy>(before);
         if (!beforeHier || beforeHier->parent != parent) {
-            return false; // before 不是 parent 的直接子节点
+            return false; // before 必须是 parent 的直接子节点
         }
     }
 
-    // "移动"语义：child 若已经挂在别处（含挂在同一个 parent 下的情况），
-    // 先摘除，统一走"追加到新位置"这一条路径，不单独处理"同父重排序"。
+    // 移动语义：无论原先在哪（含同一 parent），先完整脱离
     detach(registry, child);
 
-    Hierarchy& childHier  = registry.getOrEmplace<Hierarchy>(child);
-    Hierarchy& parentHier = registry.getOrEmplace<Hierarchy>(parent);
-    childHier.parent      = parent;
+    Hierarchy& childHier  = detail::ensure(registry, child);
+    Hierarchy& parentHier = detail::ensure(registry, parent);
 
+    // —— 链接 ——
     if (before.isValid()) {
-        // detach() 可能让 beforeHier 指向的组件本身发生了 emplace/挪动？不会——
-        // detach() 只操作 child 自己的 Hierarchy 以及它原父节点/原兄弟的
-        // Hierarchy，与 before 无关，这里重新取一次指针只是防御性地
-        // 避免对 unordered/稀疏集重新分配这类实现细节做假设。
-        beforeHier               = registry.tryGet<Hierarchy>(before);
-        const Handle prev        = beforeHier->prev_sibling;
-        childHier.prev_sibling   = prev;
-        childHier.next_sibling   = before;
+        // detach 可能改过 before 的 index，重新取一次
+        beforeHier             = registry.tryGet<Hierarchy>(before);
+        const Handle prev      = beforeHier->prev_sibling;
+        childHier.prev_sibling = prev;
+        childHier.next_sibling = before;
         beforeHier->prev_sibling = child;
         if (prev.isValid()) {
-            registry.tryGet<Hierarchy>(prev)->next_sibling = child;
+            registry.get<Hierarchy>(prev).next_sibling = child;
         } else {
             parentHier.first_child = child;
         }
-        // 更新 before 及后面兄弟节点索引
+        // child 占据 before 的旧 index，before 及之后全部 +1
         childHier.index = beforeHier->index;
-        for (auto current = beforeHier->next_sibling; current.isValid();) {
-            auto& hier = registry.get<Hierarchy>(current);
-            ++hier.index;
-            current = hier.next_sibling;
-        }
+        detail::update_sibling_indices_from(registry, before, 1);
     } else {
+        // 追加到末尾
         childHier.prev_sibling = parentHier.last_child;
         childHier.next_sibling = Handle{};
         if (parentHier.last_child.isValid()) {
-            auto lastHier          = registry.tryGet<Hierarchy>(parentHier.last_child);
-            lastHier->next_sibling = child;
-            // 更新追加在最后的索引
-            childHier.index        = lastHier->index + 1;
+            Hierarchy& lastHier = registry.get<Hierarchy>(parentHier.last_child);
+            lastHier.next_sibling = child;
+            childHier.index       = lastHier.index + 1;
         } else {
             parentHier.first_child = child;
-            // 前面没有兄弟节点，索引默认为 0
             childHier.index        = 0;
         }
         parentHier.last_child = child;
     }
 
-    // 更新子树深度
-    const auto old_child_depth = childHier.depth;
-    const auto new_child_depth = parentHier.depth + 1;
-    childHier.depth            = new_child_depth;
-    if (childHier.hasChildren()) {
-        detail::update_subtree_depth(registry,
-                                     child,
-                                     static_cast<int>(new_child_depth - old_child_depth));
+    childHier.parent = parent;
+    ++parentHier.child_count;
+
+    // —— depth：只通过 helper 更新整棵子树（含 child 自身）——
+    const int depthDelta =
+        static_cast<int>(parentHier.depth + 1) - static_cast<int>(childHier.depth);
+    if (depthDelta != 0) {
+        detail::update_subtree_depth(registry, child, depthDelta);
     }
 
-    ++parentHier.child_count;
     return true;
 }
 
-void detach(Registry& registry, Handle node)
+bool append(Registry& registry, Handle child, Handle parent)
 {
-    if (!registry.valid(node) || !registry.has<Hierarchy>(node))
-        return;
-    auto& nodeHier = registry.get<Hierarchy>(node);
-    if (!nodeHier.parent.isValid())
-        return; // 从未参与过层级关系，或本来就是游离状态：安全空操作
+    return attach(registry, child, parent, /*before=*/Handle{});
+}
 
-    auto& parentHier = registry.get<Hierarchy>(nodeHier.parent);
-
-    // 更新前序兄弟指针
-    if (nodeHier.prev_sibling.isValid()) {
-        registry.get<Hierarchy>(nodeHier.prev_sibling).next_sibling = nodeHier.next_sibling;
-    } else {
-        parentHier.first_child = nodeHier.next_sibling;
+bool insertBefore(Registry& registry, Handle child, Handle target)
+{
+    if (!registry.valid(target)) {
+        return false;
     }
-
-    // 更新后序兄弟指针
-    if (nodeHier.next_sibling.isValid()) {
-        auto& nextHier        = registry.get<Hierarchy>(nodeHier.next_sibling);
-        nextHier.prev_sibling = nodeHier.prev_sibling;
-        // 修正后继兄弟节点的 index（每个减 1）
-        // detail::update_sibling_indices_after(registry, nodeHier.next_sibling, -1);
-        for (auto current = nodeHier.next_sibling; current.isValid();) {
-            auto& hier = registry.get<Hierarchy>(current);
-            --hier.index;
-            current = hier.next_sibling;
-        }
-    } else {
-        parentHier.last_child = nodeHier.prev_sibling;
+    const Hierarchy* targetHier = registry.tryGet<Hierarchy>(target);
+    if (!targetHier || !targetHier->parent.isValid()) {
+        return false;
     }
+    return attach(registry, child, targetHier->parent, target);
+}
 
-    // 更新父节点计数
-    if (parentHier.child_count > 0) {
-        --parentHier.child_count;
+bool insertAfter(Registry& registry, Handle child, Handle target)
+{
+    if (!registry.valid(target)) {
+        return false;
     }
-
-    // parentHier 为空指针的情况理论上不应该发生（attachChild() 总是同时
-    // ensure() 了父子两侧的 Hierarchy），这里防御性地整体跳过链表修复而不是
-    // 崩溃——万一外部直接摆弄过组件数据导致状态不一致，至少不会连锁出错。
-
-    // 重置当前节点的父子关系字段
-    nodeHier.parent       = Handle::null;
-    nodeHier.prev_sibling = Handle::null;
-    nodeHier.next_sibling = Handle::null;
-    nodeHier.index        = 0;
-
-    // 更新子树深度
-    const auto old_depth = nodeHier.depth;
-    nodeHier.depth       = 0;
-    if (old_depth != 0 && nodeHier.hasChildren()) {
-        detail::update_subtree_depth(registry, node, -static_cast<int>(old_depth));
+    const Hierarchy* targetHier = registry.tryGet<Hierarchy>(target);
+    if (!targetHier || !targetHier->parent.isValid()) {
+        return false;
     }
+    // 插到 target 之后 ≡ 以 target 的 next 为 before（若无 next 则 append）
+    return attach(registry, child, targetHier->parent, targetHier->next_sibling);
 }
 
 void extract(Registry& registry, Handle node)
@@ -793,17 +612,40 @@ void extract(Registry& registry, Handle node)
     if (!registry.valid(node)) {
         return;
     }
-    // 先摘除自己，避免在父节点的链表里留下悬空引用
+
+    // 先从父链摘掉，避免父节点留下悬空兄弟指针
     detach(registry, node);
 
-    // 移除直接子节点的层级关系组件
-    for (auto child : children(registry, node)) {
-        if (registry.valid(child)) {
-            registry.remove<Hierarchy>(child);
+    // 快照直接子节点，把它们变成独立根（保留各自子树）
+    std::vector<Handle> kids;
+    eachChild(registry, node, [&](Handle h) { kids.push_back(h); });
+
+    for (Handle c : kids) {
+        if (!registry.valid(c)) {
+            continue;
+        }
+        Hierarchy* h = registry.tryGet<Hierarchy>(c);
+        if (!h) {
+            continue;
+        }
+        // 断开与原父/兄弟的链接，成为根
+        const int depthDelta = -static_cast<int>(h->depth);
+        h->parent       = Handle{};
+        h->prev_sibling = Handle{};
+        h->next_sibling = Handle{};
+        h->index        = 0;
+        if (depthDelta != 0) {
+            detail::update_subtree_depth(registry, c, depthDelta);
         }
     }
 
-    // 销毁自己
+    // 清空 node 自身的子链（即将销毁，防御性清理）
+    if (Hierarchy* nodeHier = registry.tryGet<Hierarchy>(node)) {
+        nodeHier->first_child  = Handle{};
+        nodeHier->last_child   = Handle{};
+        nodeHier->child_count  = 0;
+    }
+
     registry.destroy(node);
 }
 
@@ -812,26 +654,28 @@ void destroy(Registry& registry, Handle node)
     if (!registry.valid(node)) {
         return;
     }
-    // 先摘除自己，避免在父节点的链表里留下悬空引用
+
+    // 先摘除，避免父节点链表悬空
     detach(registry, node);
 
-    // 先完整收集整棵子树（后序，保证子孙排在自己前面，之后反转先序序列），再统一销毁——
-    // 不能一边遍历一边 destroy()：destroy() 会连带移除 Hierarchy 组件本身，
-    // 一旦当前节点的 Hierarchy 在遍历尚未走完时就被摘掉，后续兄弟链接会
-    // 读到已经失效的数据。
-    std::vector<Handle> to_destroyed;
-    collect(registry, node, to_destroyed);
+    // 完整收集子树后再倒序销毁：不能边遍历边 destroy，
+    // 否则 Hierarchy 组件被摘掉后兄弟链会读到失效数据。
+    std::vector<Handle> toDestroy;
+    collect(registry, node, toDestroy, /*with_self=*/true);
 
-    // 从叶子到根倒序销毁
-    for (auto it = to_destroyed.rbegin(); it != to_destroyed.rend(); ++it) {
+    for (auto it = toDestroy.rbegin(); it != toDestroy.rend(); ++it) {
         registry.destroy(*it);
     }
 }
 
 void collect(const Registry& registry, Handle node, std::vector<Handle>& out, bool with_self)
 {
+    // 迭代前序：栈里逆序压入子节点，使出栈顺序与兄弟顺序一致
     std::vector<Handle> stack;
     if (with_self) {
+        if (!registry.valid(node)) {
+            return;
+        }
         stack.push_back(node);
     } else {
         std::vector<Handle> rootChildren;
@@ -842,17 +686,18 @@ void collect(const Registry& registry, Handle node, std::vector<Handle>& out, bo
     }
 
     while (!stack.empty()) {
-        const auto current = stack.back();
+        const Handle current = stack.back();
         stack.pop_back();
         out.push_back(current);
 
-        std::vector<Handle> children;
-        eachChild(registry, current, [&](Handle h) { children.push_back(h); });
-        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+        std::vector<Handle> kids;
+        eachChild(registry, current, [&](Handle h) { kids.push_back(h); });
+        for (auto it = kids.rbegin(); it != kids.rend(); ++it) {
             stack.push_back(*it);
         }
     }
 }
 
 } // namespace hierarchy
+
 } // namespace bakuon::core
