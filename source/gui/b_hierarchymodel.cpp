@@ -1,6 +1,10 @@
 #include "gui/b_hierarchymodel.h"
 
+#include <type_traits>
+
 #include <QtCore/QItemSelectionModel>
+
+#include <entt/entity/entity.hpp>
 
 #include <bakuon/core/Components.h>
 
@@ -239,7 +243,7 @@ QModelIndex HierarchyModel::indexForHandle(Handle handle) const
 
     QModelIndex idx = createIndex(rootRow, 0, idFromHandle(root));
     for (std::size_t step : path) {
-        idx = index(static_cast<int>(step), 0, idx);
+        idx = this->index(static_cast<int>(step), 0, idx);
         if (!idx.isValid()) {
             return {};
         }

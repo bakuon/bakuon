@@ -1,5 +1,8 @@
 #include "gui/b_documentsession.h"
 
+#include <bakuon/core/Components.h>
+#include <bakuon/core/Hierarchy.h>
+
 #include "gui/b_commandsystem.h"
 
 namespace bakuon::gui {
