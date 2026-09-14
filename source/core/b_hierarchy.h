@@ -150,6 +150,22 @@ enum class TraversalOrder {
                               std::span<const std::size_t> path);
 [[nodiscard]] std::string pathString(std::span<const std::size_t> path);
 
+/**
+ * @brief 收集当前所有根节点（带 Hierarchy 且 parent 无效，或未参与 Hierarchy 的实体不强制纳入）。
+ * 典型用于大纲顶层：只列出真正挂过 Hierarchy 且无父的节点。
+ */
+void roots(const Registry& registry, std::vector<Handle>& out);
+
+template<typename Func>
+void eachRoot(const Registry& registry, Func&& func)
+{
+    std::vector<Handle> list;
+    roots(registry, list);
+    for (Handle h : list) {
+        func(h);
+    }
+}
+
 // ==============================================
 // 修改（attach / detach 为链接唯一入口）
 // ==============================================
@@ -191,6 +207,18 @@ void extract(Registry& registry, Handle node);
  * @brief 销毁 node 及其完整子树（先收集再倒序 destroy，避免遍历中组件失效）。
  */
 void destroy(Registry& registry, Handle node);
+
+/**
+ * @brief 同一父节点内重排到 newIndex（0-based）。
+ * @return false 若节点无效、无父、或 newIndex 越界
+ */
+bool reorder(Registry& registry, Handle child, std::size_t newIndex);
+
+/** 与前一个兄弟交换位置；已是第一个则空操作返回 false。 */
+bool moveUp(Registry& registry, Handle child);
+
+/** 与后一个兄弟交换位置；已是最后一个则空操作返回 false。 */
+bool moveDown(Registry& registry, Handle child);
 
 /**
  * @brief 前序收集子树节点。
