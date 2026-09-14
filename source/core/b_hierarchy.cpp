@@ -200,6 +200,18 @@ std::string pathString(std::span<const std::size_t> path)
     return s;
 }
 
+void roots(const Registry& registry, std::vector<Handle>& out)
+{
+    out.clear();
+    // 遍历所有带 Hierarchy 的实体，收集 parent 无效者。
+    // Registry::each 需要非 const，此处只读组件。
+    const_cast<Registry&>(registry).each<Hierarchy>([&](Handle handle, const Hierarchy& hier) {
+        if (!hier.parent.isValid()) {
+            out.push_back(handle);
+        }
+    });
+}
+
 // ==============================================
 // 修改：以 attach / detach 为唯一链接入口
 // ==============================================
@@ -407,6 +419,76 @@ void destroy(Registry& registry, Handle node)
     for (auto it = toDestroy.rbegin(); it != toDestroy.rend(); ++it) {
         registry.destroy(*it);
     }
+}
+
+bool reorder(Registry& registry, Handle child, std::size_t newIndex)
+{
+    if (!registry.valid(child)) {
+        return false;
+    }
+    const Hierarchy* childHier = registry.tryGet<Hierarchy>(child);
+    if (!childHier || !childHier->parent.isValid()) {
+        return false;
+    }
+    const Handle parentHandle = childHier->parent;
+    const Hierarchy& parentHier = registry.get<Hierarchy>(parentHandle);
+    if (newIndex >= parentHier.child_count) {
+        return false;
+    }
+    if (childHier->index == newIndex) {
+        return true; // 已在目标位置
+    }
+
+    // 目标位置当前的节点（reorder 前）；若 newIndex 指向自身之后的槽位，
+    // 先 detach 再 attach 时索引会变化，因此用“目标 before”语义：
+    // newIndex == child_count-1 且移动到末尾 → before 无效（append）。
+    Handle before{};
+    if (newIndex + 1 < parentHier.child_count) {
+        // 想插到原 newIndex 位置 ≡ 以“当前占该位置的节点”为 before
+        // 但若该节点就是 child 自身，需取其后继。
+        Handle at = hierarchy::child(registry, newIndex, parentHandle);
+        if (at == child) {
+            at = registry.get<Hierarchy>(child).next_sibling;
+        }
+        // 若 child 当前 index < newIndex，detach 后后面节点前移，
+        // 原 newIndex 位置的节点会变成 newIndex-1，before 应取“原 newIndex+1”。
+        if (childHier->index < newIndex) {
+            at = hierarchy::child(registry, newIndex + 1, parentHandle);
+            // child 自己若在 newIndex+1 则再往后
+            if (at == child) {
+                at = registry.get<Hierarchy>(child).next_sibling;
+            }
+        }
+        before = at;
+    }
+    // else: 移到末尾，before 保持无效
+
+    return attach(registry, child, parentHandle, before);
+}
+
+bool moveUp(Registry& registry, Handle child)
+{
+    const auto idx = index(registry, child);
+    if (!idx || *idx == 0) {
+        return false;
+    }
+    return reorder(registry, child, *idx - 1);
+}
+
+bool moveDown(Registry& registry, Handle child)
+{
+    const auto idx = index(registry, child);
+    if (!idx) {
+        return false;
+    }
+    const Handle p = parent(registry, child);
+    if (!p.isValid()) {
+        return false;
+    }
+    if (*idx + 1 >= childCount(registry, p)) {
+        return false;
+    }
+    return reorder(registry, child, *idx + 1);
 }
 
 void collect(const Registry& registry, Handle node, std::vector<Handle>& out, bool with_self)

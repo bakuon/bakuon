@@ -38,7 +38,7 @@ namespace bakuon::gui {
  *   bakuon::core::Registry registry;
  *   auto* bridge = new bakuon::gui::RegistryBridge(registry, this);
  *   bridge->watch<Position>(QStringLiteral("Position"));
- *   bridge->watch<Selected>(QStringLiteral("Selected"));
+ *   bridge->watchSelection(); // Selected 标签 + selectionChanged
  *
  *   connect(bridge, &RegistryBridge::entityUpdated, this,
  *           [&registry](const QString& tag, bakuon::core::Handle id) {
@@ -47,6 +47,9 @@ namespace bakuon::gui {
  *                   // ... 用 pos 刷新界面 ...
  *               }
  *           });
+ *   connect(bridge, &RegistryBridge::selectionChanged, this, [this]() {
+ *       // 槽内自行查询 Selection / each<Selected>
+ *   });
  * @endcode
  */
 class BAKUON_GUI_EXPORT RegistryBridge : public QObject
@@ -88,10 +91,18 @@ public:
             }));
     }
 
+    /**
+     * @brief 便捷订阅 Selected 标签，并额外发出 selectionChanged()。
+     * 内部等价于 watch<components::Selected>(tag)，在三条实体信号之外再发集合级信号。
+     */
+    void watchSelection(const QString& tag = QStringLiteral("Selected"));
+
 Q_SIGNALS:
     void entityConstructed(const QString& componentTag, bakuon::core::Handle id);
     void entityUpdated(const QString& componentTag, bakuon::core::Handle id);
     void entityDestroyed(const QString& componentTag, bakuon::core::Handle id);
+    /// 选中集发生任意增删时发出（无参数；槽内自行查询 Selection / each<Selected>）
+    void selectionChanged();
 
 private:
     core::Registry& m_registry;
