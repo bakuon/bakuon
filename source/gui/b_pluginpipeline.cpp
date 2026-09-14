@@ -101,15 +101,14 @@ bool PluginPipeline::processQueue()
         return true;
     }
     m_processing = true;
-    bool ok = true;
+    bool ok      = true;
     while (!m_pendingEvents.empty()) {
         const PluginEvent event = m_pendingEvents.front();
         m_pendingEvents.pop_front();
         const auto next = PluginLifecycleRules::nextState(m_state, event);
         if (!next) {
-            m_lastError = QStringLiteral("非法状态转换：%1 无法响应该事件")
-                              .arg(toString(m_state));
-            ok = false;
+            m_lastError = QStringLiteral("非法状态转换：%1 无法响应该事件").arg(toString(m_state));
+            ok          = false;
             continue;
         }
         m_state = *next;
@@ -132,43 +131,21 @@ bool PluginPipeline::processQueue()
 bool PluginPipeline::reactState()
 {
     switch (m_state) {
-    case PluginState::Discovering:
-        executeDiscover();
-        break;
-    case PluginState::Discovered:
-        return handle(PluginEvent::StartValidate);
-    case PluginState::Validating:
-        executeValidate();
-        break;
-    case PluginState::Validated:
-        return handle(PluginEvent::StartResolve);
-    case PluginState::Resolving:
-        executeResolve();
-        break;
-    case PluginState::Resolved:
-        return handle(PluginEvent::StartLoad);
-    case PluginState::Loading:
-        executeLoad();
-        break;
-    case PluginState::Loaded:
-        return handle(PluginEvent::StartInitialize);
-    case PluginState::Initializing:
-        executeInitialize();
-        break;
-    case PluginState::Initialized:
-        break;
-    case PluginState::Running:
-        break;
-    case PluginState::Stopping:
-        executeStop();
-        break;
-    case PluginState::Stopped:
-        break;
-    case PluginState::Unloading:
-        executeUnload();
-        break;
-    default:
-        break;
+    case PluginState::Discovering : executeDiscover(); break;
+    case PluginState::Discovered  : return handle(PluginEvent::StartValidate);
+    case PluginState::Validating  : executeValidate(); break;
+    case PluginState::Validated   : return handle(PluginEvent::StartResolve);
+    case PluginState::Resolving   : executeResolve(); break;
+    case PluginState::Resolved    : return handle(PluginEvent::StartLoad);
+    case PluginState::Loading     : executeLoad(); break;
+    case PluginState::Loaded      : return handle(PluginEvent::StartInitialize);
+    case PluginState::Initializing: executeInitialize(); break;
+    case PluginState::Initialized : break;
+    case PluginState::Running     : break;
+    case PluginState::Stopping    : executeStop(); break;
+    case PluginState::Stopped     : break;
+    case PluginState::Unloading   : executeUnload(); break;
+    default                       : break;
     }
     return true;
 }
@@ -197,6 +174,31 @@ void PluginPipeline::executeDiscover()
 
 void PluginPipeline::executeValidate()
 {
+    // 只读取元数据，不会触发 dlopen/instance()，因此廉价，可以对大量候选文件批量做
+    // （PluginSystem::registerDirectory() 就是这么用的）。
+    QPluginLoader probe(m_filePath);
+    const QJsonObject root = probe.metaData();
+
+    if (root.isEmpty()) {
+        m_lastError = QStringLiteral("无法读取插件元数据（不是 Qt 插件，或已损坏）");
+        handle(PluginEvent::Fail);
+        return;
+    }
+    if (root.value(QLatin1String("IID")).toString() != QLatin1String("com.bakuon.plugin")) {
+        m_lastError = QStringLiteral("IID 不匹配，不是 bakuon 插件");
+        handle(PluginEvent::Fail);
+        return;
+    }
+
+    QString error;
+    auto meta = parsePluginMetadataJson(root.value(QLatin1String("MetaData")).toObject(), &error);
+    if (!meta) {
+        m_lastError = error;
+        handle(PluginEvent::Fail);
+        return;
+    }
+    meta->filePath = m_filePath;
+    m_metadata     = std::move(*meta);
     handle(PluginEvent::Success);
 }
 
@@ -218,7 +220,7 @@ void PluginPipeline::executeLoad()
         handle(PluginEvent::Success);
         return;
     }
-    m_loader = std::make_unique<QPluginLoader>(m_filePath);
+    m_loader     = std::make_unique<QPluginLoader>(m_filePath);
     QObject *obj = m_loader->instance();
     if (!obj) {
         m_lastError = m_loader->errorString();
@@ -241,7 +243,7 @@ void PluginPipeline::executeInitialize()
         handle(PluginEvent::Fail);
         return;
     }
-    PluginContext ctx(m_argumentValues, ExtensionSystem::instance());
+    PluginContext ctx(m_argumentValues, &ExtensionSystem::instance());
     if (!m_instance->initialize(ctx)) {
         m_lastError = QStringLiteral("initialize() returned false");
         handle(PluginEvent::Fail);
