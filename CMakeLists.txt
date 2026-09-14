@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.21 FATAL_ERROR)
 project(
     bakuon
     VERSION 1.0.0
-    LANGUAGES CXX)
+    LANGUAGES CXX
+)
 
 # 记录仓库真正的根目录。一旦 bakuon 被上层工程通过 add_subdirectory() 集成， CMAKE_SOURCE_DIR
 # 会指向上层工程的根目录而非本仓库根目录， 因此所有子模块的 PUBLIC include 路径都必须引用 BAKUON_ROOT_DIR，而不是
@@ -26,8 +27,7 @@ option(BAKUON_BUILD_CORE "构建 bakuon::core(基于 EnTT 的实体-组件状态
 option(BAKUON_BUILD_GUI "构建 bakuon::gui" ON)
 option(BAKUON_BUILD_PLUGINS "构建 plugins/ 下的运行时插件(MODULE/SHARED)" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_BUILD_HOST "构建 host 主程序(依赖 BAKUON_BUILD_SANDBOX)" ${PROJECT_IS_TOP_LEVEL})
-option(BAKUON_BUILD_SANDBOX_RUNTIME "构建 sandbox 插件沙箱子进程可执行文件(依赖 BAKUON_BUILD_SANDBOX)"
-       ${PROJECT_IS_TOP_LEVEL})
+option(BAKUON_BUILD_SANDBOX_RUNTIME "构建 sandbox 插件沙箱子进程可执行文件(依赖 BAKUON_BUILD_SANDBOX)" ${PROJECT_IS_TOP_LEVEL})
 option(BAKUON_ENABLE_WARNINGS "启用 -Wall -Wextra / W4 等编译警告" ON)
 option(BAKUON_WARNINGS_AS_ERRORS "将编译警告视为错误" OFF)
 option(BAKUON_INSTALL_SDK "安装 core/gui/plugin 的头文件与导出 target(打包方案未定，默认关闭)" OFF)
@@ -40,7 +40,8 @@ add_definitions(
     -DBAKUON_BUILD_GUI
     -DBAKUON_BUILD_PLUGINS
     -DBAKUON_BUILD_HOST
-    -DBAKUON_BUILD_SANDBOX_RUNTIME)
+    -DBAKUON_BUILD_SANDBOX_RUNTIME
+)
 
 # ----------------------------------------------------------------------------
 # C++ 标准通过 target_compile_features(cxx_std_20) 按目标下发（见
@@ -50,6 +51,7 @@ add_definitions(
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 20)
 
 # 框架内所有静态库都以位置无关代码编译， 以便未来被链接进以共享库/插件形式加载的模块（plugins/ 下的运行时插件）。
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
