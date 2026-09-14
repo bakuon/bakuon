@@ -238,8 +238,8 @@ TEST(HierarchyTest, ForEachDescendantPreOrderVisitsParentBeforeChildren)
 
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], a);
-    // EXPECT_EQ(order[1], a1);
-    // EXPECT_EQ(order[2], b);
+    EXPECT_EQ(order[1], a1);
+    EXPECT_EQ(order[2], b);
 }
 
 TEST(HierarchyTest, ForEachDescendantPostOrderVisitsChildrenBeforeAncestors)
@@ -304,4 +304,109 @@ TEST(HierarchyTest, DestroySubtreeOnLeafJustDestroysItself)
     EXPECT_FALSE(registry.valid(leaf));
     EXPECT_TRUE(registry.valid(parent));
     EXPECT_EQ(h::childCount(registry, parent), 0u);
+}
+
+TEST(HierarchyTest, ReorderWithinParent)
+{
+    Registry registry;
+    const Handle parent = registry.create();
+    const Handle a      = registry.create();
+    const Handle b      = registry.create();
+    const Handle c      = registry.create();
+    ASSERT_TRUE(h::append(registry, a, parent));
+    ASSERT_TRUE(h::append(registry, b, parent));
+    ASSERT_TRUE(h::append(registry, c, parent));
+
+    EXPECT_TRUE(h::reorder(registry, c, 0)); // c, a, b
+    std::vector<Handle> order;
+    h::eachChild(registry, parent, [&](Handle ch) { order.push_back(ch); });
+    ASSERT_EQ(order.size(), 3u);
+    EXPECT_EQ(order[0], c);
+    EXPECT_EQ(order[1], a);
+    EXPECT_EQ(order[2], b);
+    EXPECT_EQ(h::index(registry, c).value(), 0u);
+    EXPECT_EQ(h::index(registry, a).value(), 1u);
+    EXPECT_EQ(h::index(registry, b).value(), 2u);
+}
+
+TEST(HierarchyTest, MoveUpAndMoveDown)
+{
+    Registry registry;
+    const Handle parent = registry.create();
+    const Handle a      = registry.create();
+    const Handle b      = registry.create();
+    const Handle c      = registry.create();
+    ASSERT_TRUE(h::append(registry, a, parent));
+    ASSERT_TRUE(h::append(registry, b, parent));
+    ASSERT_TRUE(h::append(registry, c, parent));
+
+    EXPECT_FALSE(h::moveUp(registry, a));
+    EXPECT_TRUE(h::moveUp(registry, c)); // a, c, b
+    EXPECT_TRUE(h::moveDown(registry, a)); // c, a, b
+
+    std::vector<Handle> order;
+    h::eachChild(registry, parent, [&](Handle ch) { order.push_back(ch); });
+    ASSERT_EQ(order.size(), 3u);
+    EXPECT_EQ(order[0], c);
+    EXPECT_EQ(order[1], a);
+    EXPECT_EQ(order[2], b);
+}
+
+TEST(HierarchyTest, ExtractTurnsChildrenIntoRoots)
+{
+    Registry registry;
+    const Handle parent = registry.create();
+    const Handle child  = registry.create();
+    const Handle grand  = registry.create();
+    ASSERT_TRUE(h::append(registry, child, parent));
+    ASSERT_TRUE(h::append(registry, grand, child));
+
+    h::extract(registry, child);
+    EXPECT_FALSE(registry.valid(child));
+    EXPECT_FALSE(h::hasParent(registry, grand));
+    EXPECT_EQ(h::depth(registry, grand), 0u);
+    EXPECT_TRUE(registry.valid(parent));
+    EXPECT_EQ(h::childCount(registry, parent), 0u);
+}
+
+TEST(HierarchyTest, PathAndPathNodeRoundTrip)
+{
+    Registry registry;
+    const Handle root = registry.create();
+    const Handle a    = registry.create();
+    const Handle a0   = registry.create();
+    ASSERT_TRUE(h::append(registry, a, root));
+    ASSERT_TRUE(h::append(registry, a0, a));
+
+    const auto p = h::path(registry, a0);
+    ASSERT_EQ(p.size(), 2u);
+    EXPECT_EQ(h::pathNode(registry, root, p), a0);
+    EXPECT_FALSE(h::pathString(p).empty());
+}
+
+TEST(HierarchyTest, RootsCollectsTopLevelNodes)
+{
+    Registry registry;
+    const Handle r1 = registry.create();
+    const Handle r2 = registry.create();
+    const Handle child = registry.create();
+    // 显式挂 Hierarchy 成为根
+    ASSERT_TRUE(h::append(registry, child, r1));
+
+    std::vector<Handle> list;
+    h::roots(registry, list);
+    // r1、r2 都带 Hierarchy（append 会 ensure 父），child 有 parent
+    EXPECT_NE(std::find(list.begin(), list.end(), r1), list.end());
+    // r2 若从未 ensure Hierarchy，可能不在列表——ensure 仅在参与链接时发生
+    // 再对 r2 做一次无子的 ensure 路径：attach 一个临时再 detach 会留下 Hierarchy
+    const Handle tmp = registry.create();
+    ASSERT_TRUE(h::append(registry, tmp, r2));
+    h::detach(registry, tmp);
+    registry.destroy(tmp);
+
+    list.clear();
+    h::roots(registry, list);
+    EXPECT_NE(std::find(list.begin(), list.end(), r1), list.end());
+    EXPECT_NE(std::find(list.begin(), list.end(), r2), list.end());
+    EXPECT_EQ(std::find(list.begin(), list.end(), child), list.end());
 }
