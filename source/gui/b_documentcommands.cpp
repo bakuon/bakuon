@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <string>
 
+#include <QtGui/QKeySequence>
+
 #include <bakuon/core/Components.h>
 #include <bakuon/core/Hierarchy.h>
 
@@ -44,7 +46,6 @@ void DocumentCommands::registerCommands()
     delCmd.setDefaultShortcut(QKeySequence::Delete);
 
     CommandSystem::registerCommand(idRename(), QStringLiteral("Rename"));
-    // F2 在部分平台是 Rename；用字面量保持跨平台一致
     if (auto* renameCmd = CommandSystem::command(idRename())) {
         renameCmd->setDefaultShortcut(QKeySequence(Qt::Key_F2));
     }
@@ -70,7 +71,6 @@ void DocumentCommands::registerCommands()
 void DocumentCommands::bindActionsToContext()
 {
     const ContextId ctxId = m_session.selectionContextId();
-    // 确保上下文已登记（DocumentSession 构造时也会 declare）
     auto ctx = CommandSystem::registerContext(ctxId, QStringLiteral("bakuon.gui"),
                                               QStringLiteral("Document selection is non-empty"));
     if (!ctx) {
@@ -88,8 +88,8 @@ void DocumentCommands::onSelectionChanged()
 
 void DocumentCommands::updateActionEnabled()
 {
-    const auto& sel = m_session.selection();
-    const bool any  = !sel.empty();
+    const auto& sel      = m_session.selection();
+    const bool any       = !sel.empty();
     const Handle primary = sel.primary();
 
     bool canDelete = false;
@@ -98,7 +98,8 @@ void DocumentCommands::updateActionEnabled()
             if (!m_session.registry().valid(h)) {
                 continue;
             }
-            if (const Locked* locked = m_session.registry().tryGet<Locked>(h); locked && locked->value) {
+            if (const Locked* locked = m_session.registry().tryGet<Locked>(h);
+                locked && locked->value) {
                 continue;
             }
             canDelete = true;
@@ -109,7 +110,7 @@ void DocumentCommands::updateActionEnabled()
     bool canRename = false;
     if (primary.isValid() && m_session.registry().valid(primary)) {
         const Locked* locked = m_session.registry().tryGet<Locked>(primary);
-        canRename = !(locked && locked->value);
+        canRename            = !(locked && locked->value);
     }
 
     m_deleteAction->setEnabled(canDelete);
@@ -144,7 +145,7 @@ std::vector<Handle> DocumentCommands::topLevelSelected() const
 
 void DocumentCommands::executeDelete()
 {
-    auto& reg = m_session.registry();
+    auto& reg                         = m_session.registry();
     const std::vector<Handle> targets = topLevelSelected();
     if (targets.empty()) {
         return;
@@ -166,7 +167,7 @@ void DocumentCommands::executeDelete()
 
 void DocumentCommands::executeDuplicate()
 {
-    auto& reg = m_session.registry();
+    auto& reg                         = m_session.registry();
     const std::vector<Handle> sources = m_session.selection().ordered();
     if (sources.empty()) {
         return;
@@ -187,11 +188,9 @@ void DocumentCommands::executeDuplicate()
 
         const Handle parent = h::parent(reg, src);
         if (parent.isValid()) {
-            // 插到 src 之后
             h::insertAfter(reg, dst, src);
         } else {
-            // 成为独立根：ensure Hierarchy 组件（append 到一个临时？）
-            // 无父时 attach 需要父节点；仅 ensure 组件即可被 roots() 收集
+            // 成为独立根：确保带 Hierarchy 以便 roots() 收集
             reg.getOrEmplace<h::Hierarchy>(dst);
         }
         created.push_back(dst);
