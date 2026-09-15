@@ -9,6 +9,10 @@
 
 #include "gui/b_gui_export.h"
 
+QT_BEGIN_NAMESPACE
+class QItemSelectionModel;
+QT_END_NAMESPACE
+
 namespace bakuon::gui {
 
 class DocumentSession;
@@ -50,7 +54,7 @@ public:
     [[nodiscard]] QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
     [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation,
-                                     int role = Qt::DisplayRole) const override;
+                                      int role = Qt::DisplayRole) const override;
 
     [[nodiscard]] core::Handle handleForIndex(const QModelIndex& index) const;
     [[nodiscard]] QModelIndex indexForHandle(core::Handle handle) const;
