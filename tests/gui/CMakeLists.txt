@@ -16,6 +16,7 @@ set(GUI_TEST_CONFIGS
     "RegistryBridgeTest.cpp\;OFF"
     "DocumentSessionTest.cpp\;OFF"
     "HierarchyModelTest.cpp\;OFF"
+    "DocumentCommandsTest.cpp\;OFF"
 )
 
 foreach(config ${GUI_TEST_CONFIGS})
@@ -45,10 +46,10 @@ foreach(config ${GUI_TEST_CONFIGS})
     )
 
     # 动态链接插件依赖
-    if(TARGET gui_example_plugin AND (lower_name STREQUAL "pluginpipeline" OR lower_name STREQUAL "pluginsystem"))
+    if(TARGET example_plugin AND (lower_name STREQUAL "pluginpipeline" OR lower_name STREQUAL "pluginsystem"))
         target_compile_definitions(
-            ${target_name} PRIVATE BAKUON_TEST_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:gui_example_plugin>"
+            ${target_name} PRIVATE BAKUON_TEST_EXAMPLE_PLUGIN_PATH="$<TARGET_FILE:example_plugin>"
         )
-        add_dependencies(${target_name} gui_example_plugin)
+        add_dependencies(${target_name} example_plugin)
     endif()
 endforeach()
