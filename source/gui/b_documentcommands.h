@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <QtCore/QObject>
 #include <QtGui/QAction>
 
