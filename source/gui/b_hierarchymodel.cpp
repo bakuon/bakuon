@@ -13,8 +13,8 @@
 
 namespace bakuon::gui {
 namespace h = bakuon::core::hierarchy;
-using bakuon::core::Handle;
 using bakuon::core::components::Name;
+using bakuon::core::Handle;
 
 quintptr HierarchyModel::idFromHandle(Handle handle) noexcept
 {
@@ -27,9 +27,7 @@ quintptr HierarchyModel::idFromHandle(Handle handle) noexcept
 
 Handle HierarchyModel::handleFromId(quintptr id) noexcept
 {
-    if (id == 0) {
-        return {};
-    }
+    // NOTE: id == 0 是有效的
     using Underlying = std::underlying_type_t<entt::entity>;
     return Handle{static_cast<entt::entity>(static_cast<Underlying>(id))};
 }
@@ -50,21 +48,21 @@ HierarchyModel::~HierarchyModel()
 void HierarchyModel::connectBridge()
 {
     auto& bridge = m_session.bridge();
-    connect(&bridge, &RegistryBridge::entityConstructed, this,
-            [this](const QString& tag, Handle id) {
-                if (tag == QLatin1String("Hierarchy") || tag == QLatin1String("Name")) {
-                    onHierarchyChanged(id);
-                }
-            });
-    connect(&bridge, &RegistryBridge::entityUpdated, this,
-            [this](const QString& tag, Handle id) {
-                if (tag == QLatin1String("Name")) {
-                    onNameChanged(id);
-                } else if (tag == QLatin1String("Hierarchy")) {
-                    onHierarchyChanged(id);
-                }
-            });
-    connect(&bridge, &RegistryBridge::entityDestroyed, this,
+    connect(&bridge, &RegistryBridge::entityConstructed, this, [this](const QString& tag, Handle id) {
+        if (tag == QLatin1String("Hierarchy") || tag == QLatin1String("Name")) {
+            onHierarchyChanged(id);
+        }
+    });
+    connect(&bridge, &RegistryBridge::entityUpdated, this, [this](const QString& tag, Handle id) {
+        if (tag == QLatin1String("Name")) {
+            onNameChanged(id);
+        } else if (tag == QLatin1String("Hierarchy")) {
+            onHierarchyChanged(id);
+        }
+    });
+    connect(&bridge,
+            &RegistryBridge::entityDestroyed,
+            this,
             [this](const QString& tag, Handle /*id*/) {
                 if (tag == QLatin1String("Hierarchy")) {
                     // 结构变化：全量重置最安全（子树可能已销毁）
@@ -163,16 +161,14 @@ QVariant HierarchyModel::data(const QModelIndex& index, int role) const
 
     switch (role) {
     case Qt::DisplayRole:
-    case Qt::EditRole: {
+    case Qt::EditRole   : {
         if (const Name* name = m_registry.tryGet<Name>(node)) {
             return QString::fromStdString(name->value);
         }
         return QStringLiteral("Entity %1").arg(static_cast<quint64>(idFromHandle(node)));
     }
-    case HandleRole:
-        return QVariant::fromValue(node);
-    default:
-        return {};
+    case HandleRole: return QVariant::fromValue(node);
+    default        : return {};
     }
 }
 
@@ -287,12 +283,12 @@ void HierarchyModel::bindSelection(QItemSelectionModel* selectionModel)
         return;
     }
 
-    m_viewSelConn = connect(m_selModel, &QItemSelectionModel::selectionChanged, this,
-                            [this]() { onSelectionFromView(); });
-    m_sessionSelConn =
-        connect(&m_session, &DocumentSession::selectionChanged, this, [this]() {
-            onSelectionFromSession();
-        });
+    m_viewSelConn    = connect(m_selModel, &QItemSelectionModel::selectionChanged, this, [this]() {
+        onSelectionFromView();
+    });
+    m_sessionSelConn = connect(&m_session, &DocumentSession::selectionChanged, this, [this]() {
+        onSelectionFromSession();
+    });
 
     onSelectionFromSession();
 }
