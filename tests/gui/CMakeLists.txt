@@ -14,6 +14,8 @@ set(GUI_TEST_CONFIGS
     "PluginSystemTest.cpp\;OFF"
     "ExtensionPointTest.cpp\;OFF"
     "RegistryBridgeTest.cpp\;OFF"
+    "DocumentSessionTest.cpp\;OFF"
+    "HierarchyModelTest.cpp\;OFF"
 )
 
 foreach(config ${GUI_TEST_CONFIGS})
