@@ -71,13 +71,10 @@ bool PluginPipeline::launch()
     if (m_state == PluginState::Idle) {
         return handle(PluginEvent::StartDiscover);
     }
-    if (m_state == PluginState::Validated || m_state == PluginState::ResolveFailed) {
-        return handle(PluginEvent::StartResolve);
-    }
-    if (m_state == PluginState::Initialized) {
-        return true;
-    }
-    return handle(PluginEvent::StartDiscover);
+
+    // 内置插件构造完就是 Validated；重试场景（比如上次卡在 ResolveFailed）也可能落到这里，
+    // handle() 会根据 PluginLifecycleRules 校验这是不是一个合法转换，不合法就返回 false，不会误触发。
+    return handle(PluginEvent::StartResolve);
 }
 
 bool PluginPipeline::run()
@@ -98,38 +95,41 @@ bool PluginPipeline::unload()
 bool PluginPipeline::processQueue()
 {
     if (m_processing) {
+        // 已经有一个 processQueue() 在栈上（典型场景：executeXxx() 内部调用 handle(Success)），
+        // 直接把事件排进队列、由外层循环消费即可，不递归调用 processQueue()。
         return true;
     }
-    m_processing = true;
-    bool ok      = true;
+    m_processing    = true;
+    bool overall_ok = true;
     while (!m_pendingEvents.empty()) {
         const PluginEvent event = m_pendingEvents.front();
         m_pendingEvents.pop_front();
         const auto next = PluginLifecycleRules::nextState(m_state, event);
         if (!next) {
             m_lastError = QStringLiteral("非法状态转换：%1 无法响应该事件").arg(toString(m_state));
-            ok          = false;
+            overall_ok  = false;
             continue;
         }
         m_state = *next;
         recordTimestamp(m_state);
         Q_EMIT stateChanged(m_id, m_state);
+
         if (isFailed()) {
+            overall_ok = false;
             Q_EMIT failed(m_id, m_state, m_lastError);
         }
-        if (m_state == PluginState::Running) {
-            Q_EMIT running(m_id);
-        }
+
         if (!reactState()) {
-            ok = false;
+            overall_ok = false;
         }
     }
     m_processing = false;
-    return ok;
+    return overall_ok;
 }
 
 bool PluginPipeline::reactState()
 {
+    // 过程态：执行对应的同步业务动作，动作内部会调用 handle(Success/Fail) 自行上报结果。
     switch (m_state) {
     case PluginState::Discovering : executeDiscover(); break;
     case PluginState::Discovered  : return handle(PluginEvent::StartValidate);
@@ -140,12 +140,14 @@ bool PluginPipeline::reactState()
     case PluginState::Loading     : executeLoad(); break;
     case PluginState::Loaded      : return handle(PluginEvent::StartInitialize);
     case PluginState::Initializing: executeInitialize(); break;
-    case PluginState::Initialized : break;
-    case PluginState::Running     : break;
-    case PluginState::Stopping    : executeStop(); break;
-    case PluginState::Stopped     : break;
-    case PluginState::Unloading   : executeUnload(); break;
-    default                       : break;
+    case PluginState::Initialized:
+        break; // 刻意不自动前进的两处停留点，见 PluginLifecycleRules 头部注释
+    case PluginState::Running : executeExtensions(); break;
+    case PluginState::Stopping: executeStop(); break;
+    case PluginState::Stopped:
+        break; // 刻意不自动前进的两处停留点，见 PluginLifecycleRules 头部注释
+    case PluginState::Unloading: executeUnload(); break;
+    default                    : break;
     }
     return true;
 }
@@ -164,8 +166,8 @@ void PluginPipeline::recordTimestamp(PluginState state)
 
 void PluginPipeline::executeDiscover()
 {
-    if (m_filePath.isEmpty()) {
-        m_lastError = QStringLiteral("empty file path");
+    if (!QLibrary::isLibrary(m_filePath)) {
+        m_lastError = QStringLiteral("不是有效的动态库文件: %1").arg(m_filePath);
         handle(PluginEvent::Fail);
         return;
     }
@@ -217,6 +219,7 @@ void PluginPipeline::executeResolve()
 void PluginPipeline::executeLoad()
 {
     if (m_instance) {
+        // 内置插件：构造时已经绑定好实例，视为"已加载"，直接成功（幂等，重试时也一样）。
         handle(PluginEvent::Success);
         return;
     }
@@ -227,6 +230,9 @@ void PluginPipeline::executeLoad()
         handle(PluginEvent::Fail);
         return;
     }
+
+    // instance() 返回对象的生命周期由 QPluginLoader 管理（unload() 时销毁），
+    // 这里用空操作删除器包进 shared_ptr，绝不能让这个 shared_ptr 自己去 delete 它。
     m_instance = std::shared_ptr<IPlugin>(qobject_cast<IPlugin *>(obj), [](IPlugin *) {});
     if (!m_instance) {
         m_lastError = QStringLiteral("plugin does not implement IPlugin");
@@ -250,6 +256,20 @@ void PluginPipeline::executeInitialize()
         return;
     }
     handle(PluginEvent::Success);
+}
+
+void PluginPipeline::executeExtensions()
+{
+    if (!m_instance) {
+        m_lastError = QStringLiteral("no instance");
+        handle(PluginEvent::Fail);
+        return;
+    }
+
+    m_instance->extensionsInitialized();
+    // Running 的“业务动作”是同步、无失败返回值的 extensionsInitialized()，
+    // 不需要单独的 "-ing" 阶段，进入时直接执行，无需上报 Success 到下一个状态。
+    Q_EMIT running(m_id);
 }
 
 void PluginPipeline::executeStop()

@@ -78,6 +78,7 @@ private:
     void executeResolve();
     void executeLoad();
     void executeInitialize();
+    void executeExtensions();
     void executeStop();
     void executeUnload();
 

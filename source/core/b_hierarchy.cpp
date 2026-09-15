@@ -203,10 +203,8 @@ std::string pathString(std::span<const std::size_t> path)
 void roots(const Registry& registry, std::vector<Handle>& out)
 {
     out.clear();
-    // 遍历所有带 Hierarchy 的实体，收集 parent 无效者。
-    // Registry::each 需要非 const，此处只读组件。
-    const_cast<Registry&>(registry).each<Hierarchy>([&](Handle handle, const Hierarchy& hier) {
-        if (!hier.parent.isValid()) {
+    registry.each<Hierarchy>([&](Handle handle, const Hierarchy& hier) {
+        if (!hier.parent.isValid() && handle.isValid()) {
             out.push_back(handle);
         }
     });
@@ -430,7 +428,7 @@ bool reorder(Registry& registry, Handle child, std::size_t newIndex)
     if (!childHier || !childHier->parent.isValid()) {
         return false;
     }
-    const Handle parentHandle = childHier->parent;
+    const Handle parentHandle   = childHier->parent;
     const Hierarchy& parentHier = registry.get<Hierarchy>(parentHandle);
     if (newIndex >= parentHier.child_count) {
         return false;

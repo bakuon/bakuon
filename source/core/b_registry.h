@@ -210,12 +210,43 @@ public:
      *       筛选"同时携带两者"的实体时，回调签名仍然只需要写 (Handle, Position&)，
      *       不需要（也不能）再多写一个 Selected& 形参。
      */
-    template<typename... Components, typename Func>
+    template<typename... Components, typename Func,
+             typename = std::enable_if_t<(sizeof...(Components) > 0)>>
     void each(Func&& func)
     {
         m_registry.view<Components...>().each([&func](entt::entity entity, auto&&... comps) {
-            std::invoke(func, Handle{entity}, std::forward<decltype(comps)>(comps)...);
+            std::invoke(std::forward<Func>(func),
+                        Handle{entity},
+                        std::forward<decltype(comps)>(comps)...);
         });
+    }
+
+    template<typename Func>
+    void each(Func&& func)
+    {
+        m_registry.view<entt::entity>().each(
+            [&func](const entt::entity entity) { std::invoke(func, Handle{entity}); });
+    }
+
+    template<typename... Components, typename Func,
+             typename = std::enable_if_t<(sizeof...(Components) > 0)>>
+    void each(Func&& func) const
+    {
+        // 关键点：将传入的 Components... 映射为 const Components...
+        // 这样可以确保即使外部传入 each<Position>，在 const 注册表下也能正确生成 view<const Position>
+        m_registry.view<std::add_const_t<Components>...>().each(
+            [&func](const entt::entity entity, auto&&... comps) {
+                std::invoke(std::forward<Func>(func),
+                            Handle{entity},
+                            std::forward<decltype(comps)>(comps)...);
+            });
+    }
+
+    template<typename Func>
+    void each(Func&& func) const
+    {
+        m_registry.view<entt::entity>().each(
+            [&func](const entt::entity entity) { std::invoke(func, Handle{entity}); });
     }
 
     /**

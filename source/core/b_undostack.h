@@ -1,16 +1,15 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
-#include <cstring>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <entt/entity/mixin.hpp> // 必须包含才能使用：entt::snapshot::get() & entt::snapshot_loader::get
 #include <entt/entity/snapshot.hpp>
+#include <nlohmann/json.hpp>
 
 #include "core/b_registry.h"
+#include "core/b_serializer.h" // 复用其中的 serialize_detail::JsonWriter/JsonReader
 
 namespace bakuon::core {
 
@@ -70,6 +69,28 @@ struct ByteReader
  * Position/Selected/Name 之类的具体类型，只需要调用方在实例化时把这些类型
  * 列进模板参数。
  *
+ * ## 归档器：复用 DocumentSerializer 的 JSON 归档器（不再是逐字节内存拷贝）
+ * 早期版本自己实现了一个最简单的"整体二进制"归档器（逐字节 memcpy），因此
+ * 要求 Components... 全部是 std::is_trivially_copyable_v 的——像 std::string
+ * 这类持有堆内存的字段完全用不了，只能建议调用方拆到单独的、不参与 undo
+ * 追踪的组件里。现在 DocumentSerializer（b_serializer.h）已经落地、并且用
+ * entt::snapshot/snapshot_loader 实测验证过一套支持变长数据的 JSON 归档器
+ * （serialize_detail::JsonWriter/JsonReader），本类直接复用同一套实现，
+ * 不再自己维护第二份归档逻辑：
+ *  - 好处：Components... 不再需要可平凡拷贝，std::string/std::vector 等
+ *    变长字段可以直接参与撤销追踪；两处 entt::snapshot 归档逻辑合一，少一份
+ *    需要独立维护、独立验证内存安全的代码。
+ *  - 代价：JSON 文本化/解析比逐字节 memcpy 慢、体积也更大——对"每次逻辑操作
+ *    调用一次 snapshot()"这种触发频率（而不是每次鼠标移动都触发）而言，这个
+ *    开销是可以接受的；如果未来出现历史帧数量巨大、对撤销延迟极度敏感的场景，
+ *    再回头针对"逐字节可平凡拷贝"的情形单独做一条快路径也不迟，现在不提前
+ *    为了尚不存在的性能问题引入两套归档器的维护负担。
+ *  - Components... 现在的约束与 DocumentSerializer 一致：具备 nlohmann::json
+ *    认识的 to_json()/from_json()（ADL 自由函数）。不需要（也不要求）像
+ *    DocumentSerializer 那样额外用 BAKUON_DECLARE_COMPONENT_NAME 声明字符串键
+ *    ——本类的历史帧纯粹是进程内瞬时状态，按 Components... 包里的位置顺序存取
+ *    即可，没有 DocumentSerializer 那种"要在磁盘上长期保持稳定、可读"的诉求。
+ *
  * ## 关键的正确性依据（务必先读）
  * 本类的实现依赖以下经过实测验证（而不是想当然）的 entt 行为：
  *  1. `entt::registry::clear()` 会对已存在的每一个组件正常触发 on_destroy
@@ -90,6 +111,10 @@ struct ByteReader
  *
  * ## 使用方式
  * @code
+ *   struct Position { float x, y; };
+ *   void to_json(nlohmann::json& j, const Position& p) { j = {{"x", p.x}, {"y", p.y}}; }
+ *   void from_json(const nlohmann::json& j, Position& p) { j.at("x").get_to(p.x); j.at("y").get_to(p.y); }
+ *
  *   bakuon::core::Registry registry;
  *   bakuon::core::UndoStack<Position, Selected> undo(registry);
  *
@@ -104,20 +129,14 @@ struct ByteReader
  *   undo.redo(); // 重新回到"添加了 Position"之后
  * @endcode
  *
- * @warning Components... 必须是 std::is_trivially_copyable_v 的（见
- * undo_detail::ByteWriter/ByteReader 的说明），且构造 UndoStack 时会立即
- * 打一次初始快照（historyDepth() 从 1 开始，而不是 0）。
+ * @warning Components... 必须具备 nlohmann::json 认识的 to_json()/from_json()
+ * （见上方"归档器"一节）；构造 UndoStack 时会立即打一次初始快照
+ * （historyDepth() 从 1 开始，而不是 0）。
  */
 template<typename... Components>
 class UndoStack
 {
     static_assert(sizeof...(Components) > 0, "UndoStack 至少需要指定一个要追踪的组件类型");
-    static_assert((std::is_trivially_copyable_v<Components> && ...),
-                  "UndoStack<Components...> 目前只支持可平凡拷贝（trivially copyable）的"
-                  "组件类型：内部用逐字节内存拷贝实现快照的写入/读回。像 std::string 这类"
-                  "持有堆内存/非平凡析构的成员不能直接放进来追踪——请把这类字段拆到一个"
-                  "不参与 undo 追踪的组件里，或者等 P3（nlohmann::json 序列化）落地后改用"
-                  "支持变长数据的归档器。");
 
 public:
     /**
@@ -201,17 +220,17 @@ public:
 private:
     struct Frame
     {
-        std::vector<std::byte> entities;
-        std::array<std::vector<std::byte>, sizeof...(Components)> components;
+        nlohmann::json entities;
+        std::array<nlohmann::json, sizeof...(Components)> components;
     };
 
     void pushFrame()
     {
         Frame frame;
 
-        undo_detail::ByteWriter entityWriter;
+        serialize_detail::JsonWriter entityWriter;
         entt::snapshot{m_registry.native()}.template get<entt::entity>(entityWriter);
-        frame.entities = std::move(entityWriter.buffer);
+        frame.entities = std::move(entityWriter.array);
 
         std::size_t index = 0;
         ((frame.components[index++] = writeComponent<Components>()), ...);
@@ -226,7 +245,7 @@ private:
         m_registry.native().clear();
 
         entt::snapshot_loader loader{m_registry.native()};
-        undo_detail::ByteReader entityReader{frame.entities};
+        serialize_detail::JsonReader entityReader{frame.entities};
         loader.template get<entt::entity>(entityReader);
 
         std::size_t index = 0;
@@ -234,17 +253,17 @@ private:
     }
 
     template<typename T>
-    [[nodiscard]] std::vector<std::byte> writeComponent()
+    [[nodiscard]] nlohmann::json writeComponent()
     {
-        undo_detail::ByteWriter writer;
+        serialize_detail::JsonWriter writer;
         entt::snapshot{m_registry.native()}.template get<T>(writer);
-        return std::move(writer.buffer);
+        return std::move(writer.array);
     }
 
     template<typename T>
-    void restoreComponent(entt::snapshot_loader& loader, const std::vector<std::byte>& buffer)
+    void restoreComponent(entt::snapshot_loader& loader, const nlohmann::json& array)
     {
-        undo_detail::ByteReader reader{buffer};
+        serialize_detail::JsonReader reader{array};
         loader.template get<T>(reader);
     }
 

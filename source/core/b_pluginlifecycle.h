@@ -46,6 +46,71 @@ enum class PluginEvent : std::uint8_t {
     StartUnload,
 };
 
+/// ----------------------------------------------------------------------------
+/// Pipeline 管道流转
+///  事件是以 “多米诺骨牌（Pipeline）” 方式流转的,分为两类状态角色：
+/// 1.过程态（-ing 状态，如 Validating, Resolving）：这类状态由主动事件（
+/// 如 StartValidate）触发进入。进入后，状态机立刻执行对应的阻塞同步业务函数
+/// （如执行 executeValidate()）。业务函数执行完毕后，根据其内部的
+/// true/false 结果，主动向状态机投递 Success 或 Fail 事件。
+///
+/// 2.稳定态/结果态（-ed 状态，如 Validated, Resolved, Loaded）：这类状态由上一阶段
+/// 的 Success 事件驱动进入。一旦进入结果态，onStateEntered/stateReact 路由表会
+/// 立刻自动向下投递下一阶段的启动事件（如进入 Validated 后自动投递 StartResolve）。
+///
+/// 这种链式流转的优势：
+/// 调用者完全解耦：宿主只需要在开始时按一下开关（launch()），整个复杂的校验、
+/// 解析、加载、GUI初始化链条就会自动一环扣一环地安全运行。重试极其简单：如果
+/// 执行 executeLoad 失败，状态机会停在 LoadFailed。由于业务解耦，
+/// 只需在 handleFailure() 中再次调用 handleEvent(PluginEvent::StartLoad)，
+/// 整个加载及后续的流水线就会自动重新运转，无需重写任何逻辑。
+/// -----------------------------------------------------------------------------
+
+/**
+ * 插件生命周期状态转换：
+ *
+ * Idle
+ *    ↓ StartDiscover
+ * Discovering → DiscoverFailed
+ *    ↓
+ * Discovered
+ *    ↓ (自动)
+ * Validating → ValidateFailed
+ *    ↓
+ * Validated
+ *    ↓ (自动)
+ * Resolving → ResolveFailed
+ *    ↓
+ * Resolved
+ *    ↓ (自动)
+ * Loading  → LoadFailed
+ *    ↓
+ * Loaded
+ *    ↓ (自动)
+ * Initializing → InitializeFailed
+ *    ↓
+ * Initialized  ────────┐ 到这里停下来，等待外部显式 StartRun（见下方“为什么这里不自动前进”）
+ *    ↓ StartRun        │
+ * Running → RunFailed  │
+ *    ↓ StartStop       │
+ * Stopping → StopFailed│
+ *    ↓                 │
+ * Stopped ─────────────┘ 同样停下来，等待外部显式 StartUnload（“停用”和“卸载”是两个不同的host决策）
+ *    ↓ StartUnload
+ * Unloading → UnloadFailed
+ *    ↓
+ * Unloaded（终态）
+ *
+ * ## 为什么 Initialized → Running 和 Stopped → Unloading 不自动前进
+ * 其余所有 "-ed" 稳定态都会自动投递下一阶段的 Start 事件，形成链式推进（调用方只需要 launch()
+ * 一次）。这两处是刻意的例外：
+ *  - IPlugin::initialize() 的约定是"此时其他插件可能尚未完成初始化，不应依赖其他插件提供的服务"，
+ *    只有 extensionsInitialized()（对应进入 Running）才允许跨插件交互。如果每个插件各自独立地
+ *    自动从 Initialized 跑到 Running，就没有任何机制保证"所有插件都初始化完了才能互相访问"——
+ *    这必须由持有全局视角的 PluginSystem 统一协调（见 b_pluginsystem.cpp 的 runAll()）。
+ *  - Stopped → Unloading：“停用一个插件”（不再运行，但动态库还在内存里，随时可以重新 run()）
+ *    和“彻底卸载它”（连动态库都释放掉）是两个不同的host级决策，不应该被强行绑在一起。
+ */
 struct PluginLifecycleRules
 {
     static constexpr std::optional<PluginState> nextState(PluginState from,
@@ -166,8 +231,7 @@ struct PluginLifecycleRules
                 return S::Unloading;
             break;
         case S::Unloaded:
-        default:
-            break;
+        default         : break;
         }
         return std::nullopt;
     }
@@ -182,10 +246,8 @@ struct PluginLifecycleRules
         case PluginState::InitializeFailed:
         case PluginState::RunFailed:
         case PluginState::StopFailed:
-        case PluginState::UnloadFailed:
-            return true;
-        default:
-            return false;
+        case PluginState::UnloadFailed    : return true;
+        default                           : return false;
         }
     }
 
@@ -198,10 +260,8 @@ struct PluginLifecycleRules
         case PluginState::Loading:
         case PluginState::Initializing:
         case PluginState::Stopping:
-        case PluginState::Unloading:
-            return true;
-        default:
-            return false;
+        case PluginState::Unloading   : return true;
+        default                       : return false;
         }
     }
 };

@@ -110,7 +110,7 @@ TEST(PluginPipelineTest, InitializeFailureThenRetrySucceeds)
     fake->initializeResult = false;
     PluginPipeline pipeline(1, std::static_pointer_cast<IPlugin>(fake));
 
-    EXPECT_FALSE(pipeline.launch());
+    EXPECT_FALSE(pipeline.launch()) << "error: " << pipeline.lastError().toStdString();
     EXPECT_EQ(pipeline.state(), PluginState::InitializeFailed);
     EXPECT_TRUE(pipeline.isFailed());
 

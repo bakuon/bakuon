@@ -34,12 +34,14 @@ TEST(HierarchyModelTest, EmptySessionHasZeroRows)
 TEST(HierarchyModelTest, RootsAppearAsTopLevelRows)
 {
     gui::DocumentSession session;
-    auto& reg = session.registry();
+    auto& reg         = session.registry();
     const Handle root = makeNamed(reg, "R");
     const Handle a    = makeNamed(reg, "A");
     const Handle b    = makeNamed(reg, "B");
     ASSERT_TRUE(h::append(reg, a, root));
     ASSERT_TRUE(h::append(reg, b, root));
+
+    EXPECT_EQ(h::childCount(reg, root), 2);
 
     gui::HierarchyModel model(session);
     // roots() 只收集带 Hierarchy 且无 parent 的节点 → root
@@ -59,8 +61,8 @@ TEST(HierarchyModelTest, RootsAppearAsTopLevelRows)
 TEST(HierarchyModelTest, IndexForHandleRoundTrip)
 {
     gui::DocumentSession session;
-    auto& reg = session.registry();
-    const Handle root = makeNamed(reg, "R");
+    auto& reg          = session.registry();
+    const Handle root  = makeNamed(reg, "R");
     const Handle child = makeNamed(reg, "C");
     ASSERT_TRUE(h::append(reg, child, root));
 
@@ -74,7 +76,7 @@ TEST(HierarchyModelTest, IndexForHandleRoundTrip)
 TEST(HierarchyModelTest, BindSelectionSyncsBothWays)
 {
     gui::DocumentSession session;
-    auto& reg = session.registry();
+    auto& reg         = session.registry();
     const Handle root = makeNamed(reg, "R");
     const Handle a    = makeNamed(reg, "A");
     ASSERT_TRUE(h::append(reg, a, root));
@@ -99,7 +101,7 @@ TEST(HierarchyModelTest, BindSelectionSyncsBothWays)
 TEST(HierarchyModelTest, ReloadAfterStructuralChange)
 {
     gui::DocumentSession session;
-    auto& reg = session.registry();
+    auto& reg         = session.registry();
     const Handle root = makeNamed(reg, "R");
     const Handle a    = makeNamed(reg, "A");
     ASSERT_TRUE(h::append(reg, a, root));
