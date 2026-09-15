@@ -66,6 +66,32 @@ TEST(ComponentsTest, TriviallyCopyableComponentsWorkWithUndoStack)
     EXPECT_TRUE(registry.tryGet<Locked>(node)->value);
 }
 
+TEST(ComponentsTest, NameAndTagNowAlsoWorkWithUndoStack)
+{
+    // UndoStack 早期要求组件可平凡拷贝，Name/Tag（持有 std::string）一度只能
+    // 用 DocumentSerializer；UndoStack 改为复用同一套 JSON 归档器之后这个
+    // 限制已经解除，见 b_undostack.h 类文档"归档器"一节。这里直接用 core 内置
+    // 的 Name/Tag 组件验证修复确实生效，而不是只在测试专用的临时类型上验证。
+    Registry registry;
+    const Handle node = registry.create();
+    registry.emplace<Name>(node, Name{"first"});
+    registry.emplace<Tag>(node, Tag{"分组A"});
+
+    UndoStack<Name, Tag> undo(registry);
+
+    registry.patch<Name>(node, [](Name& n) { n.value = "second"; });
+    registry.patch<Tag>(node, [](Tag& t) { t.value = "分组B"; });
+    undo.snapshot();
+
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(registry.tryGet<Name>(node)->value, "first");
+    EXPECT_EQ(registry.tryGet<Tag>(node)->value, "分组A");
+
+    ASSERT_TRUE(undo.redo());
+    EXPECT_EQ(registry.tryGet<Name>(node)->value, "second");
+    EXPECT_EQ(registry.tryGet<Tag>(node)->value, "分组B");
+}
+
 TEST(ComponentsTest, NameAndTagRoundTripThroughDocumentSerializer)
 {
     // Name/Tag 持有 std::string，不满足 UndoStack 要求的可平凡拷贝约束
