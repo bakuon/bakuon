@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <vector>
 
+#include <bakuon/core/Entity.h>
 #include <bakuon/core/Hierarchy.h>
-#include <bakuon/core/Registry.h>
 
 using namespace bakuon::core;
 namespace h = bakuon::core::hierarchy;
@@ -21,20 +21,20 @@ struct Name
 TEST(HierarchyTest, FreshEntityHasNoParentAndNoChildren)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
 
     EXPECT_FALSE(h::hasParent(registry, node));
-    EXPECT_FALSE(h::parent(registry, node).isValid());
+    EXPECT_FALSE(registry.valid(h::parent(registry, node)));
     EXPECT_EQ(h::childCount(registry, node), 0u);
 }
 
 TEST(HierarchyTest, AttachChildAppendsInOrder)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle a      = registry.create();
-    const Handle b      = registry.create();
-    const Handle c      = registry.create();
+    const Entity parent = registry.create();
+    const Entity a      = registry.create();
+    const Entity b      = registry.create();
+    const Entity c      = registry.create();
 
     EXPECT_TRUE(h::attach(registry, a, parent));
     EXPECT_TRUE(h::attach(registry, b, parent));
@@ -45,8 +45,8 @@ TEST(HierarchyTest, AttachChildAppendsInOrder)
     EXPECT_EQ(h::parent(registry, b), parent);
     EXPECT_EQ(h::parent(registry, c), parent);
 
-    std::vector<Handle> order;
-    h::eachChild(registry, parent, [&](Handle child) { order.push_back(child); });
+    std::vector<Entity> order;
+    h::eachChild(registry, parent, [&](Entity child) { order.push_back(child); });
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], a);
     EXPECT_EQ(order[1], b);
@@ -56,18 +56,18 @@ TEST(HierarchyTest, AttachChildAppendsInOrder)
 TEST(HierarchyTest, AttachChildBeforeSiblingInsertsAtCorrectPosition)
 {
     Registry registry;
-    const Handle parent   = registry.create();
-    const Handle a        = registry.create();
-    const Handle b        = registry.create();
-    const Handle inserted = registry.create();
+    const Entity parent   = registry.create();
+    const Entity a        = registry.create();
+    const Entity b        = registry.create();
+    const Entity inserted = registry.create();
 
     ASSERT_TRUE(h::attach(registry, a, parent));
     ASSERT_TRUE(h::attach(registry, b, parent));
 
     EXPECT_TRUE(h::attach(registry, inserted, parent, /*beforeSibling=*/b));
 
-    std::vector<Handle> order;
-    h::eachChild(registry, parent, [&](Handle child) { order.push_back(child); });
+    std::vector<Entity> order;
+    h::eachChild(registry, parent, [&](Entity child) { order.push_back(child); });
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], a);
     EXPECT_EQ(order[1], inserted);
@@ -77,16 +77,16 @@ TEST(HierarchyTest, AttachChildBeforeSiblingInsertsAtCorrectPosition)
 TEST(HierarchyTest, AttachChildRejectsSelfParenting)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     EXPECT_FALSE(h::attach(registry, node, node));
 }
 
 TEST(HierarchyTest, AttachChildRejectsCycles)
 {
     Registry registry;
-    const Handle grandparent = registry.create();
-    const Handle parent      = registry.create();
-    const Handle child       = registry.create();
+    const Entity grandparent = registry.create();
+    const Entity parent      = registry.create();
+    const Entity child       = registry.create();
 
     ASSERT_TRUE(h::attach(registry, parent, grandparent));
     ASSERT_TRUE(h::attach(registry, child, parent));
@@ -101,9 +101,9 @@ TEST(HierarchyTest, AttachChildRejectsCycles)
 TEST(HierarchyTest, AttachChildRejectsInvalidBeforeSibling)
 {
     Registry registry;
-    const Handle parent  = registry.create();
-    const Handle a       = registry.create();
-    const Handle strayer = registry.create(); // 不属于 parent 的子节点
+    const Entity parent  = registry.create();
+    const Entity a       = registry.create();
+    const Entity strayer = registry.create(); // 不属于 parent 的子节点
     ASSERT_TRUE(h::attach(registry, a, parent));
 
     EXPECT_FALSE(h::attach(registry, parent, registry.create(), strayer));
@@ -113,9 +113,9 @@ TEST(HierarchyTest, AttachChildRejectsInvalidBeforeSibling)
 TEST(HierarchyTest, ReattachingMovesChildToNewParent)
 {
     Registry registry;
-    const Handle parentA = registry.create();
-    const Handle parentB = registry.create();
-    const Handle child   = registry.create();
+    const Entity parentA = registry.create();
+    const Entity parentB = registry.create();
+    const Entity child   = registry.create();
 
     ASSERT_TRUE(h::attach(registry, child, parentA));
     ASSERT_EQ(h::childCount(registry, parentA), 1u);
@@ -130,9 +130,9 @@ TEST(HierarchyTest, ReattachingMovesChildToNewParent)
 TEST(HierarchyTest, DetachMakesNodeFreeWithoutAffectingItsOwnChildren)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle child  = registry.create();
-    const Handle grand  = registry.create();
+    const Entity parent = registry.create();
+    const Entity child  = registry.create();
+    const Entity grand  = registry.create();
 
     ASSERT_TRUE(h::attach(registry, child, parent));
     ASSERT_TRUE(h::attach(registry, grand, child));
@@ -149,18 +149,18 @@ TEST(HierarchyTest, DetachMakesNodeFreeWithoutAffectingItsOwnChildren)
 TEST(HierarchyTest, DetachMiddleSiblingPreservesRemainingOrder)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle a      = registry.create();
-    const Handle b      = registry.create();
-    const Handle c      = registry.create();
+    const Entity parent = registry.create();
+    const Entity a      = registry.create();
+    const Entity b      = registry.create();
+    const Entity c      = registry.create();
     ASSERT_TRUE(h::attach(registry, a, parent));
     ASSERT_TRUE(h::attach(registry, b, parent));
     ASSERT_TRUE(h::attach(registry, c, parent));
 
     h::detach(registry, b);
 
-    std::vector<Handle> order;
-    h::eachChild(registry, parent, [&](Handle child) { order.push_back(child); });
+    std::vector<Entity> order;
+    h::eachChild(registry, parent, [&](Entity child) { order.push_back(child); });
     ASSERT_EQ(order.size(), 2u);
     EXPECT_EQ(order[0], a);
     EXPECT_EQ(order[1], c);
@@ -170,7 +170,7 @@ TEST(HierarchyTest, DetachMiddleSiblingPreservesRemainingOrder)
 TEST(HierarchyTest, DetachOnFreeEntityIsSafeNoop)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     h::detach(registry, node); // 从未挂接过，不应该崩溃
     EXPECT_FALSE(h::hasParent(registry, node));
 }
@@ -178,19 +178,19 @@ TEST(HierarchyTest, DetachOnFreeEntityIsSafeNoop)
 TEST(HierarchyTest, ForEachChildSnapshotSurvivesMutationDuringIteration)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle a      = registry.create();
-    const Handle b      = registry.create();
-    const Handle c      = registry.create();
+    const Entity parent = registry.create();
+    const Entity a      = registry.create();
+    const Entity b      = registry.create();
+    const Entity c      = registry.create();
     ASSERT_TRUE(h::attach(registry, a, parent));
     ASSERT_TRUE(h::attach(registry, b, parent));
     ASSERT_TRUE(h::attach(registry, c, parent));
 
-    std::vector<Handle> visited;
+    std::vector<Entity> visited;
     // 回调内部对 b 做 detach()——如果没有先做快照，遍历到 a 之后读取
     // a->nextSibling 应该还是 b，但 b 已经被摘除、其 nextSibling 字段被清空，
     // 若实现不安全会在这里直接漏掉 c 或者崩溃。
-    h::eachChild(registry, parent, [&](Handle child) {
+    h::eachChild(registry, parent, [&](Entity child) {
         visited.push_back(child);
         if (child == a) {
             h::detach(registry, b);
@@ -207,10 +207,10 @@ TEST(HierarchyTest, ForEachChildSnapshotSurvivesMutationDuringIteration)
 TEST(HierarchyTest, IsDescendantOf)
 {
     Registry registry;
-    const Handle root  = registry.create();
-    const Handle mid   = registry.create();
-    const Handle leaf  = registry.create();
-    const Handle stray = registry.create();
+    const Entity root  = registry.create();
+    const Entity mid   = registry.create();
+    const Entity leaf  = registry.create();
+    const Entity stray = registry.create();
     ASSERT_TRUE(h::attach(registry, mid, root));
     ASSERT_TRUE(h::attach(registry, leaf, mid));
 
@@ -219,22 +219,22 @@ TEST(HierarchyTest, IsDescendantOf)
     EXPECT_TRUE(h::isDescendant(registry, mid, root));
     EXPECT_FALSE(h::isDescendant(registry, root, leaf));
     EXPECT_FALSE(h::isDescendant(registry, stray, root));
-    EXPECT_FALSE(h::isDescendant(registry, leaf, Handle{}));
+    EXPECT_FALSE(h::isDescendant(registry, leaf, nullentity));
 }
 
 TEST(HierarchyTest, ForEachDescendantPreOrderVisitsParentBeforeChildren)
 {
     Registry registry;
-    const Handle root = registry.create();
-    const Handle a    = registry.create();
-    const Handle a1   = registry.create();
-    const Handle b    = registry.create();
+    const Entity root = registry.create();
+    const Entity a    = registry.create();
+    const Entity a1   = registry.create();
+    const Entity b    = registry.create();
     ASSERT_TRUE(h::attach(registry, a, root));
     ASSERT_TRUE(h::attach(registry, a1, a));
     ASSERT_TRUE(h::attach(registry, b, root));
 
-    std::vector<Handle> order;
-    h::eachDescendant(registry, root, [&](Handle node) { order.push_back(node); });
+    std::vector<Entity> order;
+    h::eachDescendant(registry, root, [&](Entity node) { order.push_back(node); });
 
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], a);
@@ -245,22 +245,22 @@ TEST(HierarchyTest, ForEachDescendantPreOrderVisitsParentBeforeChildren)
 TEST(HierarchyTest, ForEachDescendantPostOrderVisitsChildrenBeforeAncestors)
 {
     Registry registry;
-    const Handle root = registry.create();
-    const Handle a    = registry.create();
-    const Handle a1   = registry.create();
-    const Handle b    = registry.create();
+    const Entity root = registry.create();
+    const Entity a    = registry.create();
+    const Entity a1   = registry.create();
+    const Entity b    = registry.create();
     ASSERT_TRUE(h::attach(registry, a, root));
     ASSERT_TRUE(h::attach(registry, a1, a));
     ASSERT_TRUE(h::attach(registry, b, root));
 
-    std::vector<Handle> order;
+    std::vector<Entity> order;
     h::eachDescendant(
-        registry, root, [&](Handle node) { order.push_back(node); }, h::TraversalOrder::PostOrder);
+        registry, root, [&](Entity node) { order.push_back(node); }, h::TraversalOrder::PostOrder);
 
     ASSERT_EQ(order.size(), 3u);
     // 核心不变量：任何节点必须排在它的全部祖先之前（a1 在 a 之前，a/b 都在
     // 隐含的 root 之前——root 本身不在结果里）。
-    auto indexOf = [&](Handle target) {
+    auto indexOf = [&](Entity target) {
         return static_cast<std::size_t>(std::find(order.begin(), order.end(), target)
                                         - order.begin());
     };
@@ -270,10 +270,10 @@ TEST(HierarchyTest, ForEachDescendantPostOrderVisitsChildrenBeforeAncestors)
 TEST(HierarchyTest, DestroySubtreeRemovesEntireBranchAndItsComponents)
 {
     Registry registry;
-    const Handle root = registry.create();
-    const Handle a    = registry.create();
-    const Handle a1   = registry.create();
-    const Handle b    = registry.create(); // 兄弟分支，不应受影响
+    const Entity root = registry.create();
+    const Entity a    = registry.create();
+    const Entity a1   = registry.create();
+    const Entity b    = registry.create(); // 兄弟分支，不应受影响
     ASSERT_TRUE(h::attach(registry, a, root));
     ASSERT_TRUE(h::attach(registry, a1, a));
     ASSERT_TRUE(h::attach(registry, b, root));
@@ -286,8 +286,8 @@ TEST(HierarchyTest, DestroySubtreeRemovesEntireBranchAndItsComponents)
     EXPECT_TRUE(registry.valid(root));
     EXPECT_TRUE(registry.valid(b));
     EXPECT_EQ(h::childCount(registry, root), 1u);
-    std::vector<Handle> remaining;
-    h::eachChild(registry, root, [&](Handle c) { remaining.push_back(c); });
+    std::vector<Entity> remaining;
+    h::eachChild(registry, root, [&](Entity c) { remaining.push_back(c); });
     ASSERT_EQ(remaining.size(), 1u);
     EXPECT_EQ(remaining[0], b);
 }
@@ -295,8 +295,8 @@ TEST(HierarchyTest, DestroySubtreeRemovesEntireBranchAndItsComponents)
 TEST(HierarchyTest, DestroySubtreeOnLeafJustDestroysItself)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle leaf   = registry.create();
+    const Entity parent = registry.create();
+    const Entity leaf   = registry.create();
     ASSERT_TRUE(h::attach(registry, leaf, parent));
 
     h::destroy(registry, leaf);
@@ -309,17 +309,17 @@ TEST(HierarchyTest, DestroySubtreeOnLeafJustDestroysItself)
 TEST(HierarchyTest, ReorderWithinParent)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle a      = registry.create();
-    const Handle b      = registry.create();
-    const Handle c      = registry.create();
+    const Entity parent = registry.create();
+    const Entity a      = registry.create();
+    const Entity b      = registry.create();
+    const Entity c      = registry.create();
     ASSERT_TRUE(h::append(registry, a, parent));
     ASSERT_TRUE(h::append(registry, b, parent));
     ASSERT_TRUE(h::append(registry, c, parent));
 
     EXPECT_TRUE(h::reorder(registry, c, 0)); // c, a, b
-    std::vector<Handle> order;
-    h::eachChild(registry, parent, [&](Handle ch) { order.push_back(ch); });
+    std::vector<Entity> order;
+    h::eachChild(registry, parent, [&](Entity ch) { order.push_back(ch); });
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], c);
     EXPECT_EQ(order[1], a);
@@ -332,20 +332,20 @@ TEST(HierarchyTest, ReorderWithinParent)
 TEST(HierarchyTest, MoveUpAndMoveDown)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle a      = registry.create();
-    const Handle b      = registry.create();
-    const Handle c      = registry.create();
+    const Entity parent = registry.create();
+    const Entity a      = registry.create();
+    const Entity b      = registry.create();
+    const Entity c      = registry.create();
     ASSERT_TRUE(h::append(registry, a, parent));
     ASSERT_TRUE(h::append(registry, b, parent));
     ASSERT_TRUE(h::append(registry, c, parent));
 
     EXPECT_FALSE(h::moveUp(registry, a));
-    EXPECT_TRUE(h::moveUp(registry, c)); // a, c, b
+    EXPECT_TRUE(h::moveUp(registry, c));   // a, c, b
     EXPECT_TRUE(h::moveDown(registry, a)); // c, a, b
 
-    std::vector<Handle> order;
-    h::eachChild(registry, parent, [&](Handle ch) { order.push_back(ch); });
+    std::vector<Entity> order;
+    h::eachChild(registry, parent, [&](Entity ch) { order.push_back(ch); });
     ASSERT_EQ(order.size(), 3u);
     EXPECT_EQ(order[0], c);
     EXPECT_EQ(order[1], a);
@@ -355,9 +355,9 @@ TEST(HierarchyTest, MoveUpAndMoveDown)
 TEST(HierarchyTest, ExtractTurnsChildrenIntoRoots)
 {
     Registry registry;
-    const Handle parent = registry.create();
-    const Handle child  = registry.create();
-    const Handle grand  = registry.create();
+    const Entity parent = registry.create();
+    const Entity child  = registry.create();
+    const Entity grand  = registry.create();
     ASSERT_TRUE(h::append(registry, child, parent));
     ASSERT_TRUE(h::append(registry, grand, child));
 
@@ -372,9 +372,9 @@ TEST(HierarchyTest, ExtractTurnsChildrenIntoRoots)
 TEST(HierarchyTest, PathAndPathNodeRoundTrip)
 {
     Registry registry;
-    const Handle root = registry.create();
-    const Handle a    = registry.create();
-    const Handle a0   = registry.create();
+    const Entity root = registry.create();
+    const Entity a    = registry.create();
+    const Entity a0   = registry.create();
     ASSERT_TRUE(h::append(registry, a, root));
     ASSERT_TRUE(h::append(registry, a0, a));
 
@@ -387,19 +387,19 @@ TEST(HierarchyTest, PathAndPathNodeRoundTrip)
 TEST(HierarchyTest, RootsCollectsTopLevelNodes)
 {
     Registry registry;
-    const Handle r1 = registry.create();
-    const Handle r2 = registry.create();
-    const Handle child = registry.create();
+    const Entity r1    = registry.create();
+    const Entity r2    = registry.create();
+    const Entity child = registry.create();
     // 显式挂 Hierarchy 成为根
     ASSERT_TRUE(h::append(registry, child, r1));
 
-    std::vector<Handle> list;
+    std::vector<Entity> list;
     h::roots(registry, list);
     // r1、r2 都带 Hierarchy（append 会 ensure 父），child 有 parent
     EXPECT_NE(std::find(list.begin(), list.end(), r1), list.end());
     // r2 若从未 ensure Hierarchy，可能不在列表——ensure 仅在参与链接时发生
     // 再对 r2 做一次无子的 ensure 路径：attach 一个临时再 detach 会留下 Hierarchy
-    const Handle tmp = registry.create();
+    const Entity tmp = registry.create();
     ASSERT_TRUE(h::append(registry, tmp, r2));
     h::detach(registry, tmp);
     registry.destroy(tmp);
