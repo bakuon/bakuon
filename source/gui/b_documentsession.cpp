@@ -9,9 +9,9 @@ namespace bakuon::gui {
 
 DocumentSession::DocumentSession(ContextId selectionContext, QObject* parent)
     : QObject(parent)
-    , m_registry(std::make_unique<core::Registry>())
-    , m_selection(std::make_unique<core::selection::Selection>(*m_registry))
-    , m_bridge(std::make_unique<RegistryBridge>(*m_registry, this))
+    , m_container(std::make_unique<core::Container>())
+    , m_selection(std::make_unique<core::selection::Selection>(m_container->registry()))
+    , m_bridge(std::make_unique<RegistryBridge>(*m_container, this))
     , m_selectionContext(std::move(selectionContext))
 {
     // 标准组件观察 + 选中集合级信号
@@ -19,9 +19,8 @@ DocumentSession::DocumentSession(ContextId selectionContext, QObject* parent)
     m_bridge->watch<core::components::Name>(QStringLiteral("Name"));
     m_bridge->watch<core::hierarchy::Hierarchy>(QStringLiteral("Hierarchy"));
 
-    m_selectionConn = m_selection->onChanged([this](const core::selection::Selection&) {
-        onSelectionChanged();
-    });
+    m_selectionConn = m_selection->onChanged(
+        [this](const core::selection::Selection&) { onSelectionChanged(); });
 
     // 确保上下文已登记（幂等：owner 冲突仅 warning）
     CommandSystem::declareContext(m_selectionContext.toString(),
@@ -40,7 +39,7 @@ DocumentSession::~DocumentSession()
     // unique_ptr 析构顺序：先 bridge（仍引用 registry），再 selection，再 registry
     m_bridge.reset();
     m_selection.reset();
-    m_registry.reset();
+    m_container.reset();
 }
 
 void DocumentSession::onSelectionChanged()

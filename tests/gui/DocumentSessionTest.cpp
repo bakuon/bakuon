@@ -10,16 +10,16 @@
 #include "gui/b_documentsession.h"
 
 using namespace bakuon;
-using bakuon::core::Handle;
+using bakuon::core::Entity;
 namespace h = bakuon::core::hierarchy;
 
 TEST(DocumentSessionTest, OwnsRegistryAndSelection)
 {
     gui::DocumentSession session;
-    const Handle a = session.registry().create();
+    const Entity a = session.container().create();
     session.selection().add(a);
     EXPECT_TRUE(session.selection().contains(a));
-    EXPECT_TRUE(session.registry().has<core::components::Selected>(a));
+    EXPECT_TRUE(session.container().has<core::components::Selected>(a));
 }
 
 TEST(DocumentSessionTest, SelectionActivatesContext)
@@ -30,7 +30,7 @@ TEST(DocumentSessionTest, SelectionActivatesContext)
     EXPECT_FALSE(session.isSelectionContextActive());
     EXPECT_FALSE(gui::CommandSystem::isActiveContext(ctx));
 
-    const Handle a = session.registry().create();
+    const Entity a = session.container().create();
     session.selection().add(a);
 
     EXPECT_TRUE(session.isSelectionContextActive());
@@ -46,7 +46,7 @@ TEST(DocumentSessionTest, SelectionChangedSignal)
     gui::DocumentSession session;
     QSignalSpy spy(&session, &gui::DocumentSession::selectionChanged);
 
-    const Handle a = session.registry().create();
+    const Entity a = session.container().create();
     session.selection().add(a);
     ASSERT_GE(spy.count(), 1);
 
@@ -59,7 +59,7 @@ TEST(DocumentSessionTest, DestructorPopsSelectionContext)
     gui::ContextId ctx{"editor.selection.dtor"};
     {
         gui::DocumentSession session(ctx);
-        session.selection().add(session.registry().create());
+        session.selection().add(session.container().create());
         EXPECT_TRUE(gui::CommandSystem::isActiveContext(ctx));
     }
     EXPECT_FALSE(gui::CommandSystem::isActiveContext(ctx));
@@ -68,9 +68,9 @@ TEST(DocumentSessionTest, DestructorPopsSelectionContext)
 TEST(DocumentSessionTest, HierarchyAttachVisibleViaRegistry)
 {
     gui::DocumentSession session;
-    auto& reg = session.registry();
-    const Handle parent = reg.create();
-    const Handle child  = reg.create();
+    auto& reg           = session.container().registry();
+    const Entity parent = reg.create();
+    const Entity child  = reg.create();
     reg.emplace<core::components::Name>(parent, core::components::Name{"root"});
     reg.emplace<core::components::Name>(child, core::components::Name{"leaf"});
 

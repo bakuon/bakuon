@@ -7,13 +7,13 @@ set(module_label "core")
 
 # 其余普通测试可以通过循环统一打上 core 标签
 set(CORE_TESTS
-    "RegistryTest.cpp"
+    "ContainerTest.cpp"
     "ResultStatusTest.cpp"
     "BimapTest.cpp"
     "IdentityTest.cpp"
     "HierarchyTest.cpp"
     "UndoStackTest.cpp"
-    "RegistryBatchTest.cpp"
+    "ContainerBatchTest.cpp"
     "SerializerTest.cpp"
     "ComponentsTest.cpp"
     "SelectionTest.cpp"
