@@ -1,6 +1,6 @@
 /build
+/out
 /.vscode
 /.cache
 /.vs
-/out
-git_push.bat
+/*.sh
