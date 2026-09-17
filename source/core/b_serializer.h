@@ -3,17 +3,18 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
-#include <entt/entity/mixin.hpp>
-#include <entt/entity/snapshot.hpp>
 #include <nlohmann/json.hpp>
 
-#include "core/b_registry.h"
+#include "core/b_entity.h"
 #include "core/b_result.h"
 
 namespace bakuon::core {
+
+/// 补充：
+/// * component_version<T> traits
+/// * load() 时对每个 component 类型做 from_v1_to_v2 的迁移钩子链
 
 /**
  * @brief 组件类型 -> 落盘时使用的稳定字符串键。
@@ -83,6 +84,7 @@ struct JsonReader
 
 /**
  * @brief 基于 entt::snapshot/entt::snapshot_loader 的 JSON 文档序列化器。
+ * @todo 重命名为 Serializer / Archive
  *
  * @tparam Components 参与序列化的组件类型（至少一个），每个类型都必须：
  *   1. 通过 BAKUON_DECLARE_COMPONENT_NAME 声明一个稳定的字符串键；
@@ -138,7 +140,7 @@ public:
         doc["version"] = kFormatVersion;
 
         serialize_detail::JsonWriter entityWriter;
-        entt::snapshot{m_registry.native()}.template get<entt::entity>(entityWriter);
+        Snapshot{m_registry}.template get<Entity>(entityWriter);
         doc["entities"] = std::move(entityWriter.array);
 
         nlohmann::json componentsObj = nlohmann::json::object();
@@ -170,11 +172,11 @@ public:
                                       + "）");
             }
 
-            m_registry.native().clear();
+            m_registry.clear();
 
-            entt::snapshot_loader loader{m_registry.native()};
+            SnapshotLoader loader{m_registry};
             serialize_detail::JsonReader entityReader{doc.at("entities")};
-            loader.template get<entt::entity>(entityReader);
+            loader.template get<Entity>(entityReader);
 
             const nlohmann::json& componentsObj = doc.at("components");
             (readComponentFrom<Components>(loader, componentsObj), ...);
@@ -199,12 +201,12 @@ private:
     void writeComponentInto(nlohmann::json& componentsObj) const
     {
         serialize_detail::JsonWriter writer;
-        entt::snapshot{m_registry.native()}.template get<T>(writer);
+        Snapshot{m_registry}.template get<T>(writer);
         componentsObj[std::string(keyOf<T>())] = std::move(writer.array);
     }
 
     template<typename T>
-    void readComponentFrom(entt::snapshot_loader& loader, const nlohmann::json& componentsObj)
+    void readComponentFrom(SnapshotLoader& loader, const nlohmann::json& componentsObj)
     {
         // componentsObj.at() 对缺失的键会自己抛出 nlohmann::json::out_of_range，
         // 附带清晰的错误信息；不需要我们手工构造异常，外层 load() 的

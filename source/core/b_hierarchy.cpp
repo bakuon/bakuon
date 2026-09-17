@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <stack>
 
 namespace bakuon::core::hierarchy {
 
@@ -26,24 +27,24 @@ inline std::size_t safe_add(std::size_t a, int b) noexcept
  * @param delta 深度偏移量（正增负减）
  * @note DFS 前序，无递归栈溢出风险。调用方不要再单独给 root 写 depth。
  */
-inline void update_subtree_depth(Registry& registry, Handle root, int delta)
+inline void update_subtree_depth(Registry& registry, Entity root, int delta)
 {
     if (!registry.valid(root) || delta == 0) {
         return;
     }
 
-    std::stack<Handle> stack;
+    std::stack<Entity> stack;
     stack.push(root);
 
     while (!stack.empty()) {
-        const Handle node = stack.top();
+        const Entity node = stack.top();
         stack.pop();
 
         auto& hier = registry.get<Hierarchy>(node);
         hier.depth = safe_add(hier.depth, delta);
 
         // 逆序压栈，使出栈顺序与兄弟逻辑顺序一致（可选，仅影响遍历顺序）
-        for (Handle it = hier.last_child; it.isValid();) {
+        for (Entity it = hier.last_child; registry.valid(it);) {
             stack.push(it);
             it = registry.get<Hierarchy>(it).prev_sibling;
         }
@@ -53,12 +54,12 @@ inline void update_subtree_depth(Registry& registry, Handle root, int delta)
 /**
  * @brief 从 start 起（含）到同级末尾，所有兄弟的 index += delta。
  */
-inline void update_sibling_indices_from(Registry& registry, Handle start, int delta)
+inline void update_sibling_indices_from(Registry& registry, Entity start, int delta)
 {
     if (delta == 0) {
         return;
     }
-    for (Handle current = start; current.isValid();) {
+    for (Entity current = start; registry.valid(current);) {
         auto& hier = registry.get<Hierarchy>(current);
         hier.index = safe_add(hier.index, delta);
         current    = hier.next_sibling;
@@ -66,9 +67,9 @@ inline void update_sibling_indices_from(Registry& registry, Handle start, int de
 }
 
 /// 确保节点带有 Hierarchy 组件；若是新建则已是根状态（全 null / 0）。
-inline Hierarchy& ensure(Registry& registry, Handle node)
+inline Hierarchy& ensure(Registry& registry, Entity node)
 {
-    return registry.getOrEmplace<Hierarchy>(node);
+    return registry.get_or_emplace<Hierarchy>(node);
 }
 
 } // namespace detail
@@ -77,63 +78,63 @@ inline Hierarchy& ensure(Registry& registry, Handle node)
 // 查询
 // ==============================================
 
-Handle parent(const Registry& registry, Handle child)
+Entity parent(const Registry& registry, Entity child)
 {
-    const Hierarchy* hy = registry.tryGet<Hierarchy>(child);
-    return hy ? hy->parent : Handle{};
+    const Hierarchy* hy = registry.try_get<Hierarchy>(child);
+    return hy ? hy->parent : nullentity;
 }
 
-Handle child(const Registry& registry, std::size_t index, Handle parent)
+Entity child(const Registry& registry, std::size_t index, Entity parent)
 {
-    const Hierarchy* hy = registry.tryGet<Hierarchy>(parent);
+    const Hierarchy* hy = registry.try_get<Hierarchy>(parent);
     if (!hy || index >= hy->child_count) {
-        return {};
+        return nullentity;
     }
 
-    Handle current = hy->first_child;
+    Entity current = hy->first_child;
     for (std::size_t i = 0; i < index; ++i) {
         current = registry.get<Hierarchy>(current).next_sibling;
     }
     return current;
 }
 
-bool hasParent(const Registry& registry, Handle node)
+bool hasParent(const Registry& registry, Entity node)
 {
-    return parent(registry, node).isValid();
+    return registry.valid(parent(registry, node));
 }
 
-bool hasChildren(const Registry& registry, Handle parent)
+bool hasChildren(const Registry& registry, Entity parent)
 {
     return childCount(registry, parent) > 0;
 }
 
-std::size_t childCount(const Registry& registry, Handle parent)
+std::size_t childCount(const Registry& registry, Entity parent)
 {
-    const Hierarchy* hy = registry.tryGet<Hierarchy>(parent);
+    const Hierarchy* hy = registry.try_get<Hierarchy>(parent);
     return hy ? hy->child_count : 0;
 }
 
-ChildRange children(const Registry& registry, Handle parent)
+ChildRange children(const Registry& registry, Entity parent)
 {
     // ChildIterator 只读访问组件，const_cast 仅用于适配非 const 引用成员。
     return {const_cast<Registry&>(registry), parent};
 }
 
-std::optional<std::size_t> index(const Registry& registry, Handle node)
+std::optional<std::size_t> index(const Registry& registry, Entity node)
 {
     if (!registry.valid(node)) {
         return std::nullopt;
     }
-    const Hierarchy* hy = registry.tryGet<Hierarchy>(node);
+    const Hierarchy* hy = registry.try_get<Hierarchy>(node);
     return hy ? std::optional<std::size_t>{hy->index} : std::nullopt;
 }
 
-bool isDescendant(const Registry& registry, Handle node, Handle ancestor)
+bool isDescendant(const Registry& registry, Entity node, Entity ancestor)
 {
-    if (!ancestor.isValid() || node == ancestor) {
+    if (!registry.valid(ancestor) || node == ancestor) {
         return false;
     }
-    for (Handle p = parent(registry, node); p.isValid(); p = parent(registry, p)) {
+    for (Entity p = parent(registry, node); registry.valid(p); p = parent(registry, p)) {
         if (p == ancestor) {
             return true;
         }
@@ -141,44 +142,44 @@ bool isDescendant(const Registry& registry, Handle node, Handle ancestor)
     return false;
 }
 
-std::size_t depth(const Registry& registry, Handle node)
+std::size_t depth(const Registry& registry, Entity node)
 {
-    const Hierarchy* hy = registry.tryGet<Hierarchy>(node);
+    const Hierarchy* hy = registry.try_get<Hierarchy>(node);
     return hy ? hy->depth : 0;
 }
 
-std::size_t size(const Registry& registry, Handle node)
+std::size_t size(const Registry& registry, Entity node)
 {
-    std::vector<Handle> out;
+    std::vector<Entity> out;
     collect(registry, node, out, /*with_self=*/true);
     return out.size();
 }
 
-std::vector<std::size_t> path(const Registry& registry, Handle node)
+std::vector<std::size_t> path(const Registry& registry, Entity node)
 {
     std::vector<std::size_t> out;
-    if (!registry.valid(node) || !registry.has<Hierarchy>(node)) {
+    if (!registry.valid(node) || !registry.all_of<Hierarchy>(node)) {
         return out;
     }
 
-    for (Handle current = node; hasParent(registry, current); current = parent(registry, current)) {
+    for (Entity current = node; hasParent(registry, current); current = parent(registry, current)) {
         out.push_back(registry.get<Hierarchy>(current).index);
     }
     std::ranges::reverse(out);
     return out;
 }
 
-Handle pathNode(const Registry& registry, Handle root, std::span<const std::size_t> path)
+Entity pathNode(const Registry& registry, Entity root, std::span<const std::size_t> path)
 {
-    if (!registry.valid(root) || !registry.has<Hierarchy>(root)) {
-        return {};
+    if (!registry.valid(root) || !registry.all_of<Hierarchy>(root)) {
+        return nullentity;
     }
 
-    Handle current = root;
+    Entity current = root;
     for (const std::size_t idx : path) {
         const Hierarchy& hier = registry.get<Hierarchy>(current);
         if (idx >= hier.child_count) {
-            return {};
+            return nullentity;
         }
         current = hier.first_child;
         for (std::size_t i = 0; i < idx; ++i) {
@@ -200,11 +201,11 @@ std::string pathString(std::span<const std::size_t> path)
     return s;
 }
 
-void roots(const Registry& registry, std::vector<Handle>& out)
+void roots(const Registry& registry, std::vector<Entity>& out)
 {
     out.clear();
-    registry.each<Hierarchy>([&](Handle handle, const Hierarchy& hier) {
-        if (!hier.parent.isValid() && handle.isValid()) {
+    registry.view<Hierarchy>().each([&](Entity handle, const Hierarchy& hier) {
+        if (!registry.valid(hier.parent) && registry.valid(handle)) {
             out.push_back(handle);
         }
     });
@@ -214,27 +215,27 @@ void roots(const Registry& registry, std::vector<Handle>& out)
 // 修改：以 attach / detach 为唯一链接入口
 // ==============================================
 
-void detach(Registry& registry, Handle node)
+void detach(Registry& registry, Entity node)
 {
     if (!registry.valid(node)) {
         return;
     }
-    Hierarchy* nodeHier = registry.tryGet<Hierarchy>(node);
-    if (!nodeHier || !nodeHier->parent.isValid()) {
+    Hierarchy* nodeHier = registry.try_get<Hierarchy>(node);
+    if (!nodeHier || !registry.valid(nodeHier->parent)) {
         return; // 本就是根 / 未参与层级
     }
 
     Hierarchy& parentHier = registry.get<Hierarchy>(nodeHier->parent);
 
     // 断前驱
-    if (nodeHier->prev_sibling.isValid()) {
+    if (registry.valid(nodeHier->prev_sibling)) {
         registry.get<Hierarchy>(nodeHier->prev_sibling).next_sibling = nodeHier->next_sibling;
     } else {
         parentHier.first_child = nodeHier->next_sibling;
     }
 
     // 断后继，并让后续兄弟 index - 1
-    if (nodeHier->next_sibling.isValid()) {
+    if (registry.valid(nodeHier->next_sibling)) {
         registry.get<Hierarchy>(nodeHier->next_sibling).prev_sibling = nodeHier->prev_sibling;
         detail::update_sibling_indices_from(registry, nodeHier->next_sibling, -1);
     } else {
@@ -247,9 +248,9 @@ void detach(Registry& registry, Handle node)
 
     // 成为独立根：清空链接字段，depth 整棵子树相对归零
     const int depthDelta   = -static_cast<int>(nodeHier->depth);
-    nodeHier->parent       = Handle{};
-    nodeHier->prev_sibling = Handle{};
-    nodeHier->next_sibling = Handle{};
+    nodeHier->parent       = nullentity;
+    nodeHier->prev_sibling = nullentity;
+    nodeHier->next_sibling = nullentity;
     nodeHier->index        = 0;
 
     if (depthDelta != 0) {
@@ -257,7 +258,7 @@ void detach(Registry& registry, Handle node)
     }
 }
 
-bool attach(Registry& registry, Handle child, Handle parent, Handle before)
+bool attach(Registry& registry, Entity child, Entity parent, Entity before)
 {
     if (!registry.valid(parent) || !registry.valid(child) || parent == child) {
         return false;
@@ -268,11 +269,11 @@ bool attach(Registry& registry, Handle child, Handle parent, Handle before)
     }
 
     Hierarchy* beforeHier = nullptr;
-    if (before.isValid()) {
+    if (registry.valid(before)) {
         if (!registry.valid(before)) {
             return false;
         }
-        beforeHier = registry.tryGet<Hierarchy>(before);
+        beforeHier = registry.try_get<Hierarchy>(before);
         if (!beforeHier || beforeHier->parent != parent) {
             return false; // before 必须是 parent 的直接子节点
         }
@@ -285,14 +286,14 @@ bool attach(Registry& registry, Handle child, Handle parent, Handle before)
     Hierarchy& parentHier = detail::ensure(registry, parent);
 
     // —— 链接 ——
-    if (before.isValid()) {
+    if (registry.valid(before)) {
         // detach 可能改过 before 的 index，重新取一次
-        beforeHier               = registry.tryGet<Hierarchy>(before);
-        const Handle prev        = beforeHier->prev_sibling;
+        beforeHier               = registry.try_get<Hierarchy>(before);
+        const Entity prev        = beforeHier->prev_sibling;
         childHier.prev_sibling   = prev;
         childHier.next_sibling   = before;
         beforeHier->prev_sibling = child;
-        if (prev.isValid()) {
+        if (registry.valid(prev)) {
             registry.get<Hierarchy>(prev).next_sibling = child;
         } else {
             parentHier.first_child = child;
@@ -303,8 +304,8 @@ bool attach(Registry& registry, Handle child, Handle parent, Handle before)
     } else {
         // 追加到末尾
         childHier.prev_sibling = parentHier.last_child;
-        childHier.next_sibling = Handle{};
-        if (parentHier.last_child.isValid()) {
+        childHier.next_sibling = nullentity;
+        if (registry.valid(parentHier.last_child)) {
             Hierarchy& lastHier   = registry.get<Hierarchy>(parentHier.last_child);
             lastHier.next_sibling = child;
             childHier.index       = lastHier.index + 1;
@@ -328,37 +329,37 @@ bool attach(Registry& registry, Handle child, Handle parent, Handle before)
     return true;
 }
 
-bool append(Registry& registry, Handle child, Handle parent)
+bool append(Registry& registry, Entity child, Entity parent)
 {
-    return attach(registry, child, parent, /*before=*/Handle{});
+    return attach(registry, child, parent, /*before=*/nullentity);
 }
 
-bool insertBefore(Registry& registry, Handle child, Handle target)
+bool insertBefore(Registry& registry, Entity child, Entity target)
 {
     if (!registry.valid(target)) {
         return false;
     }
-    const Hierarchy* targetHier = registry.tryGet<Hierarchy>(target);
-    if (!targetHier || !targetHier->parent.isValid()) {
+    const Hierarchy* targetHier = registry.try_get<Hierarchy>(target);
+    if (!targetHier || !registry.valid(targetHier->parent)) {
         return false;
     }
     return attach(registry, child, targetHier->parent, target);
 }
 
-bool insertAfter(Registry& registry, Handle child, Handle target)
+bool insertAfter(Registry& registry, Entity child, Entity target)
 {
     if (!registry.valid(target)) {
         return false;
     }
-    const Hierarchy* targetHier = registry.tryGet<Hierarchy>(target);
-    if (!targetHier || !targetHier->parent.isValid()) {
+    const Hierarchy* targetHier = registry.try_get<Hierarchy>(target);
+    if (!targetHier || !registry.valid(targetHier->parent)) {
         return false;
     }
     // 插到 target 之后 ≡ 以 target 的 next 为 before（若无 next 则 append）
     return attach(registry, child, targetHier->parent, targetHier->next_sibling);
 }
 
-void extract(Registry& registry, Handle node)
+void extract(Registry& registry, Entity node)
 {
     if (!registry.valid(node)) {
         return;
@@ -368,22 +369,22 @@ void extract(Registry& registry, Handle node)
     detach(registry, node);
 
     // 快照直接子节点，把它们变成独立根（保留各自子树）
-    std::vector<Handle> kids;
-    eachChild(registry, node, [&](Handle h) { kids.push_back(h); });
+    std::vector<Entity> kids;
+    eachChild(registry, node, [&](Entity h) { kids.push_back(h); });
 
-    for (Handle c : kids) {
+    for (Entity c : kids) {
         if (!registry.valid(c)) {
             continue;
         }
-        Hierarchy* h = registry.tryGet<Hierarchy>(c);
+        Hierarchy* h = registry.try_get<Hierarchy>(c);
         if (!h) {
             continue;
         }
         // 断开与原父/兄弟的链接，成为根
         const int depthDelta = -static_cast<int>(h->depth);
-        h->parent            = Handle{};
-        h->prev_sibling      = Handle{};
-        h->next_sibling      = Handle{};
+        h->parent            = nullentity;
+        h->prev_sibling      = nullentity;
+        h->next_sibling      = nullentity;
         h->index             = 0;
         if (depthDelta != 0) {
             detail::update_subtree_depth(registry, c, depthDelta);
@@ -391,16 +392,16 @@ void extract(Registry& registry, Handle node)
     }
 
     // 清空 node 自身的子链（即将销毁，防御性清理）
-    if (Hierarchy* nodeHier = registry.tryGet<Hierarchy>(node)) {
-        nodeHier->first_child = Handle{};
-        nodeHier->last_child  = Handle{};
+    if (Hierarchy* nodeHier = registry.try_get<Hierarchy>(node)) {
+        nodeHier->first_child = nullentity;
+        nodeHier->last_child  = nullentity;
         nodeHier->child_count = 0;
     }
 
     registry.destroy(node);
 }
 
-void destroy(Registry& registry, Handle node)
+void destroy(Registry& registry, Entity node)
 {
     if (!registry.valid(node)) {
         return;
@@ -411,7 +412,7 @@ void destroy(Registry& registry, Handle node)
 
     // 完整收集子树后再倒序销毁：不能边遍历边 destroy，
     // 否则 Hierarchy 组件被摘掉后兄弟链会读到失效数据。
-    std::vector<Handle> toDestroy;
+    std::vector<Entity> toDestroy;
     collect(registry, node, toDestroy, /*with_self=*/true);
 
     for (auto it = toDestroy.rbegin(); it != toDestroy.rend(); ++it) {
@@ -419,16 +420,16 @@ void destroy(Registry& registry, Handle node)
     }
 }
 
-bool reorder(Registry& registry, Handle child, std::size_t newIndex)
+bool reorder(Registry& registry, Entity child, std::size_t newIndex)
 {
     if (!registry.valid(child)) {
         return false;
     }
-    const Hierarchy* childHier = registry.tryGet<Hierarchy>(child);
-    if (!childHier || !childHier->parent.isValid()) {
+    const Hierarchy* childHier = registry.try_get<Hierarchy>(child);
+    if (!childHier || !registry.valid(childHier->parent)) {
         return false;
     }
-    const Handle parentHandle   = childHier->parent;
+    const Entity parentHandle   = childHier->parent;
     const Hierarchy& parentHier = registry.get<Hierarchy>(parentHandle);
     if (newIndex >= parentHier.child_count) {
         return false;
@@ -440,11 +441,11 @@ bool reorder(Registry& registry, Handle child, std::size_t newIndex)
     // 目标位置当前的节点（reorder 前）；若 newIndex 指向自身之后的槽位，
     // 先 detach 再 attach 时索引会变化，因此用“目标 before”语义：
     // newIndex == child_count-1 且移动到末尾 → before 无效（append）。
-    Handle before{};
+    Entity before{nullentity};
     if (newIndex + 1 < parentHier.child_count) {
         // 想插到原 newIndex 位置 ≡ 以“当前占该位置的节点”为 before
         // 但若该节点就是 child 自身，需取其后继。
-        Handle at = hierarchy::child(registry, newIndex, parentHandle);
+        Entity at = hierarchy::child(registry, newIndex, parentHandle);
         if (at == child) {
             at = registry.get<Hierarchy>(child).next_sibling;
         }
@@ -464,7 +465,7 @@ bool reorder(Registry& registry, Handle child, std::size_t newIndex)
     return attach(registry, child, parentHandle, before);
 }
 
-bool moveUp(Registry& registry, Handle child)
+bool moveUp(Registry& registry, Entity child)
 {
     const auto idx = index(registry, child);
     if (!idx || *idx == 0) {
@@ -473,14 +474,14 @@ bool moveUp(Registry& registry, Handle child)
     return reorder(registry, child, *idx - 1);
 }
 
-bool moveDown(Registry& registry, Handle child)
+bool moveDown(Registry& registry, Entity child)
 {
     const auto idx = index(registry, child);
     if (!idx) {
         return false;
     }
-    const Handle p = parent(registry, child);
-    if (!p.isValid()) {
+    const Entity p = parent(registry, child);
+    if (!registry.valid(p)) {
         return false;
     }
     if (*idx + 1 >= childCount(registry, p)) {
@@ -489,30 +490,30 @@ bool moveDown(Registry& registry, Handle child)
     return reorder(registry, child, *idx + 1);
 }
 
-void collect(const Registry& registry, Handle node, std::vector<Handle>& out, bool with_self)
+void collect(const Registry& registry, Entity node, std::vector<Entity>& out, bool with_self)
 {
     // 迭代前序：栈里逆序压入子节点，使出栈顺序与兄弟顺序一致
-    std::vector<Handle> stack;
+    std::vector<Entity> stack;
     if (with_self) {
         if (!registry.valid(node)) {
             return;
         }
         stack.push_back(node);
     } else {
-        std::vector<Handle> rootChildren;
-        eachChild(registry, node, [&](Handle h) { rootChildren.push_back(h); });
+        std::vector<Entity> rootChildren;
+        eachChild(registry, node, [&](Entity h) { rootChildren.push_back(h); });
         for (auto it = rootChildren.rbegin(); it != rootChildren.rend(); ++it) {
             stack.push_back(*it);
         }
     }
 
     while (!stack.empty()) {
-        const Handle current = stack.back();
+        const Entity current = stack.back();
         stack.pop_back();
         out.push_back(current);
 
-        std::vector<Handle> kids;
-        eachChild(registry, current, [&](Handle h) { kids.push_back(h); });
+        std::vector<Entity> kids;
+        eachChild(registry, current, [&](Entity h) { kids.push_back(h); });
         for (auto it = kids.rbegin(); it != kids.rend(); ++it) {
             stack.push_back(*it);
         }

@@ -4,11 +4,9 @@
 #include <utility>
 #include <vector>
 
-#include <entt/entity/mixin.hpp> // 必须包含才能使用：entt::snapshot::get() & entt::snapshot_loader::get
-#include <entt/entity/snapshot.hpp>
 #include <nlohmann/json.hpp>
 
-#include "core/b_registry.h"
+#include "core/b_entity.h"
 #include "core/b_serializer.h" // 复用其中的 serialize_detail::JsonWriter/JsonReader
 
 namespace bakuon::core {
@@ -229,7 +227,7 @@ private:
         Frame frame;
 
         serialize_detail::JsonWriter entityWriter;
-        entt::snapshot{m_registry.native()}.template get<entt::entity>(entityWriter);
+        Snapshot{m_registry}.template get<Entity>(entityWriter);
         frame.entities = std::move(entityWriter.array);
 
         std::size_t index = 0;
@@ -242,11 +240,11 @@ private:
     {
         // 见类文档"关键的正确性依据"：clear() 之后在同一个 Registry 实例上
         // 原地 reload，既不破坏已有的 Connection，也不需要重建它们。
-        m_registry.native().clear();
+        m_registry.clear();
 
-        entt::snapshot_loader loader{m_registry.native()};
+        SnapshotLoader loader{m_registry};
         serialize_detail::JsonReader entityReader{frame.entities};
-        loader.template get<entt::entity>(entityReader);
+        loader.template get<Entity>(entityReader);
 
         std::size_t index = 0;
         (restoreComponent<Components>(loader, frame.components[index++]), ...);
@@ -256,12 +254,12 @@ private:
     [[nodiscard]] nlohmann::json writeComponent()
     {
         serialize_detail::JsonWriter writer;
-        entt::snapshot{m_registry.native()}.template get<T>(writer);
+        Snapshot{m_registry}.template get<T>(writer);
         return std::move(writer.array);
     }
 
     template<typename T>
-    void restoreComponent(entt::snapshot_loader& loader, const nlohmann::json& array)
+    void restoreComponent(SnapshotLoader& loader, const nlohmann::json& array)
     {
         serialize_detail::JsonReader reader{array};
         loader.template get<T>(reader);

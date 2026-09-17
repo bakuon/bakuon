@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include <bakuon/core/Registry.h>
+#include <bakuon/core/Entity.h>
 #include <bakuon/core/Serializer.h>
 
 using namespace bakuon::core;
@@ -63,7 +63,7 @@ BAKUON_DECLARE_COMPONENT_NAME(Selected, "Selected")
 TEST(DocumentSerializerTest, SaveThenLoadIntoTheSameRegistryRoundTrips)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 1.5f, 2.5f);
     registry.emplace<Name>(node, Name{"hello"});
 
@@ -72,15 +72,15 @@ TEST(DocumentSerializerTest, SaveThenLoadIntoTheSameRegistryRoundTrips)
 
     ASSERT_TRUE(serializer.load(doc).success());
     ASSERT_TRUE(registry.valid(node));
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 1.5f);
-    EXPECT_EQ(registry.tryGet<Position>(node)->y, 2.5f);
-    EXPECT_EQ(registry.tryGet<Name>(node)->value, "hello");
+    EXPECT_EQ(registry.get<Position>(node).x, 1.5f);
+    EXPECT_EQ(registry.get<Position>(node).y, 2.5f);
+    EXPECT_EQ(registry.get<Name>(node).value, "hello");
 }
 
 TEST(DocumentSerializerTest, SaveThenLoadIntoADifferentRegistryRoundTrips)
 {
     Registry source;
-    const Handle node = source.create();
+    const Entity node = source.create();
     source.emplace<Position>(node, 3.f, 4.f);
     source.emplace<Name>(node, Name{"world"});
     DocumentSerializer<Position, Name> saver(source);
@@ -91,14 +91,14 @@ TEST(DocumentSerializerTest, SaveThenLoadIntoADifferentRegistryRoundTrips)
     ASSERT_TRUE(loader.load(doc).success());
 
     ASSERT_TRUE(destination.valid(node)) << "两个独立 Registry 之间的实体标识符应当一致地还原";
-    EXPECT_EQ(destination.tryGet<Position>(node)->x, 3.f);
-    EXPECT_EQ(destination.tryGet<Name>(node)->value, "world");
+    EXPECT_EQ(destination.get<Position>(node).x, 3.f);
+    EXPECT_EQ(destination.get<Name>(node).value, "world");
 }
 
 TEST(DocumentSerializerTest, TagComponentRoundTrips)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Selected>(node);
 
     DocumentSerializer<Selected> serializer(registry);
@@ -107,14 +107,14 @@ TEST(DocumentSerializerTest, TagComponentRoundTrips)
     Registry other;
     DocumentSerializer<Selected> otherSerializer(other);
     ASSERT_TRUE(otherSerializer.load(doc).success());
-    EXPECT_TRUE(other.has<Selected>(node));
+    EXPECT_TRUE(other.all_of<Selected>(node));
 }
 
 TEST(DocumentSerializerTest, MultipleEntitiesPreserveTheirOwnData)
 {
     Registry registry;
-    const Handle a = registry.create();
-    const Handle b = registry.create();
+    const Entity a = registry.create();
+    const Entity b = registry.create();
     registry.emplace<Position>(a, 1.f, 1.f);
     registry.emplace<Position>(b, 2.f, 2.f);
 
@@ -124,8 +124,8 @@ TEST(DocumentSerializerTest, MultipleEntitiesPreserveTheirOwnData)
     registry.patch<Position>(a, [](Position& p) { p.x = 999.f; }); // 破坏当前状态
     ASSERT_TRUE(serializer.load(doc).success());
 
-    EXPECT_EQ(registry.tryGet<Position>(a)->x, 1.f);
-    EXPECT_EQ(registry.tryGet<Position>(b)->x, 2.f);
+    EXPECT_EQ(registry.get<Position>(a).x, 1.f);
+    EXPECT_EQ(registry.get<Position>(b).x, 2.f);
 }
 
 TEST(DocumentSerializerTest, LoadRejectsDocumentMissingRequiredFields)

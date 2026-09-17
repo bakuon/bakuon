@@ -7,8 +7,7 @@
 
 #include "core/b_components.h"
 #include "core/b_connection.h"
-#include "core/b_handle.h"
-#include "core/b_registry.h"
+#include "core/b_entity.h"
 
 // ============================================================================
 // 选择集：Selected 标签为唯一真相源；Selection 类额外维护用户选择顺序与 primary。
@@ -22,20 +21,20 @@ namespace bakuon::core::selection {
 
 using namespace components;
 
-/// 加入选择集；已选中则是空操作。无效 handle 被忽略。
-inline void add(Registry& registry, Handle handle)
+/// 加入选择集；已选中则是空操作。无效 entity 被忽略。
+inline void add(Registry& registry, Entity entity)
 {
-    if (!registry.valid(handle) || registry.has<Selected>(handle)) {
+    if (!registry.valid(entity) || registry.all_of<Selected>(entity)) {
         return;
     }
-    registry.emplace<Selected>(handle);
+    registry.emplace<Selected>(entity);
 }
 
 /// 移出选择集；未选中则是空操作。
-inline void remove(Registry& registry, Handle handle)
+inline void remove(Registry& registry, Entity entity)
 {
-    if (registry.valid(handle)) {
-        registry.remove<Selected>(handle);
+    if (registry.valid(entity)) {
+        registry.remove<Selected>(entity);
     }
 }
 
@@ -45,25 +44,25 @@ inline void remove(Registry& registry, Handle handle)
  */
 inline void clear(Registry& registry)
 {
-    std::vector<Handle> selected;
-    registry.each<Selected>([&](Handle handle) { selected.push_back(handle); });
-    for (Handle handle : selected) {
-        registry.remove<Selected>(handle);
+    std::vector<Entity> selected;
+    registry.view<Selected>().each([&](Entity entity) { selected.push_back(entity); });
+    for (Entity entity : selected) {
+        registry.remove<Selected>(entity);
     }
 }
 
-/// 只选这一个（先 clear 再 add）。无效 handle 时结果是"选择集被清空"。
-inline void exclusive(Registry& registry, Handle handle)
+/// 只选这一个（先 clear 再 add）。无效 entity 时结果是"选择集被清空"。
+inline void exclusive(Registry& registry, Entity entity)
 {
     clear(registry);
-    add(registry, handle);
+    add(registry, entity);
 }
 
 /// 当前全部选中实体。顺序与 each<Selected>() 一致（稀疏集迭代序，不是用户选择序）。
-[[nodiscard]] inline std::vector<Handle> all(Registry& registry)
+[[nodiscard]] inline std::vector<Entity> all(Registry& registry)
 {
-    std::vector<Handle> selected;
-    registry.each<Selected>([&](Handle handle) { selected.push_back(handle); });
+    std::vector<Entity> selected;
+    registry.view<Selected>().each([&](Entity entity) { selected.push_back(entity); });
     return selected;
 }
 
@@ -71,7 +70,7 @@ inline void exclusive(Registry& registry, Handle handle)
  * @brief 有序选择集 + Primary。
  *
  * 不变量：
- *  - ordered() 中每一个仍 valid 且 has<Selected> 的 Handle 都在列表中；
+ *  - ordered() 中每一个仍 valid 且 all_of<Selected> 的 Entity 都在列表中；
  *  - 写路径（add/remove/toggle/...）始终同步 Selected 标签；
  *  - primary() == ordered().back()（空集时返回无效 Handle）；
  *  - setPrimary 将目标移到末尾（成为新的 primary）。
@@ -88,11 +87,12 @@ public:
         : m_registry(registry)
     {
         // 实体销毁时 Selected 会先走 onDestroy，顺带从有序列表剔除。
-        m_destroyConn = m_registry.onDestroy<Selected>([this](Registry&, Handle handle) {
-            eraseFromOrdered(handle);
-            // 不在这里 notify：destroy 路径上调用方往往还有批量操作；
-            // 若需要即时 UI 刷新，由 RegistryBridge 的 entityDestroyed 驱动。
-        });
+        // m_destroyConn = m_registry.on_destroy<Selected>().connect([this](Registry&, Entity entity) {
+        //     eraseFromOrdered(entity);
+        //     // 不在这里 notify：destroy 路径上调用方往往还有批量操作；
+        //     // 若需要即时 UI 刷新，由 RegistryBridge 的 entityDestroyed 驱动。
+        // });
+        m_registry.on_destroy<Selected>().connect<&Selection::eraseFromOrdered>(*this);
     }
 
     ~Selection() = default;
@@ -104,60 +104,60 @@ public:
     [[nodiscard]] std::size_t count() const noexcept { return m_ordered.size(); }
     [[nodiscard]] bool empty() const noexcept { return m_ordered.empty(); }
 
-    [[nodiscard]] bool contains(Handle handle) const
+    [[nodiscard]] bool contains(Entity entity) const
     {
-        return std::find(m_ordered.begin(), m_ordered.end(), handle) != m_ordered.end();
+        return std::find(m_ordered.begin(), m_ordered.end(), entity) != m_ordered.end();
     }
 
     /// 主选：有序列表最后一个；空集返回无效 Handle。
-    [[nodiscard]] Handle primary() const noexcept
+    [[nodiscard]] Entity primary() const noexcept
     {
-        return m_ordered.empty() ? Handle{} : m_ordered.back();
+        return m_ordered.empty() ? nullentity : m_ordered.back();
     }
 
-    [[nodiscard]] const std::vector<Handle>& ordered() const noexcept { return m_ordered; }
+    [[nodiscard]] const std::vector<Entity>& ordered() const noexcept { return m_ordered; }
 
     // ---- 修改（同步 Selected 标签）----
 
     /// 加入选择；已存在则移到末尾成为 primary。
-    void add(Handle handle)
+    void add(Entity entity)
     {
-        if (!m_registry.valid(handle)) {
+        if (!m_registry.valid(entity)) {
             return;
         }
-        if (contains(handle)) {
+        if (contains(entity)) {
             // 已选中：提到末尾
-            eraseFromOrdered(handle);
-            m_ordered.push_back(handle);
+            eraseFromOrdered(m_registry, entity);
+            m_ordered.push_back(entity);
             notifyChanged();
             return;
         }
-        m_registry.emplace<Selected>(handle);
-        m_ordered.push_back(handle);
+        m_registry.emplace<Selected>(entity);
+        m_ordered.push_back(entity);
         notifyChanged();
     }
 
-    void remove(Handle handle)
+    void remove(Entity entity)
     {
-        if (!contains(handle)) {
+        if (!contains(entity)) {
             return;
         }
-        if (m_registry.valid(handle)) {
-            m_registry.remove<Selected>(handle);
+        if (m_registry.valid(entity)) {
+            m_registry.remove<Selected>(entity);
         }
-        eraseFromOrdered(handle);
+        eraseFromOrdered(m_registry, entity);
         notifyChanged();
     }
 
-    void toggle(Handle handle)
+    void toggle(Entity entity)
     {
-        if (!m_registry.valid(handle)) {
+        if (!m_registry.valid(entity)) {
             return;
         }
-        if (contains(handle)) {
-            remove(handle);
+        if (contains(entity)) {
+            remove(entity);
         } else {
-            add(handle);
+            add(entity);
         }
     }
 
@@ -167,9 +167,9 @@ public:
             return;
         }
         // 先快照再改标签，避免遍历中修改
-        const std::vector<Handle> snapshot = m_ordered;
+        const std::vector<Entity> snapshot = m_ordered;
         m_ordered.clear();
-        for (Handle h : snapshot) {
+        for (Entity h : snapshot) {
             if (m_registry.valid(h)) {
                 m_registry.remove<Selected>(h);
             }
@@ -177,19 +177,19 @@ public:
         notifyChanged();
     }
 
-    void exclusive(Handle handle)
+    void exclusive(Entity entity)
     {
         clear();
-        add(handle);
+        add(entity);
     }
 
-    /// 整表替换，保持传入顺序；无效 handle 被跳过。
-    void set(std::vector<Handle> handles)
+    /// 整表替换，保持传入顺序；无效 entity 被跳过。
+    void set(const std::vector<Entity>& handles)
     {
         // 去重并过滤无效，保持首次出现顺序
-        std::vector<Handle> unique;
+        std::vector<Entity> unique;
         unique.reserve(handles.size());
-        for (Handle h : handles) {
+        for (Entity h : handles) {
             if (!m_registry.valid(h)) {
                 continue;
             }
@@ -199,14 +199,14 @@ public:
         }
 
         // 移除不再需要的标签
-        for (Handle h : m_ordered) {
+        for (Entity h : m_ordered) {
             if (std::find(unique.begin(), unique.end(), h) == unique.end() && m_registry.valid(h)) {
                 m_registry.remove<Selected>(h);
             }
         }
         // 补上新标签
-        for (Handle h : unique) {
-            if (!m_registry.has<Selected>(h)) {
+        for (Entity h : unique) {
+            if (!m_registry.all_of<Selected>(h)) {
                 m_registry.emplace<Selected>(h);
             }
         }
@@ -215,16 +215,16 @@ public:
     }
 
     /// 要求已在选中集内：移到末尾成为 primary；否则空操作。
-    void setPrimary(Handle handle)
+    void setPrimary(Entity entity)
     {
-        if (!contains(handle) || !m_registry.valid(handle)) {
+        if (!contains(entity) || !m_registry.valid(entity)) {
             return;
         }
-        if (primary() == handle) {
+        if (primary() == entity) {
             return;
         }
-        eraseFromOrdered(handle);
-        m_ordered.push_back(handle);
+        eraseFromOrdered(m_registry, entity);
+        m_ordered.push_back(entity);
         notifyChanged();
     }
 
@@ -232,9 +232,11 @@ public:
     void prune()
     {
         const auto oldSize = m_ordered.size();
-        m_ordered.erase(std::remove_if(m_ordered.begin(), m_ordered.end(),
-                                       [this](Handle h) {
-                                           return !m_registry.valid(h) || !m_registry.has<Selected>(h);
+        m_ordered.erase(std::remove_if(m_ordered.begin(),
+                                       m_ordered.end(),
+                                       [this](Entity h) {
+                                           return !m_registry.valid(h)
+                                                  || !m_registry.all_of<Selected>(h);
                                        }),
                         m_ordered.end());
         if (m_ordered.size() != oldSize) {
@@ -251,16 +253,17 @@ public:
         const std::size_t id = m_nextCallbackId++;
         m_callbacks.emplace_back(id, std::move(cb));
         return Connection([this, id]() {
-            m_callbacks.erase(std::remove_if(m_callbacks.begin(), m_callbacks.end(),
+            m_callbacks.erase(std::remove_if(m_callbacks.begin(),
+                                             m_callbacks.end(),
                                              [id](const auto& p) { return p.first == id; }),
                               m_callbacks.end());
         });
     }
 
 private:
-    void eraseFromOrdered(Handle handle)
+    void eraseFromOrdered(Registry& /*registry*/, Entity entity)
     {
-        m_ordered.erase(std::remove(m_ordered.begin(), m_ordered.end(), handle), m_ordered.end());
+        m_ordered.erase(std::remove(m_ordered.begin(), m_ordered.end(), entity), m_ordered.end());
     }
 
     void notifyChanged()
@@ -275,7 +278,7 @@ private:
     }
 
     Registry& m_registry;
-    std::vector<Handle> m_ordered;
+    std::vector<Entity> m_ordered;
     std::vector<std::pair<std::size_t, ChangedCallback>> m_callbacks;
     std::size_t m_nextCallbackId{1};
     Connection m_destroyConn;

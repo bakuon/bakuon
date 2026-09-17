@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/b_entity.h"
 #include "core/b_serializer.h"
 
 // ============================================================================
@@ -103,7 +104,7 @@ struct Tag
  */
 struct Parent
 {
-    Handle entity{};
+    Entity entity{nullentity};
 };
 
 /**
@@ -114,7 +115,7 @@ struct Parent
  */
 struct Children
 {
-    std::vector<Handle> entities;
+    std::vector<Entity> entities;
 };
 
 inline void to_json(nlohmann::json& j, const Name& v)

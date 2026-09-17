@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <bakuon/core/Registry.h>
+#include <bakuon/core/Entity.h>
 #include <bakuon/core/Selection.h>
 
 using namespace bakuon::core;
@@ -10,35 +10,35 @@ using bakuon::core::components::Selected;
 TEST(SelectionTest, FreeFunctionsRoundTrip)
 {
     Registry reg;
-    const Handle a = reg.create();
-    const Handle b = reg.create();
+    const Entity a = reg.create();
+    const Entity b = reg.create();
 
     sel::add(reg, a);
     sel::add(reg, b);
-    EXPECT_TRUE(reg.has<Selected>(a));
-    EXPECT_TRUE(reg.has<Selected>(b));
+    EXPECT_TRUE(reg.all_of<Selected>(a));
+    EXPECT_TRUE(reg.all_of<Selected>(b));
     EXPECT_EQ(sel::all(reg).size(), 2u);
 
     sel::remove(reg, a);
-    EXPECT_FALSE(reg.has<Selected>(a));
-    EXPECT_TRUE(reg.has<Selected>(b));
+    EXPECT_FALSE(reg.all_of<Selected>(a));
+    EXPECT_TRUE(reg.all_of<Selected>(b));
 
     sel::clear(reg);
     EXPECT_TRUE(sel::all(reg).empty());
-    EXPECT_FALSE(reg.has<Selected>(b));
+    EXPECT_FALSE(reg.all_of<Selected>(b));
 }
 
 TEST(SelectionTest, FreeFunctionExclusive)
 {
     Registry reg;
-    const Handle a = reg.create();
-    const Handle b = reg.create();
+    const Entity a = reg.create();
+    const Entity b = reg.create();
     sel::add(reg, a);
     sel::add(reg, b);
 
     sel::exclusive(reg, a);
-    EXPECT_TRUE(reg.has<Selected>(a));
-    EXPECT_FALSE(reg.has<Selected>(b));
+    EXPECT_TRUE(reg.all_of<Selected>(a));
+    EXPECT_FALSE(reg.all_of<Selected>(b));
     EXPECT_EQ(sel::all(reg).size(), 1u);
 }
 
@@ -46,9 +46,9 @@ TEST(SelectionTest, OrderedAndPrimary)
 {
     Registry reg;
     sel::Selection selection(reg);
-    const Handle a = reg.create();
-    const Handle b = reg.create();
-    const Handle c = reg.create();
+    const Entity a = reg.create();
+    const Entity b = reg.create();
+    const Entity c = reg.create();
 
     selection.add(a);
     selection.add(b);
@@ -70,8 +70,8 @@ TEST(SelectionTest, SetPrimary)
 {
     Registry reg;
     sel::Selection selection(reg);
-    const Handle a = reg.create();
-    const Handle b = reg.create();
+    const Entity a = reg.create();
+    const Entity b = reg.create();
     selection.add(a);
     selection.add(b);
     EXPECT_EQ(selection.primary(), b);
@@ -86,15 +86,15 @@ TEST(SelectionTest, ToggleAndExclusive)
 {
     Registry reg;
     sel::Selection selection(reg);
-    const Handle a = reg.create();
+    const Entity a = reg.create();
 
     selection.toggle(a);
     EXPECT_TRUE(selection.contains(a));
-    EXPECT_TRUE(reg.has<Selected>(a));
+    EXPECT_TRUE(reg.all_of<Selected>(a));
 
     selection.toggle(a);
     EXPECT_FALSE(selection.contains(a));
-    EXPECT_FALSE(reg.has<Selected>(a));
+    EXPECT_FALSE(reg.all_of<Selected>(a));
 
     selection.exclusive(a);
     EXPECT_EQ(selection.count(), 1u);
@@ -105,9 +105,9 @@ TEST(SelectionTest, SetReplacesEntireSelection)
 {
     Registry reg;
     sel::Selection selection(reg);
-    const Handle a = reg.create();
-    const Handle b = reg.create();
-    const Handle c = reg.create();
+    const Entity a = reg.create();
+    const Entity b = reg.create();
+    const Entity c = reg.create();
     selection.add(a);
     selection.add(b);
 
@@ -117,16 +117,16 @@ TEST(SelectionTest, SetReplacesEntireSelection)
     EXPECT_EQ(selection.ordered()[1], a);
     EXPECT_EQ(selection.primary(), a);
     EXPECT_FALSE(selection.contains(b));
-    EXPECT_FALSE(reg.has<Selected>(b));
-    EXPECT_TRUE(reg.has<Selected>(c));
+    EXPECT_FALSE(reg.all_of<Selected>(b));
+    EXPECT_TRUE(reg.all_of<Selected>(c));
 }
 
 TEST(SelectionTest, PruneAfterDestroy)
 {
     Registry reg;
     sel::Selection selection(reg);
-    const Handle a = reg.create();
-    const Handle b = reg.create();
+    const Entity a = reg.create();
+    const Entity b = reg.create();
     selection.add(a);
     selection.add(b);
 
