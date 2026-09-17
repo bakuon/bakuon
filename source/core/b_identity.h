@@ -2,81 +2,179 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <optional>
+#include <stdexcept>
+#include <string>
 
-#include "core/b_handle.h"
-#include "core/b_registry.h"
+#include "core/b_entity.h"
+#include "core/b_stableid.h"
 
 namespace bakuon::core {
 
-/**
- * @brief 稳定身份：跨销毁/回收、跨保存、跨进程消息仍然有效的主键。
- *
- * Handle 不能当主键（entt 会复用 handle id）。需要进撤销栈、会话文件、
- * 沙箱 RPC 的引用，一律存 StableId::value，再用 identity::find() 解回 Handle。
- * 0 是哨兵（"未分配"），合法 id 从 1 起。分配与查找见 b_identity.h。
- */
-struct StableId
+/// 当 StableId 不变性被违反时（如冲突、无效绑定、溢出）抛出。
+/// Thrown when a StableId invariant is violated (collision, invalid bind, overflow).
+class StableIdError : public std::runtime_error
 {
-    std::uint64_t value = 0;
-
-    [[nodiscard]] constexpr bool isValid() const noexcept { return value != 0; }
-
-    friend constexpr bool operator==(StableId lhs, StableId rhs) noexcept
-    {
-        return lhs.value == rhs.value;
-    }
-    friend constexpr bool operator!=(StableId lhs, StableId rhs) noexcept { return !(lhs == rhs); }
+public:
+    using std::runtime_error::runtime_error;
 };
 
-namespace identity {
+/// 生成器与解码器共享的雪花位布局。
+/// Snowflake bit layout shared by the generator and decoder.
+///
+/// 我们将标准的 64 位雪花算法进行如下变体分配：
+// - 1 bit: 固定为 0（保证 ID 为正数）。
+// - 31 bit: 时间戳（秒级或毫秒级，31位秒级可支撑约 68 年，毫秒级需视生命周期调整。
+//           由于工业软件通常单次会话运行，建议采用秒级时间戳 + 16位进程内自增序列，或毫秒级）。
+// - 16 bit: 进程/沙箱隔离 ID (Process/Worker ID)。在沙箱进程启动时由宿主分配
+//           （可支持 2¹⁶ = 65536 个并发子进程），从根本上杜绝多进程 ID 冲突。
+// - 16 bit: 进程内自增序列（Sequence Number）。支持单进程每秒/每毫秒并发创建 65536 个实体。
+/// ```
+///  63       62 ................ 32  31 ........ 16  15 ......... 0
+///  rsv      timestamp (31 bits)     worker (16)     sequence (16)
+/// ```
+namespace snowflake {
+inline constexpr unsigned kSequenceBits         = 16;
+inline constexpr unsigned kWorkerBits           = 16;
+inline constexpr unsigned kTimestampBits        = 31;
+inline constexpr unsigned kTimestampShift       = kSequenceBits + kWorkerBits; // 32
+inline constexpr std::int64_t kEpochUnixSeconds = 1'767'225'600'000ULL; // 2026-01-01T00:00:00Z
+inline constexpr std::uint64_t kSequenceMask    = (std::uint64_t{1} << kSequenceBits) - 1u;
+inline constexpr std::uint64_t kWorkerMask      = (std::uint64_t{1} << kWorkerBits) - 1u;
+inline constexpr std::uint64_t kTimestampMask   = (std::uint64_t{1} << kTimestampBits) - 1u;
+} // namespace snowflake
+
+struct SnowflakeView
+{
+    std::uint64_t timestamp{0}; // 毫秒 millisecond
+    std::uint16_t worker{0};
+    std::uint16_t sequence{0};
+};
+
+[[nodiscard]] SnowflakeView toSnowflake(StableId id) noexcept;
+[[nodiscard]] std::string toHex(StableId id);
+[[nodiscard]] std::string toString(StableId id);
+
+class StableIdGenerator
+{
+public:
+    virtual ~StableIdGenerator() = default;
+
+    virtual std::uint64_t next() noexcept = 0;
+};
+
 /**
- * @brief 保证 handle 带有 StableId：已有则原样返回，没有就 mint 一个并 emplace。
- * @return 无效 handle 时返回 StableId{0}。
- *
- * 第一次在某个 Registry 上调用 ensure/bind/mint 时会自动装好销毁钩子，
- * 之后 Registry::destroy() 会把索引摘干净，避免 Handle 回收后 find() 指到新实体。
- */
-StableId ensure(Registry &registry, Handle handle); // acquire
+* @brief 无锁的64位雪花式稳定ID生成器(Snowflake Generator)。
+*
+* 位布局（从高位到低位），共64位：
+*   [63]        符号位，始终为0（确保该值仍可表示为有符号64位整数——适
+*               用于JSON/QtRO路径，这些路径通过qint64而非quint64进行往返转换）
+*   [62:32]     自基准时间（2026-01-01T00:00:00Z，Unix时间1767225600）起经过
+*               的31位秒数（硬编码，而非通过<chrono>日历类型计算，以避免依赖于
+*               我们三个CI工具链之间仍不一致的std::chrono::year_month_day支持，
+*               参见.github/workflows/ci.yml）
+**  [31:16]     16位工作者/进程ID，由主机分配（类似于SandboxSystem::nextSandboxId()
+*               将applicationPid()混入沙箱ID生成中，参见源码/sandbox/b_sandboxsystem.cpp）
+*   [15:0]      16位单调序列计数器，每墙钟秒重置一次
+*
+* 31位秒数可覆盖从起始时间点（直至约2094年）的约68年。这是一个“每个创建对象唯一一次”的ID，
+* 而非高频时间戳，因此秒级分辨率加上每秒65536个序列的预算，对于任何现实中的编辑器/GUI工作负载来说都绰绰有余。
+*
+* 线程安全：next() 是无锁的（单次原子CAS循环），不分配内存， 且永远不会阻塞——包括在序列预算耗尽时，
+* 此时它会将第二个字段向前移动一位，而不是等待真实时钟（参见CAS循环）。
+*/
+class SnowflakeGenerator : public StableIdGenerator
+{
+public:
+    using worker_type = std::uint16_t;
+    using Clocker     = std::function<std::int64_t()>;
 
-/// 按稳定身份反查当前 Handle；未绑定或对应实体已销毁时返回无效 Handle。
-[[nodiscard]] Handle find(const Registry &registry, StableId id);
+    /**
+     * @param worker Distinguishes id spaces across processes (e.g. each
+     *        sandbox child process gets a distinct worker id assigned by the
+     *        Host at spawn time). Defaults to 0 for standalone/single-process use.
+     */
+    explicit SnowflakeGenerator(worker_type worker = 0, Clocker clock = {}) noexcept;
 
-/// 读实体当前的 StableId；尚未 ensure() 时返回 {0}。
-[[nodiscard]] StableId get(const Registry &registry, Handle handle);
+    SnowflakeGenerator(const SnowflakeGenerator&)            = delete;
+    SnowflakeGenerator& operator=(const SnowflakeGenerator&) = delete;
+    SnowflakeGenerator(SnowflakeGenerator&&)                 = delete;
+    SnowflakeGenerator& operator=(SnowflakeGenerator&&)      = delete;
+
+    [[nodiscard]] worker_type worker() const noexcept { return m_worker; }
+    /// Generate a new, process-wide-unique, monotonically non-decreasing id.
+    [[nodiscard]] std::uint64_t next() noexcept override;
+
+private:
+    [[nodiscard]] std::uint64_t packed() const noexcept;
+    [[nodiscard]] std::uint64_t assemble(std::uint64_t seconds, std::uint64_t seq) const noexcept;
+
+    worker_type m_worker;
+    // 打包存储 [lastSeconds | seq] 到单个原子量，靠一次 CAS 整体更新——避免
+    // "秒" 和 "序列号" 分成两个独立原子量时，两者之间出现的先后不一致窗口。
+    std::atomic<std::uint64_t> m_state{0};
+    Clocker m_clock{};
+};
 
 /**
- * @brief 显式让索引与 Registry 当前实际持有的全部 StableId 组件保持一致。
- *
- * @details 装钩子这件事本身只能感知"从安装那一刻起"发生的构造/销毁事件——
- * 如果一批带着 StableId 的实体是在钩子安装 *之前* 就已经进了 Registry
- * （最典型的场景：DocumentSerializer::load()（b_serializer.h）把一份文档
- * 整体载入一个此前从未被任何 identity:: 函数碰过的 Registry；这种 Registry
- * 上钩子还没装过，因为 ensure()/mint() 从来没被调用过），装钩子这一步本身
- * 完全没有机会"回头看"那些已经落地的组件，find() 因此会一直查无此人，
- * 哪怕对应的 StableId 组件确确实实已经存在于 Registry 里。
- *
- * 调用本函数会（在第一次调用时）先完整扫描一遍当前所有 StableId 组件重建
- * 索引，再挂上钩子；对已经装过钩子的 Registry 重复调用是安全的空操作
- * （这种情况下索引本来就是靠钩子持续保持同步的，不需要重新扫描）。
- *
- * @note UndoStack（b_undostack.h）/ DocumentSerializer 的 load()/undo()/redo()
- * 走的是"clear() 再原地 reload"，只要钩子在那之前已经装好过，就能全程
- * 自动保持索引同步、不需要调用本函数（见对应测试用例）——只有"这个 Registry
- * 从一开始就是靠批量载入获得初始内容，从未调用过任何 identity:: 函数"这一种
- * 场景才需要显式调用一次 sync()。
- */
-void sync(Registry &registry);
-} // namespace identity
+* @brief 非正式化、基于生成器的 O(1) 双向 Handle <-> StableId 注册表，
+* 通过 on_construct/on_destroy 回调实现自动清理。
+*
+* - 明确地针对一个注册表和一个稳定 ID 生成器进行构造（因此调用者可
+*   控制 ID 空间的分区，例如每个沙箱工作线程使用一个生成器）；
+* - 其索引作为普通成员状态而非 entt::registry.ctx() ---隐藏状态被持有，这设计上避
+*   免了其进入 UndoStack/DocumentSerializer 的 clear()+reload 
+*   循环——该注册表旨在用于批处理克隆流程自身的记录管理，而非用于保存撤销快照。
+*
+* 两者可以安全地共存于同一注册表中：它们会透明地操作相同的稳定标识符（StableId）组件类型。
+*
+* 不可复制/不可移动：onConstruct/onDestroy lambda 会捕获 `this`，  
+* 原因与 Registry 自身的不可移动策略相同（参见 b_registry.h）。
+*/
+class Identity
+{
+public:
+    explicit Identity(Registry& registry, StableIdGenerator* generator = nullptr);
+    ~Identity();
+
+    Identity(const Identity&)            = delete;
+    Identity& operator=(const Identity&) = delete;
+    Identity(Identity&&)                 = delete;
+    Identity& operator=(Identity&&)      = delete;
+
+    void setGenerator(StableIdGenerator* generator);
+
+    // 注： 只是分配一个新的 stable id，不会关联任何实体。
+    std::uint64_t mint() const noexcept;
+
+    /// 作为全新的雪花对象并进行附加，如果已存在则为幂等操作。
+    StableId ensure(Entity entity); // mint
+
+    /// 附加一个已知的标识符（反序列化 / 恢复/重做）。拒绝冲突。
+    void assign(Entity entity, StableId id);
+
+    /// 用于撤销、QtRO 处理器和项目文件恢复的反向查找。
+    /// 当标识符未知或实体已死亡时，返回 `entt::null`。
+    [[nodiscard]] std::optional<Entity> find(StableId id) const noexcept;
+
+    /// 前向查找。如果实体没有标识符，则抛出 `StableIdError` 异常。
+    [[nodiscard]] std::optional<StableId> get(Entity entity) const noexcept;
+
+    [[nodiscard]] bool contains(StableId id) const noexcept;
+    [[nodiscard]] bool contains(Entity entity) const noexcept;
+
+    [[nodiscard]] std::size_t size() const noexcept;
+    void reserve(std::size_t size);
+
+private:
+    void constructed(Registry& registry, Entity entity);
+    void destroyed(Registry& registry, Entity entity);
+    void updated(Registry& registry, Entity entity);
+
+private:
+    class IdentityImpl;
+    IdentityImpl* m_impl;
+};
 
 } // namespace bakuon::core
-
-namespace std {
-template<>
-struct hash<bakuon::core::StableId>
-{
-    size_t operator()(bakuon::core::StableId id) const noexcept
-    {
-        return std::hash<std::uint64_t>{}(id.value);
-    }
-};
-} // namespace std
