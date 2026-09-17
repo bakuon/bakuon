@@ -13,6 +13,15 @@
 #include <utility>
 #include <variant>
 
+/**
+  错误码扩展 — StatusCode 补充 core 专属域
+
+  b_result.h 的 StatusCode 目前是通用 gRPC 风格枚举，
+  随着 core 承担更多领域逻辑（层级操作失败、引用悬空、
+  schema 迁移失败），建议要么扩展枚举，要么在 Status 之
+  上加一层 domain/code 二级分类字段，避免所有业务错误都挤压成 InvalidArgument。
+ */
+
 namespace bakuon::core {
 
 // ============================================================================
