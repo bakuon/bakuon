@@ -3,9 +3,9 @@
 #include <QtCore/QAbstractItemModel>
 #include <QtCore/QHash>
 
-#include <bakuon/core/Handle.h>
+#include <bakuon/core/Container.h>
+#include <bakuon/core/Entity.h>
 #include <bakuon/core/Hierarchy.h>
-#include <bakuon/core/Registry.h>
 
 #include "gui/b_gui_export.h"
 
@@ -21,7 +21,7 @@ class DocumentSession;
  * @brief 基于 core::hierarchy 的大纲树模型（QAbstractItemModel）。
  *
  * - 虚拟根：所有 hierarchy 根节点作为顶层行。
- * - DisplayRole：优先 components::Name，否则 Handle 的调试字符串。
+ * - DisplayRole：优先 components::Name，否则 Entity 的调试字符串。
  * - UserRole：存放 core::Handle（已 Q_DECLARE_METATYPE）。
  * - 数据变更通过 DocumentSession::bridge() 的 Hierarchy/Name 信号增量刷新。
  *
@@ -56,8 +56,8 @@ public:
     [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation,
                                       int role = Qt::DisplayRole) const override;
 
-    [[nodiscard]] core::Handle handleForIndex(const QModelIndex& index) const;
-    [[nodiscard]] QModelIndex indexForHandle(core::Handle handle) const;
+    [[nodiscard]] core::Entity handleForIndex(const QModelIndex& index) const;
+    [[nodiscard]] QModelIndex indexForHandle(core::Entity entity) const;
 
     /// 全量重置（结构大变时）；日常优先走 bridge 信号增量路径
     void reload();
@@ -67,13 +67,13 @@ public:
 
 private:
     void connectBridge();
-    void onHierarchyChanged(core::Handle handle);
-    void onNameChanged(core::Handle handle);
+    void onHierarchyChanged(core::Entity entity);
+    void onNameChanged(core::Entity entity);
     void onSelectionFromView();
     void onSelectionFromSession();
 
-    [[nodiscard]] static quintptr idFromHandle(core::Handle h) noexcept;
-    [[nodiscard]] static core::Handle handleFromId(quintptr id) noexcept;
+    [[nodiscard]] quintptr idFromHandle(core::Entity h) const noexcept;
+    [[nodiscard]] core::Entity handleFromId(quintptr id) const noexcept;
 
     DocumentSession& m_session;
     core::Registry& m_registry;

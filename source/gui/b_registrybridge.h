@@ -6,7 +6,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QString>
 
-#include <bakuon/core/Registry.h>
+#include <bakuon/core/Container.h>
 
 #include "gui/b_gui_export.h"
 
@@ -41,7 +41,7 @@ namespace bakuon::gui {
  *   bridge->watchSelection(); // Selected 标签 + selectionChanged
  *
  *   connect(bridge, &RegistryBridge::entityUpdated, this,
- *           [&registry](const QString& tag, bakuon::core::Handle id) {
+ *           [&registry](const QString& tag, bakuon::core::Entity id) {
  *               if (tag == QLatin1String("Position")) {
  *                   const auto* pos = registry.tryGet<Position>(id);
  *                   // ... 用 pos 刷新界面 ...
@@ -61,7 +61,7 @@ public:
      *                 （本类只持有引用，不管理它的生命周期，也不管理线程安全——
      *                 与 core::Registry 本身一致，只应在单线程/GUI 主线程使用）。
      */
-    explicit RegistryBridge(core::Registry& registry, QObject* parent = nullptr);
+    explicit RegistryBridge(core::Container& container, QObject* parent = nullptr);
     ~RegistryBridge() override;
 
     RegistryBridge(const RegistryBridge&)            = delete;
@@ -78,15 +78,15 @@ public:
     void watch(const QString& componentTag)
     {
         m_connections.push_back(
-            m_registry.onConstruct<T>([this, componentTag](core::Registry&, core::Handle id) {
+            m_container.onConstruct<T>([this, componentTag](core::Container&, core::Entity id) {
                 Q_EMIT entityConstructed(componentTag, id);
             }));
         m_connections.push_back(
-            m_registry.onUpdate<T>([this, componentTag](core::Registry&, core::Handle id) {
+            m_container.onUpdate<T>([this, componentTag](core::Container&, core::Entity id) {
                 Q_EMIT entityUpdated(componentTag, id);
             }));
         m_connections.push_back(
-            m_registry.onDestroy<T>([this, componentTag](core::Registry&, core::Handle id) {
+            m_container.onDestroy<T>([this, componentTag](core::Container&, core::Entity id) {
                 Q_EMIT entityDestroyed(componentTag, id);
             }));
     }
@@ -98,21 +98,21 @@ public:
     void watchSelection(const QString& tag = QStringLiteral("Selected"));
 
 Q_SIGNALS:
-    void entityConstructed(const QString& componentTag, bakuon::core::Handle id);
-    void entityUpdated(const QString& componentTag, bakuon::core::Handle id);
-    void entityDestroyed(const QString& componentTag, bakuon::core::Handle id);
+    void entityConstructed(const QString& componentTag, bakuon::core::Entity id);
+    void entityUpdated(const QString& componentTag, bakuon::core::Entity id);
+    void entityDestroyed(const QString& componentTag, bakuon::core::Entity id);
     /// 选中集发生任意增删时发出（无参数；槽内自行查询 Selection / each<Selected>）
     void selectionChanged();
 
 private:
-    core::Registry& m_registry;
+    core::Container& m_container;
     // Connection 是 RAII 的：随本类析构自动断开全部订阅，不需要手写 shutdown 逻辑。
     std::vector<core::Connection> m_connections;
 };
 
 } // namespace bakuon::gui
 
-// Handle 是 core 模块的类型，本身不认识/不应该认识 Qt——把它注册成 Qt 元类型
-// 这件事放在"消费 Handle 的 Qt 侧"（也就是这里）来做，而不是塞进 b_handle.h，
+// Entity 是 core 模块的类型，本身不认识/不应该认识 Qt——把它注册成 Qt 元类型
+// 这件事放在"消费 Entity 的 Qt 侧"（也就是这里）来做，而不是塞进 b_handle.h，
 // 与本类"胶水代码只应该单向依赖 core，不能反过来污染 core"的定位一致。
-Q_DECLARE_METATYPE(bakuon::core::Handle)
+Q_DECLARE_METATYPE(bakuon::core::Entity)

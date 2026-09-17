@@ -10,14 +10,14 @@
 #include "gui/b_hierarchymodel.h"
 
 using namespace bakuon;
-using bakuon::core::Handle;
+using bakuon::core::Entity;
 namespace h = bakuon::core::hierarchy;
 
 namespace {
 
-Handle makeNamed(core::Registry& reg, const std::string& name)
+Entity makeNamed(core::Registry& reg, const std::string& name)
 {
-    const Handle e = reg.create();
+    const Entity e = reg.create();
     reg.emplace<core::components::Name>(e, core::components::Name{name});
     return e;
 }
@@ -34,10 +34,10 @@ TEST(HierarchyModelTest, EmptySessionHasZeroRows)
 TEST(HierarchyModelTest, RootsAppearAsTopLevelRows)
 {
     gui::DocumentSession session;
-    auto& reg         = session.registry();
-    const Handle root = makeNamed(reg, "R");
-    const Handle a    = makeNamed(reg, "A");
-    const Handle b    = makeNamed(reg, "B");
+    auto& reg         = session.container().registry();
+    const Entity root = makeNamed(reg, "R");
+    const Entity a    = makeNamed(reg, "A");
+    const Entity b    = makeNamed(reg, "B");
     ASSERT_TRUE(h::append(reg, a, root));
     ASSERT_TRUE(h::append(reg, b, root));
 
@@ -61,9 +61,9 @@ TEST(HierarchyModelTest, RootsAppearAsTopLevelRows)
 TEST(HierarchyModelTest, IndexForHandleRoundTrip)
 {
     gui::DocumentSession session;
-    auto& reg          = session.registry();
-    const Handle root  = makeNamed(reg, "R");
-    const Handle child = makeNamed(reg, "C");
+    auto& reg          = session.container().registry();
+    const Entity root  = makeNamed(reg, "R");
+    const Entity child = makeNamed(reg, "C");
     ASSERT_TRUE(h::append(reg, child, root));
 
     gui::HierarchyModel model(session);
@@ -76,9 +76,9 @@ TEST(HierarchyModelTest, IndexForHandleRoundTrip)
 TEST(HierarchyModelTest, BindSelectionSyncsBothWays)
 {
     gui::DocumentSession session;
-    auto& reg         = session.registry();
-    const Handle root = makeNamed(reg, "R");
-    const Handle a    = makeNamed(reg, "A");
+    auto& reg         = session.container().registry();
+    const Entity root = makeNamed(reg, "R");
+    const Entity a    = makeNamed(reg, "A");
     ASSERT_TRUE(h::append(reg, a, root));
 
     gui::HierarchyModel model(session);
@@ -101,15 +101,15 @@ TEST(HierarchyModelTest, BindSelectionSyncsBothWays)
 TEST(HierarchyModelTest, ReloadAfterStructuralChange)
 {
     gui::DocumentSession session;
-    auto& reg         = session.registry();
-    const Handle root = makeNamed(reg, "R");
-    const Handle a    = makeNamed(reg, "A");
+    auto& reg         = session.container().registry();
+    const Entity root = makeNamed(reg, "R");
+    const Entity a    = makeNamed(reg, "A");
     ASSERT_TRUE(h::append(reg, a, root));
 
     gui::HierarchyModel model(session);
     EXPECT_EQ(model.rowCount(model.index(0, 0)), 1);
 
-    const Handle b = makeNamed(reg, "B");
+    const Entity b = makeNamed(reg, "B");
     ASSERT_TRUE(h::append(reg, b, root));
     // Hierarchy construct 会触发 model reload
     EXPECT_EQ(model.rowCount(model.index(0, 0)), 2);

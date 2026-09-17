@@ -4,7 +4,7 @@
 
 #include <QtCore/QObject>
 
-#include <bakuon/core/Registry.h>
+#include <bakuon/core/Container.h>
 #include <bakuon/core/Selection.h>
 
 #include "gui/b_gui_export.h"
@@ -45,14 +45,14 @@ public:
      * @param parent Qt 父对象
      */
     explicit DocumentSession(ContextId selectionContext = ContextId{"editor.selection"},
-                             QObject* parent = nullptr);
+                             QObject* parent            = nullptr);
     ~DocumentSession() override;
 
     DocumentSession(const DocumentSession&)            = delete;
     DocumentSession& operator=(const DocumentSession&) = delete;
 
-    [[nodiscard]] core::Registry& registry() noexcept { return *m_registry; }
-    [[nodiscard]] const core::Registry& registry() const noexcept { return *m_registry; }
+    [[nodiscard]] core::Container& container() noexcept { return *m_container; }
+    [[nodiscard]] const core::Container& container() const noexcept { return *m_container; }
 
     [[nodiscard]] core::selection::Selection& selection() noexcept { return *m_selection; }
     [[nodiscard]] const core::selection::Selection& selection() const noexcept
@@ -63,7 +63,10 @@ public:
     [[nodiscard]] RegistryBridge& bridge() noexcept { return *m_bridge; }
     [[nodiscard]] const RegistryBridge& bridge() const noexcept { return *m_bridge; }
 
-    [[nodiscard]] const ContextId& selectionContextId() const noexcept { return m_selectionContext; }
+    [[nodiscard]] const ContextId& selectionContextId() const noexcept
+    {
+        return m_selectionContext;
+    }
 
     /// 当前是否因选中而激活了 selection 上下文
     [[nodiscard]] bool isSelectionContextActive() const noexcept { return m_selectionCtxActive; }
@@ -76,7 +79,7 @@ private:
     void onSelectionChanged();
     void syncSelectionContext();
 
-    std::unique_ptr<core::Registry> m_registry;
+    std::unique_ptr<core::Container> m_container;
     std::unique_ptr<core::selection::Selection> m_selection;
     std::unique_ptr<RegistryBridge> m_bridge;
     core::Connection m_selectionConn;

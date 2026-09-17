@@ -2,7 +2,8 @@
 
 #include <string>
 
-#include <bakuon/core/Registry.h>
+#include <bakuon/core/Container.h>
+#include <bakuon/core/Entity.h>
 #include <bakuon/core/UndoStack.h>
 
 using namespace bakuon::core;
@@ -77,7 +78,7 @@ TEST(UndoStackTest, ConstructionCapturesInitialFrame)
 TEST(UndoStackTest, SnapshotThenUndoRestoresPreviousValue)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 1.f, 2.f);
 
     UndoStack<Position, Selected> undo(registry);
@@ -89,7 +90,7 @@ TEST(UndoStackTest, SnapshotThenUndoRestoresPreviousValue)
 
     undo.undo();
     ASSERT_TRUE(registry.valid(node)) << "撤销前后实体标识符应当保持稳定";
-    EXPECT_EQ(*registry.tryGet<Position>(node), (Position{1.f, 2.f}));
+    EXPECT_EQ(registry.get<Position>(node), (Position{1.f, 2.f}));
     EXPECT_FALSE(undo.canUndo());
     EXPECT_TRUE(undo.canRedo());
 }
@@ -97,7 +98,7 @@ TEST(UndoStackTest, SnapshotThenUndoRestoresPreviousValue)
 TEST(UndoStackTest, RedoReappliesTheUndoneChange)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
     UndoStack<Position, Selected> undo(registry);
 
@@ -107,7 +108,7 @@ TEST(UndoStackTest, RedoReappliesTheUndoneChange)
     ASSERT_TRUE(undo.canRedo());
 
     undo.redo();
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 5.f);
+    EXPECT_EQ(registry.get<Position>(node).x, 5.f);
     EXPECT_FALSE(undo.canRedo());
 }
 
@@ -123,7 +124,7 @@ TEST(UndoStackTest, UndoWithNoHistoryIsSafeNoop)
 TEST(UndoStackTest, NewSnapshotAfterUndoDiscardsRedoBranch)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
     UndoStack<Position, Selected> undo(registry);
 
@@ -133,7 +134,7 @@ TEST(UndoStackTest, NewSnapshotAfterUndoDiscardsRedoBranch)
     undo.snapshot(); // frame 2: x=2
 
     undo.undo(); // back to frame 1 (x=1)
-    ASSERT_EQ(registry.tryGet<Position>(node)->x, 1.f);
+    ASSERT_EQ(registry.get<Position>(node).x, 1.f);
     ASSERT_TRUE(undo.canRedo());
 
     // 在旧状态上产生新的改动，应该丢弃原来能 redo() 到达的 "x=2" 分支。
@@ -142,7 +143,7 @@ TEST(UndoStackTest, NewSnapshotAfterUndoDiscardsRedoBranch)
 
     EXPECT_FALSE(undo.canRedo());
     undo.undo();
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 1.f);
+    EXPECT_EQ(registry.get<Position>(node).x, 1.f);
 }
 
 TEST(UndoStackTest, EntityCreationAndDestructionAreUndoable)
@@ -150,7 +151,7 @@ TEST(UndoStackTest, EntityCreationAndDestructionAreUndoable)
     Registry registry;
     UndoStack<Position, Selected> undo(registry); // frame 0: 空
 
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 3.f, 4.f);
     undo.snapshot(); // frame 1: node 存在
 
@@ -159,22 +160,24 @@ TEST(UndoStackTest, EntityCreationAndDestructionAreUndoable)
 
     undo.redo();
     ASSERT_TRUE(registry.valid(node));
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 3.f);
+    EXPECT_EQ(registry.get<Position>(node).x, 3.f);
 }
 
 TEST(UndoStackTest, ObserversRegisteredBeforeUndoStillFireAfterRestore)
 {
     // 这是本类最关键的正确性保证：反复 clear()+reload 不应该让调用方之前建立的
     // Connection 失效，见 b_undostack.h 类文档"关键的正确性依据"一节。
-    Registry registry;
-    const Handle node = registry.create();
+    Container container;
+    Registry& registry = container.registry();
+    const Entity node  = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
 
     int constructCount     = 0;
     int destroyCount       = 0;
-    Connection onConstruct = registry.onConstruct<Position>(
-        [&](Registry&, Handle) { ++constructCount; });
-    Connection onDestroy = registry.onDestroy<Position>([&](Registry&, Handle) { ++destroyCount; });
+    Connection onConstruct = container.onConstruct<Position>(
+        [&](Container&, Entity) { ++constructCount; });
+    Connection onDestroy = container.onDestroy<Position>(
+        [&](Container&, Entity) { ++destroyCount; });
 
     UndoStack<Position, Selected> undo(registry);
 
@@ -195,7 +198,7 @@ TEST(UndoStackTest, ObserversRegisteredBeforeUndoStillFireAfterRestore)
 TEST(UndoStackTest, CapacityEvictsOldestFrame)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
 
     UndoStack<Position, Selected> undo(registry, /*capacity=*/2);
@@ -212,14 +215,14 @@ TEST(UndoStackTest, CapacityEvictsOldestFrame)
 
     // 现在应该只能撤销到 x=1，不能再往前追溯到 x=0。
     ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 1.f);
+    EXPECT_EQ(registry.get<Position>(node).x, 1.f);
     EXPECT_FALSE(undo.canUndo());
 }
 
 TEST(UndoStackTest, ClearHistoryKeepsOnlyCurrentState)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
     UndoStack<Position, Selected> undo(registry);
 
@@ -232,22 +235,22 @@ TEST(UndoStackTest, ClearHistoryKeepsOnlyCurrentState)
     EXPECT_FALSE(undo.canUndo());
     EXPECT_FALSE(undo.canRedo());
     // clearHistory() 之后的这一帧应该是"当前"状态（x=1），不是回退到最初的 x=0。
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 1.f);
+    EXPECT_EQ(registry.get<Position>(node).x, 1.f);
 }
 
 TEST(UndoStackTest, TagComponentParticipatesInSnapshot)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
     UndoStack<Position, Selected> undo(registry);
 
     registry.emplace<Selected>(node);
     undo.snapshot();
-    ASSERT_TRUE(registry.has<Selected>(node));
+    ASSERT_TRUE(registry.all_of<Selected>(node));
 
     undo.undo();
-    EXPECT_FALSE(registry.has<Selected>(node)) << "标签组件的挂接/摘除也应该能被撤销";
+    EXPECT_FALSE(registry.all_of<Selected>(node)) << "标签组件的挂接/摘除也应该能被撤销";
 }
 
 TEST(UndoStackTest, NonTriviallyCopyableComponentWithStdStringIsUndoable)
@@ -256,26 +259,26 @@ TEST(UndoStackTest, NonTriviallyCopyableComponentWithStdStringIsUndoable)
     // Components... 全部可平凡拷贝，std::string 字段完全没法用；现在换成
     // 复用 DocumentSerializer 的 JSON 归档器之后应该可以正常参与撤销/重做。
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Name>(node, Name{"first"});
 
     UndoStack<Name> undo(registry);
 
     registry.patch<Name>(node, [](Name& n) { n.value = "second"; });
     undo.snapshot();
-    ASSERT_EQ(registry.tryGet<Name>(node)->value, "second");
+    ASSERT_EQ(registry.get<Name>(node).value, "second");
 
     ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(registry.tryGet<Name>(node)->value, "first");
+    EXPECT_EQ(registry.get<Name>(node).value, "first");
 
     ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(registry.tryGet<Name>(node)->value, "second");
+    EXPECT_EQ(registry.get<Name>(node).value, "second");
 }
 
 TEST(UndoStackTest, MixOfTriviallyAndNonTriviallyCopyableComponents)
 {
     Registry registry;
-    const Handle node = registry.create();
+    const Entity node = registry.create();
     registry.emplace<Position>(node, 0.f, 0.f);
     registry.emplace<Name>(node, Name{"node-1"});
 
@@ -286,10 +289,10 @@ TEST(UndoStackTest, MixOfTriviallyAndNonTriviallyCopyableComponents)
     undo.snapshot();
 
     ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 0.f);
-    EXPECT_EQ(registry.tryGet<Name>(node)->value, "node-1");
+    EXPECT_EQ(registry.get<Position>(node).x, 0.f);
+    EXPECT_EQ(registry.get<Name>(node).value, "node-1");
 
     ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(registry.tryGet<Position>(node)->x, 9.f);
-    EXPECT_EQ(registry.tryGet<Name>(node)->value, "node-1-renamed");
+    EXPECT_EQ(registry.get<Position>(node).x, 9.f);
+    EXPECT_EQ(registry.get<Name>(node).value, "node-1-renamed");
 }

@@ -13,29 +13,29 @@
 
 namespace bakuon::gui {
 namespace h = bakuon::core::hierarchy;
+using namespace bakuon::core;
 using bakuon::core::components::Name;
-using bakuon::core::Handle;
 
-quintptr HierarchyModel::idFromHandle(Handle handle) noexcept
+quintptr HierarchyModel::idFromHandle(Entity entity) const noexcept
 {
-    if (!handle.isValid()) {
+    if (!m_registry.valid(entity)) {
         return 0;
     }
-    using Underlying = std::underlying_type_t<entt::entity>;
-    return static_cast<quintptr>(static_cast<Underlying>(handle.native()));
+    using Underlying = std::underlying_type_t<Entity>;
+    return static_cast<quintptr>(static_cast<Underlying>(entity));
 }
 
-Handle HierarchyModel::handleFromId(quintptr id) noexcept
+Entity HierarchyModel::handleFromId(quintptr id) const noexcept
 {
     // NOTE: id == 0 是有效的
-    using Underlying = std::underlying_type_t<entt::entity>;
-    return Handle{static_cast<entt::entity>(static_cast<Underlying>(id))};
+    using Underlying = std::underlying_type_t<Entity>;
+    return Entity{static_cast<Entity>(static_cast<Underlying>(id))};
 }
 
 HierarchyModel::HierarchyModel(DocumentSession& session, QObject* parent)
     : QAbstractItemModel(parent)
     , m_session(session)
-    , m_registry(session.registry())
+    , m_registry(session.container().registry())
 {
     connectBridge();
 }
@@ -48,12 +48,12 @@ HierarchyModel::~HierarchyModel()
 void HierarchyModel::connectBridge()
 {
     auto& bridge = m_session.bridge();
-    connect(&bridge, &RegistryBridge::entityConstructed, this, [this](const QString& tag, Handle id) {
+    connect(&bridge, &RegistryBridge::entityConstructed, this, [this](const QString& tag, Entity id) {
         if (tag == QLatin1String("Hierarchy") || tag == QLatin1String("Name")) {
             onHierarchyChanged(id);
         }
     });
-    connect(&bridge, &RegistryBridge::entityUpdated, this, [this](const QString& tag, Handle id) {
+    connect(&bridge, &RegistryBridge::entityUpdated, this, [this](const QString& tag, Entity id) {
         if (tag == QLatin1String("Name")) {
             onNameChanged(id);
         } else if (tag == QLatin1String("Hierarchy")) {
@@ -63,7 +63,7 @@ void HierarchyModel::connectBridge()
     connect(&bridge,
             &RegistryBridge::entityDestroyed,
             this,
-            [this](const QString& tag, Handle /*id*/) {
+            [this](const QString& tag, Entity /*id*/) {
                 if (tag == QLatin1String("Hierarchy")) {
                     // 结构变化：全量重置最安全（子树可能已销毁）
                     reload();
@@ -78,7 +78,7 @@ QModelIndex HierarchyModel::index(int row, int column, const QModelIndex& parent
     }
 
     if (!parent.isValid()) {
-        std::vector<Handle> rootList;
+        std::vector<Entity> rootList;
         h::roots(m_registry, rootList);
         if (row >= static_cast<int>(rootList.size())) {
             return {};
@@ -86,15 +86,15 @@ QModelIndex HierarchyModel::index(int row, int column, const QModelIndex& parent
         return createIndex(row, 0, idFromHandle(rootList[static_cast<std::size_t>(row)]));
     }
 
-    const Handle parentHandle = handleFromId(parent.internalId());
+    const Entity parentHandle = handleFromId(parent.internalId());
     if (!m_registry.valid(parentHandle)) {
         return {};
     }
-    const Handle childHandle = h::child(m_registry, static_cast<std::size_t>(row), parentHandle);
-    if (!childHandle.isValid()) {
+    const Entity kid = h::child(m_registry, static_cast<std::size_t>(row), parentHandle);
+    if (!m_registry.valid(kid)) {
         return {};
     }
-    return createIndex(row, 0, idFromHandle(childHandle));
+    return createIndex(row, 0, idFromHandle(kid));
 }
 
 QModelIndex HierarchyModel::parent(const QModelIndex& child) const
@@ -102,18 +102,18 @@ QModelIndex HierarchyModel::parent(const QModelIndex& child) const
     if (!child.isValid()) {
         return {};
     }
-    const Handle node = handleFromId(child.internalId());
+    const Entity node = handleFromId(child.internalId());
     if (!m_registry.valid(node)) {
         return {};
     }
-    const Handle p = h::parent(m_registry, node);
-    if (!p.isValid()) {
+    const Entity p = h::parent(m_registry, node);
+    if (!m_registry.valid(p)) {
         return {}; // 顶层根
     }
     const auto idxOpt = h::index(m_registry, p);
     // 父节点在其兄弟中的行号：若父也是根，用 roots 列表定位
     if (!h::hasParent(m_registry, p)) {
-        std::vector<Handle> rootList;
+        std::vector<Entity> rootList;
         h::roots(m_registry, rootList);
         for (std::size_t i = 0; i < rootList.size(); ++i) {
             if (rootList[i] == p) {
@@ -132,11 +132,11 @@ int HierarchyModel::rowCount(const QModelIndex& parent) const
         return 0;
     }
     if (!parent.isValid()) {
-        std::vector<Handle> rootList;
+        std::vector<Entity> rootList;
         h::roots(m_registry, rootList);
         return static_cast<int>(rootList.size());
     }
-    const Handle parentHandle = handleFromId(parent.internalId());
+    const Entity parentHandle = handleFromId(parent.internalId());
     if (!m_registry.valid(parentHandle)) {
         return 0;
     }
@@ -154,7 +154,7 @@ QVariant HierarchyModel::data(const QModelIndex& index, int role) const
     if (!index.isValid()) {
         return {};
     }
-    const Handle node = handleFromId(index.internalId());
+    const Entity node = handleFromId(index.internalId());
     if (!m_registry.valid(node)) {
         return {};
     }
@@ -162,7 +162,7 @@ QVariant HierarchyModel::data(const QModelIndex& index, int role) const
     switch (role) {
     case Qt::DisplayRole:
     case Qt::EditRole   : {
-        if (const Name* name = m_registry.tryGet<Name>(node)) {
+        if (const Name* name = m_registry.try_get<Name>(node)) {
             return QString::fromStdString(name->value);
         }
         return QStringLiteral("Entity %1").arg(static_cast<quint64>(idFromHandle(node)));
@@ -188,7 +188,7 @@ QVariant HierarchyModel::headerData(int section, Qt::Orientation orientation, in
     return {};
 }
 
-Handle HierarchyModel::handleForIndex(const QModelIndex& index) const
+Entity HierarchyModel::handleForIndex(const QModelIndex& index) const
 {
     if (!index.isValid()) {
         return {};
@@ -196,35 +196,35 @@ Handle HierarchyModel::handleForIndex(const QModelIndex& index) const
     return handleFromId(index.internalId());
 }
 
-QModelIndex HierarchyModel::indexForHandle(Handle handle) const
+QModelIndex HierarchyModel::indexForHandle(Entity entity) const
 {
-    if (!handle.isValid() || !m_registry.valid(handle)) {
+    if (!m_registry.valid(entity) || !m_registry.valid(entity)) {
         return {};
     }
-    if (!m_registry.has<h::Hierarchy>(handle)) {
+    if (!m_registry.all_of<h::Hierarchy>(entity)) {
         return {};
     }
 
     // 自底向上拼路径，再从根走下来建 QModelIndex
-    const auto path = h::path(m_registry, handle);
-    if (!h::hasParent(m_registry, handle)) {
+    const auto path = h::path(m_registry, entity);
+    if (!h::hasParent(m_registry, entity)) {
         // 自身是根
-        std::vector<Handle> rootList;
+        std::vector<Entity> rootList;
         h::roots(m_registry, rootList);
         for (std::size_t i = 0; i < rootList.size(); ++i) {
-            if (rootList[i] == handle) {
-                return createIndex(static_cast<int>(i), 0, idFromHandle(handle));
+            if (rootList[i] == entity) {
+                return createIndex(static_cast<int>(i), 0, idFromHandle(entity));
             }
         }
         return {};
     }
 
     // 找到顶层根
-    Handle root = handle;
+    Entity root = entity;
     while (h::hasParent(m_registry, root)) {
         root = h::parent(m_registry, root);
     }
-    std::vector<Handle> rootList;
+    std::vector<Entity> rootList;
     h::roots(m_registry, rootList);
     int rootRow = -1;
     for (std::size_t i = 0; i < rootList.size(); ++i) {
@@ -253,16 +253,16 @@ void HierarchyModel::reload()
     endResetModel();
 }
 
-void HierarchyModel::onHierarchyChanged(Handle /*handle*/)
+void HierarchyModel::onHierarchyChanged(Entity /*entity*/)
 {
     // 十字链表局部变化也可能影响兄弟 index；首期用全量重置保持正确性。
     // 后续可按 parent 做 layoutChanged 优化。
     reload();
 }
 
-void HierarchyModel::onNameChanged(Handle handle)
+void HierarchyModel::onNameChanged(Entity entity)
 {
-    const QModelIndex idx = indexForHandle(handle);
+    const QModelIndex idx = indexForHandle(entity);
     if (idx.isValid()) {
         Q_EMIT dataChanged(idx, idx, {Qt::DisplayRole, Qt::EditRole});
     }
@@ -300,12 +300,12 @@ void HierarchyModel::onSelectionFromView()
     }
     m_syncingSelection = true;
 
-    std::vector<Handle> handles;
+    std::vector<Entity> handles;
     const QModelIndexList indexes = m_selModel->selectedIndexes();
     handles.reserve(static_cast<std::size_t>(indexes.size()));
     for (const QModelIndex& idx : indexes) {
-        const Handle h = handleForIndex(idx);
-        if (h.isValid()) {
+        const Entity h = handleForIndex(idx);
+        if (m_registry.valid(h)) {
             handles.push_back(h);
         }
     }
@@ -322,7 +322,7 @@ void HierarchyModel::onSelectionFromSession()
     m_syncingSelection = true;
 
     QItemSelection itemSel;
-    for (Handle h : m_session.selection().ordered()) {
+    for (Entity h : m_session.selection().ordered()) {
         const QModelIndex idx = indexForHandle(h);
         if (idx.isValid()) {
             itemSel.select(idx, idx);
