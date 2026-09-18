@@ -2,6 +2,7 @@
 
 #include <bakuon/core/Components.h>
 #include <bakuon/core/Entity.h>
+#include <bakuon/core/Serializer.h>
 #include <bakuon/core/UndoStack.h>
 
 using namespace bakuon::core;
@@ -69,7 +70,7 @@ TEST(ComponentsTest, TriviallyCopyableComponentsWorkWithUndoStack)
 TEST(ComponentsTest, NameAndTagNowAlsoWorkWithUndoStack)
 {
     // UndoStack 早期要求组件可平凡拷贝，Name/Tag（持有 std::string）一度只能
-    // 用 DocumentSerializer；UndoStack 改为复用同一套 JSON 归档器之后这个
+    // 用 Serializer；UndoStack 改为复用同一套 JSON 归档器之后这个
     // 限制已经解除，见 b_undostack.h 类文档"归档器"一节。这里直接用 core 内置
     // 的 Name/Tag 组件验证修复确实生效，而不是只在测试专用的临时类型上验证。
     Registry registry;
@@ -92,28 +93,28 @@ TEST(ComponentsTest, NameAndTagNowAlsoWorkWithUndoStack)
     EXPECT_EQ(registry.try_get<Tag>(node)->value, "分组B");
 }
 
-TEST(ComponentsTest, NameAndTagRoundTripThroughDocumentSerializer)
+TEST(ComponentsTest, NameAndTagRoundTripThroughSerializer)
 {
     // Name/Tag 持有 std::string，不满足 UndoStack 要求的可平凡拷贝约束
-    // （见 b_components.h 的说明），因此只用 DocumentSerializer 验证。
+    // （见 b_components.h 的说明），因此只用 Serializer 验证。
     Registry registry;
     const Entity node = registry.create();
     registry.emplace<Name>(node, Name{"图层 1"});
     registry.emplace<Tag>(node, Tag{"背景"});
 
-    DocumentSerializer<Name, Tag> serializer(registry);
-    const nlohmann::json doc = serializer.save();
+    Serializer<Name, Tag> serializer(registry);
+    std::vector<std::byte> bytes = serializer.save();
 
     Registry other;
-    DocumentSerializer<Name, Tag> otherSerializer(other);
-    ASSERT_TRUE(otherSerializer.load(doc).success());
+    Serializer<Name, Tag> otherSerializer(other);
+    ASSERT_TRUE(otherSerializer.load(bytes).success());
 
     ASSERT_TRUE(other.valid(node));
     EXPECT_EQ(other.try_get<Name>(node)->value, "图层 1");
     EXPECT_EQ(other.try_get<Tag>(node)->value, "背景");
 }
 
-TEST(ComponentsTest, AllComponentsRoundTripTogetherThroughDocumentSerializer)
+TEST(ComponentsTest, AllComponentsRoundTripTogetherThroughSerializer)
 {
     Registry registry;
     const Entity node = registry.create();
@@ -124,12 +125,12 @@ TEST(ComponentsTest, AllComponentsRoundTripTogetherThroughDocumentSerializer)
     registry.emplace<Selected>(node);
     registry.emplace<Tag>(node, Tag{"分组A"});
 
-    DocumentSerializer<Name, Visible, Locked, Enabled, Selected, Tag> serializer(registry);
-    const nlohmann::json doc = serializer.save();
+    Serializer<Name, Visible, Locked, Enabled, Selected, Tag> serializer(registry);
+    std::vector<std::byte> bytes = serializer.save();
 
     Registry other;
-    DocumentSerializer<Name, Visible, Locked, Enabled, Selected, Tag> otherSerializer(other);
-    ASSERT_TRUE(otherSerializer.load(doc).success());
+    Serializer<Name, Visible, Locked, Enabled, Selected, Tag> otherSerializer(other);
+    ASSERT_TRUE(otherSerializer.load(bytes).success());
 
     EXPECT_EQ(other.try_get<Name>(node)->value, "节点");
     EXPECT_FALSE(other.try_get<Visible>(node)->value);

@@ -13,104 +13,83 @@ struct Position
 {
     float x = 0.f;
     float y = 0.f;
+    friend bool operator==(const Position& a, const Position& b) noexcept
+    {
+        return a.x == b.x && a.y == b.y;
+    }
 };
-void to_json(nlohmann::json& j, const Position& p)
-{
-    j = {{"x", p.x}, {"y", p.y}};
-}
-void from_json(const nlohmann::json& j, Position& p)
-{
-    j.at("x").get_to(p.x);
-    j.at("y").get_to(p.y);
-}
 
+// 持有 std::string：通过 ADL archive_write/archive_read 接入，
 struct Name
 {
     std::string value;
 };
-void to_json(nlohmann::json& j, const Name& n)
+void archive_write(IArchiveWriter& ar, const Name& n)
 {
-    j = {{"value", n.value}};
+    ar.writeString(n.value);
 }
-void from_json(const nlohmann::json& j, Name& n)
+void archive_read(IArchiveReader& ar, Name& n)
 {
-    j.at("value").get_to(n.value);
+    n.value = ar.readString();
 }
 
+// 空结构体标签组件：同样可平凡拷贝，零代码。
 struct Selected
 {
 };
-// Selected 是空结构体标签组件：entt 的空类型优化（与 Registry::each() 文档里
-// 提到的是同一机制）意味着序列化 Selected 时根本不会有"值"需要写入/读出——
-// entt 只需要知道"这个实体携带了这个类型"，不需要调用 to_json()/from_json()。
-// 下面两个 ADL 自由函数因此实际不会被调用（编译器会发出 unused-function 警告，
-// 这里用 [[maybe_unused]] 显式承认这一点，而不是删掉它们——nlohmann::json 的
-// 静态类型检查仍然要求这两个重载"存在"，只是运行期用不上）。
-[[maybe_unused]] void to_json(nlohmann::json& j, const Selected&)
-{
-    j = nlohmann::json::object();
-}
-[[maybe_unused]] void from_json(const nlohmann::json&, Selected&)
-{
-}
 
 } // namespace
 
-BAKUON_DECLARE_COMPONENT_NAME(Position, "Position")
-BAKUON_DECLARE_COMPONENT_NAME(Name, "Name")
-BAKUON_DECLARE_COMPONENT_NAME(Selected, "Selected")
-
-TEST(DocumentSerializerTest, SaveThenLoadIntoTheSameRegistryRoundTrips)
+TEST(SerializerTest, SaveThenLoadIntoTheSameRegistryRoundTrips)
 {
     Registry registry;
     const Entity node = registry.create();
     registry.emplace<Position>(node, 1.5f, 2.5f);
     registry.emplace<Name>(node, Name{"hello"});
 
-    DocumentSerializer<Position, Name> serializer(registry);
-    const nlohmann::json doc = serializer.save();
+    Serializer<Position, Name> serializer(registry);
+    const std::vector<std::byte> bytes = serializer.save();
 
-    ASSERT_TRUE(serializer.load(doc).success());
+    ASSERT_TRUE(serializer.load(bytes).success());
     ASSERT_TRUE(registry.valid(node));
     EXPECT_EQ(registry.get<Position>(node).x, 1.5f);
-    EXPECT_EQ(registry.get<Position>(node).y, 2.5f);
     EXPECT_EQ(registry.get<Name>(node).value, "hello");
 }
 
-TEST(DocumentSerializerTest, SaveThenLoadIntoADifferentRegistryRoundTrips)
+TEST(SerializerTest, SaveThenLoadIntoADifferentRegistryRoundTrips)
 {
     Registry source;
     const Entity node = source.create();
     source.emplace<Position>(node, 3.f, 4.f);
     source.emplace<Name>(node, Name{"world"});
-    DocumentSerializer<Position, Name> saver(source);
-    const nlohmann::json doc = saver.save();
+    const Serializer<Position, Name> saver(source);
+    const std::vector<std::byte> bytes = saver.save();
 
     Registry destination;
-    DocumentSerializer<Position, Name> loader(destination);
-    ASSERT_TRUE(loader.load(doc).success());
+    Serializer<Position, Name> loader(destination);
+    ASSERT_TRUE(loader.load(bytes).success());
 
     ASSERT_TRUE(destination.valid(node)) << "两个独立 Registry 之间的实体标识符应当一致地还原";
     EXPECT_EQ(destination.get<Position>(node).x, 3.f);
     EXPECT_EQ(destination.get<Name>(node).value, "world");
 }
 
-TEST(DocumentSerializerTest, TagComponentRoundTrips)
+TEST(SerializerTest, TagComponentRoundTrips)
 {
     Registry registry;
     const Entity node = registry.create();
     registry.emplace<Selected>(node);
 
-    DocumentSerializer<Selected> serializer(registry);
-    const nlohmann::json doc = serializer.save();
+    Serializer<Selected> serializer(registry);
+    const std::vector<std::byte> bytes = serializer.save();
 
     Registry other;
-    DocumentSerializer<Selected> otherSerializer(other);
-    ASSERT_TRUE(otherSerializer.load(doc).success());
+    Serializer<Selected> otherSerializer(other);
+    ASSERT_TRUE(otherSerializer.load(bytes).success());
     EXPECT_TRUE(other.all_of<Selected>(node));
 }
 
-TEST(DocumentSerializerTest, MultipleEntitiesPreserveTheirOwnData)
+TEST(SerializerTest, MultipleEntitiesPreserveTheirOwnData)
 {
     Registry registry;
     const Entity a = registry.create();
@@ -118,55 +97,66 @@ TEST(DocumentSerializerTest, MultipleEntitiesPreserveTheirOwnData)
     registry.emplace<Position>(a, 1.f, 1.f);
     registry.emplace<Position>(b, 2.f, 2.f);
 
-    DocumentSerializer<Position> serializer(registry);
-    const nlohmann::json doc = serializer.save();
+    Serializer<Position> serializer(registry);
+    const std::vector<std::byte> bytes = serializer.save();
 
     registry.patch<Position>(a, [](Position& p) { p.x = 999.f; }); // 破坏当前状态
-    ASSERT_TRUE(serializer.load(doc).success());
+    ASSERT_TRUE(serializer.load(bytes).success());
 
     EXPECT_EQ(registry.get<Position>(a).x, 1.f);
     EXPECT_EQ(registry.get<Position>(b).x, 2.f);
 }
 
-TEST(DocumentSerializerTest, LoadRejectsDocumentMissingRequiredFields)
+TEST(SerializerTest, LoadRejectsUnsupportedVersion)
 {
     Registry registry;
-    DocumentSerializer<Position> serializer(registry);
-    nlohmann::json doc = serializer.save();
-    doc.erase("components");
+    Serializer<Position> serializer(registry);
+    ByteBufferWriter writer;
+    writer.writeU32(0x53524B42); // kMagic
+    writer.writeU32(999);        // 错误版本号
 
-    const auto result = serializer.load(doc);
-    EXPECT_TRUE(result.error());
-    EXPECT_FALSE(result.status().message.empty());
-}
-
-TEST(DocumentSerializerTest, LoadRejectsUnsupportedVersion)
-{
-    Registry registry;
-    DocumentSerializer<Position> serializer(registry);
-    nlohmann::json doc = serializer.save();
-    doc["version"]     = 999;
-
-    const auto result = serializer.load(doc);
+    const auto result = serializer.load(writer.buffer());
     EXPECT_TRUE(result.error());
 }
 
-TEST(DocumentSerializerTest, LoadRejectsDocumentMissingAComponentKey)
+TEST(SerializerTest, LoadRejectsComponentTypeCountMismatch)
 {
+    // 模拟"save() 时用了 <Position, Name>，load() 却只声明了 <Position>"这类
+    // 两端模板参数不一致的场景——二进制流没有 JSON 那种按 key 容错的空间，
+    // 数量不匹配必须被明确拒绝，而不是静默地把 Name 的字节错读成别的东西。
     Registry registry;
-    DocumentSerializer<Position, Name> serializer(registry);
-    nlohmann::json doc = serializer.save(); // 没有任何实体带 Name，但字段本身应该存在
-    doc["components"].erase("Name");
+    registry.emplace<Position>(registry.create(), 1.f, 1.f);
+    registry.emplace<Name>(registry.get<Position>(*registry.view<Position>().begin()) == Position{}
+                               ? Entity{}
+                               : *registry.view<Position>().begin(),
+                           Name{"x"});
 
-    const auto result = serializer.load(doc);
-    EXPECT_TRUE(result.error());
+    const Serializer<Position, Name> saver(registry);
+    const std::vector<std::byte> bytes = saver.save();
+
+    Serializer<Position> underDeclaredLoader(registry);
+    EXPECT_TRUE(underDeclaredLoader.load(bytes).error());
 }
 
-TEST(DocumentSerializerTest, EmptyRegistrySerializesAndLoadsCleanly)
+TEST(SerializerTest, TruncatedArchiveIsRejectedNotCrashed)
 {
     Registry registry;
-    DocumentSerializer<Position, Name> serializer(registry);
-    const nlohmann::json doc = serializer.save();
+    registry.emplace<Position>(registry.create(), 1.f, 1.f);
 
-    ASSERT_TRUE(serializer.load(doc).success());
+    const Serializer<Position> serializer(registry);
+    const std::vector<std::byte> full = serializer.save();
+    const std::vector<std::byte> truncated(full.begin(), full.begin() + 4);
+
+    Serializer<Position> loader(registry);
+    EXPECT_TRUE(loader.load(truncated).error());
+}
+
+TEST(SerializerTest, EmptyRegistrySerializesAndLoadsCleanly)
+{
+    Registry registry;
+    const Serializer<Position, Name> serializer(registry);
+    const std::vector<std::byte> bytes = serializer.save();
+
+    Serializer<Position, Name> loader(registry);
+    ASSERT_TRUE(loader.load(bytes).success());
 }

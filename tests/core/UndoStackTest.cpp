@@ -20,47 +20,25 @@ struct Position
         return a.x == b.x && a.y == b.y;
     }
 };
-void to_json(nlohmann::json& j, const Position& p)
-{
-    j = {{"x", p.x}, {"y", p.y}};
-}
-void from_json(const nlohmann::json& j, Position& p)
-{
-    j.at("x").get_to(p.x);
-    j.at("y").get_to(p.y);
-}
 
 struct Selected
 {
 };
-// Selected 是空结构体标签组件：entt 的空类型优化意味着序列化时根本不会有
-// "值"需要写入/读出（同一现象在 SerializerTest.cpp 里也有说明），这两个
-// 重载因此实际不会被调用，用 [[maybe_unused]] 显式承认这一点。
-[[maybe_unused]] void to_json(nlohmann::json& j, const Selected&)
-{
-    j = nlohmann::json::object();
-}
-[[maybe_unused]] void from_json(const nlohmann::json&, Selected&)
-{
-}
 
-// Name 持有 std::string——不是可平凡拷贝类型，早期基于逐字节内存拷贝的
-// UndoStack 实现完全用不了这种字段（见 b_undostack.h 类文档"归档器"一节的
-// 历史说明）。现在换成复用 DocumentSerializer 的 JSON 归档器之后，这类字段
-// 可以直接参与撤销追踪，用它验证这一点确实生效。
+// Name 持有 std::string——不是可平凡拷贝类型
 struct Name
 {
     std::string value;
 
     friend bool operator==(const Name& a, const Name& b) noexcept { return a.value == b.value; }
 };
-void to_json(nlohmann::json& j, const Name& n)
+void archive_write(IArchiveWriter& ar, const Name& n)
 {
-    j = {{"value", n.value}};
+    ar.writeString(n.value);
 }
-void from_json(const nlohmann::json& j, Name& n)
+void archive_read(IArchiveReader& ar, Name& n)
 {
-    j.at("value").get_to(n.value);
+    n.value = ar.readString();
 }
 
 } // namespace
@@ -257,7 +235,7 @@ TEST(UndoStackTest, NonTriviallyCopyableComponentWithStdStringIsUndoable)
 {
     // 这是本文件最重要的一条回归测试：早期基于逐字节内存拷贝的实现要求
     // Components... 全部可平凡拷贝，std::string 字段完全没法用；现在换成
-    // 复用 DocumentSerializer 的 JSON 归档器之后应该可以正常参与撤销/重做。
+    // 复用 Serializer 的 JSON 归档器之后应该可以正常参与撤销/重做。
     Registry registry;
     const Entity node = registry.create();
     registry.emplace<Name>(node, Name{"first"});

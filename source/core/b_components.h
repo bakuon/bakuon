@@ -2,10 +2,8 @@
 
 #include <string>
 
-#include <nlohmann/json.hpp>
-
+#include "core/b_archive.h"
 #include "core/b_entity.h"
-#include "core/b_serializer.h"
 
 // ============================================================================
 // 第一组"共享词汇"组件 —— 给文档/图层/节点/面板条目这类 GUI 领域对象用。
@@ -39,14 +37,14 @@ namespace bakuon::core::components {
  * Visible/Locked/Enabled/Selected 都是 std::is_trivially_copyable_v 的，可以
  * 直接用于 UndoStack<Components...>（b_undostack.h，逐字节内存快照）；
  * Name/Tag 内部持有 std::string，不满足这个约束，只能用于
- * DocumentSerializer<Components...>（b_serializer.h，JSON 归档）。这正是
+ * Serializer<Components...>（b_serializer.h，JSON 归档）。这正是
  * b_undostack.h 类文档里提到的"持有堆内存的字段应该拆到不参与 undo 追踪的
  * 组件里"的一个具体示例——如果既想要名称可撤销、又不想为了这一个字符串字段
  * 放弃逐字节快照的性能，可以在业务层自己包一层"索引/id 而不是完整字符串"
  * 的可平凡拷贝组件，这里不越俎代庖替调用方做这个取舍。
  *
  * 全部类型都已经用 BAKUON_DECLARE_COMPONENT_NAME 声明好了稳定的序列化键名
- * （与类型同名的字符串），可以直接作为 DocumentSerializer<Components...> 的
+ * （与类型同名的字符串），可以直接作为 Serializer<Components...> 的
  * 模板参数使用，不需要调用方自己再声明一遍。
  */
 
@@ -118,68 +116,24 @@ struct Children
     std::vector<Entity> entities;
 };
 
-inline void to_json(nlohmann::json& j, const Name& v)
+// 见 core/b_archivable.h ArchivableComponent 概念约定，
+// entt::snapshot 和 entt::snapshot_loader 硬性要求 void operator(...)
+inline void archive_write(IArchiveWriter& ar, const Name& v)
 {
-    j = {{"value", v.value}};
+    ar.writeString(v.value);
 }
-inline void from_json(const nlohmann::json& j, Name& v)
+inline void archive_read(IArchiveReader& ar, Name& v)
 {
-    j.at("value").get_to(v.value);
-}
-
-inline void to_json(nlohmann::json& j, const Visible& v)
-{
-    j = {{"value", v.value}};
-}
-inline void from_json(const nlohmann::json& j, Visible& v)
-{
-    j.at("value").get_to(v.value);
+    v.value = ar.readString();
 }
 
-inline void to_json(nlohmann::json& j, const Locked& v)
+inline void archive_write(IArchiveWriter& ar, const Tag& v)
 {
-    j = {{"value", v.value}};
+    ar.writeString(v.value);
 }
-inline void from_json(const nlohmann::json& j, Locked& v)
+inline void archive_read(IArchiveReader& ar, Tag& v)
 {
-    j.at("value").get_to(v.value);
-}
-
-inline void to_json(nlohmann::json& j, const Enabled& v)
-{
-    j = {{"value", v.value}};
-}
-inline void from_json(const nlohmann::json& j, Enabled& v)
-{
-    j.at("value").get_to(v.value);
-}
-
-/// Selected 是空结构体标签组件：entt 的空类型优化意味着序列化时根本不会有
-/// "值"需要写入/读出（见 Registry::each()、tests/core/serializer_test.cpp 里
-/// 对同一现象的说明），这两个重载的存在只是为了满足 nlohmann::json /
-/// DocumentSerializer 在类型层面对 to_json/from_json 的静态要求。
-inline void to_json(nlohmann::json& j, const Selected&)
-{
-    j = nlohmann::json::object();
-}
-inline void from_json(const nlohmann::json&, Selected&)
-{
-}
-
-inline void to_json(nlohmann::json& j, const Tag& v)
-{
-    j = {{"value", v.value}};
-}
-inline void from_json(const nlohmann::json& j, Tag& v)
-{
-    j.at("value").get_to(v.value);
+    v.value = ar.readString();
 }
 
 } // namespace bakuon::core::components
-
-BAKUON_DECLARE_COMPONENT_NAME(bakuon::core::components::Name, "Name")
-BAKUON_DECLARE_COMPONENT_NAME(bakuon::core::components::Visible, "Visible")
-BAKUON_DECLARE_COMPONENT_NAME(bakuon::core::components::Locked, "Locked")
-BAKUON_DECLARE_COMPONENT_NAME(bakuon::core::components::Enabled, "Enabled")
-BAKUON_DECLARE_COMPONENT_NAME(bakuon::core::components::Selected, "Selected")
-BAKUON_DECLARE_COMPONENT_NAME(bakuon::core::components::Tag, "Tag")

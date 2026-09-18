@@ -3,101 +3,61 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <utility>
 
-#include <nlohmann/json.hpp>
-
+#include "core/b_archivable.h"
+#include "core/b_archive.h"
 #include "core/b_entity.h"
 #include "core/b_result.h"
 
 namespace bakuon::core {
 
 /// 补充：
-/// * component_version<T> traits
+/// * version<T> traits
 /// * load() 时对每个 component 类型做 from_v1_to_v2 的迁移钩子链
 
+namespace serializer_detail {
 /**
- * @brief 组件类型 -> 落盘时使用的稳定字符串键。
- *
- * @details DocumentSerializer 需要给每个 Components... 类型分配一个 JSON 里的
- * 键名，不能直接用 `typeid(T).name()`——那是编译器相关的、可能被 mangled 过的
- * 字符串，GCC/Clang/MSVC 三个工具链（见项目支持的编译环境）给出的结果互不相同，
- * 直接拿来当持久化格式的字段名会导致同一份文档换个编译器构建出来的程序就读不出来。
- *
- * 用法与 IExtensionPoint.h 里的 extension_iid<T> + BAKUON_DECLARE_EXTENSION_IID
- * 完全同源的设计：
- * @code
- *   struct Position { float x, y; };
- *   BAKUON_DECLARE_COMPONENT_NAME(Position, "Position")
- * @endcode
+ * @brief Serializer<Components...>（原 DocumentSerializer）内部使用的诊断信息
+ * 生成函数——不是模板，纯字符串拼接逻辑，独立放进 .cpp，避免头文件膨胀。
  */
-template<typename T>
-struct component_name
-{
-    static constexpr std::string_view value() noexcept { return {}; }
-};
-
-#define BAKUON_DECLARE_COMPONENT_NAME(Type, Name) \
-    template<> \
-    struct bakuon::core::component_name<Type> \
-    { \
-        static constexpr std::string_view value() noexcept { return Name; } \
-    };
-
-namespace serialize_detail {
+[[nodiscard]] std::string describeCountMismatch(std::size_t expected, std::uint32_t actual);
+[[nodiscard]] std::string describeNameMismatch(std::string_view expected, std::string_view actual);
+} // namespace serializer_detail
 
 /**
- * @brief entt::snapshot/entt::snapshot_loader 的 JSON 归档器：把归档过程中
- * 调用方逐个传进来的值（实体句柄本身、或者具体组件类型）依次追加/读回一个
- * nlohmann::json 数组。
+ * @brief 编译期已知组件集合的整体序列化器（与 ComponentArchive 共享同一套底层原语）。
  *
- * @warning 要求每个参与序列化的 Components... 类型本身已经具备 nlohmann::json
- * 认识的 to_json()/from_json()（ADL 自由函数，或者用 NLOHMANN_DEFINE_TYPE_*
- * 系列宏在类型定义里生成）——这是 nlohmann::json 库本身的标准用法，
- * DocumentSerializer 不做任何额外的反射/代码生成，组件类型自己负责这一层。
- */
-struct JsonWriter
-{
-    nlohmann::json array = nlohmann::json::array();
-
-    template<typename T>
-    void operator()(const T& value)
-    {
-        array.push_back(value);
-    }
-};
-
-struct JsonReader
-{
-    const nlohmann::json& array;
-    std::size_t index = 0;
-
-    template<typename T>
-    void operator()(T& value)
-    {
-        value = array.at(index).template get<T>();
-        ++index;
-    }
-};
-
-} // namespace serialize_detail
-
-/**
- * @brief 基于 entt::snapshot/entt::snapshot_loader 的 JSON 文档序列化器。
- * @todo 重命名为 Serializer / Archive
- *
- * @tparam Components 参与序列化的组件类型（至少一个），每个类型都必须：
- *   1. 通过 BAKUON_DECLARE_COMPONENT_NAME 声明一个稳定的字符串键；
- *   2. 具备 nlohmann::json 认识的 to_json()/from_json()（见 JsonWriter 的说明）。
+ * @tparam Components 参与序列化的组件类型（至少一个）。每个类型必须：
+ *   - 可平凡拷贝（`std::is_trivially_copyable_v`），此时零代码接入；或
+ *   - 提供一对 ADL 自由函数 `archive_write(IArchiveWriter&, const T&)` /
+ *     `archive_read(IArchiveReader&, T&)`（见 b_componentarchive.h 的
+ *     `ArchivableComponent` 概念）。
  *
  * ## 与 UndoStack 的分工
  * UndoStack（b_undostack.h）同样基于 entt::snapshot/snapshot_loader，但用的是
  * 逐字节内存拷贝的二进制归档器，只支持"可平凡拷贝"的组件、只用于进程内的
- * 撤销/重做历史，从不落盘。DocumentSerializer 换成 JSON 归档器：牺牲一些性能
+ * 撤销/重做历史，从不落盘。Serializer 换成 JSON 归档器：牺牲一些性能
  * 和体积，换来（a）人类可读、可跨进程/跨版本迁移的落盘格式；（b）支持
  * std::string 等非平凡可拷贝的字段（只要组件类型自己实现了 to_json/from_json）。
  * 两者都不重复发明"怎么遍历整个 Registry 的实体和组件"这件事——那正是
  * entt::snapshot 已经做好、经过 entt 自身测试覆盖的部分。
+ *
+ * ## 与 ComponentArchive 的关系
+ * 本类是"类型集合编译期固定"场景的薄封装——文档/场景全量存盘这类场景，
+ * 参与序列化的类型通常在写代码时就已知，不需要 `ComponentArchive`
+ * 的运行期动态注册能力。两者共用 `EnttWriteAdapter`/`EnttReadAdapter`/
+ * `IArchiveWriter`/`IArchiveReader`，因此：
+ *   - 想换序列化后端（二进制 → Protobuf/FlatBuffers）：只需要新写一对
+ *     `IArchiveWriter`/`IArchiveReader` 实现，`Serializer`/组件代码都不用改；
+ *   - 想让插件组件也参与（编译期不可知的类型集合）：改用 `ComponentArchive`。
+ *
+ * ## 二进制格式（与旧版 JSON 的关键差异）
+ * JSON 版本把各组件放进一个 `{"Name": [...], "Tag": [...]}` 对象，按 key
+ * 查找，`Components...` 的顺序与文件里的字段顺序无关。二进制流没有这种
+ * 随机访问能力，`entt::snapshot_loader` 本身也要求同一会话内按固定顺序
+ * `.get<T1>().get<T2>()...`——因此 `save()`/`load()` 两端**必须使用完全相同
+ * 顺序的 `Components...` 列表**。每个类型的名字仍然会被写进流里，但只用于
+ * 加载时逐位校验、给出清晰的不匹配诊断，不再承担"按名字查找"的职责。
  *
  * ## 已知限制（v1，刻意不做）
  * 不处理"文档里缺少某个 Components 类型"这类模式演进场景（比如老文档没有
@@ -105,120 +65,144 @@ struct JsonReader
  * 不会静默跳过。前向/后向兼容的 schema 演进留给未来按实际需要再设计。
  *
  * @code
- *   struct Position { float x, y; };
- *   void to_json(nlohmann::json& j, const Position& p) { j = {{"x", p.x}, {"y", p.y}}; }
- *   void from_json(const nlohmann::json& j, Position& p) { j.at("x").get_to(p.x); j.at("y").get_to(p.y); }
- *   BAKUON_DECLARE_COMPONENT_NAME(Position, "Position")
+ *   struct Position { float x, y; }; // 可平凡拷贝：零代码
+ *   struct Name { std::string value; };
+ *   void archive_write(IArchiveWriter& ar, const Name& n) { ar.writeString(n.value); }
+ *   void archive_read(IArchiveReader& ar, Name& n) { n.value = ar.readString(); }
  *
- *   bakuon::core::Registry registry;
- *   bakuon::core::DocumentSerializer<Position> serializer(registry);
- *
- *   const nlohmann::json doc = serializer.save();
- *   // ... doc.dump() 写入文件 ...
- *
- *   if (auto result = serializer.load(doc); result.error()) {
- *       // result.status().message 里是失败原因
- *   }
+ *   Serializer<Position, Name> serializer(registry);
+ *   const std::vector<std::byte> bytes = serializer.save();
+ *   // ... 落盘/跨进程传输 ...
+ *   Serializer<Position, Name> loader(otherRegistry);
+ *   if (auto result = loader.load(bytes); result.error()) { ... }
  * @endcode
  */
 template<typename... Components>
-class DocumentSerializer
+class Serializer
 {
-    static_assert(sizeof...(Components) > 0,
-                  "DocumentSerializer 至少需要指定一个要序列化的组件类型");
+    static_assert(sizeof...(Components) > 0, "Serializer 至少需要指定一个要序列化的组件类型");
+    static_assert(((ArchivableComponent<Components> || std::is_trivially_copyable_v<Components>)
+                   && ...),
+                  "每个 Components 类型必须可平凡拷贝，或提供一对 ADL 自由函数 "
+                  "archive_write(IArchiveWriter&, const T&) / archive_read(IArchiveReader&, T&)");
 
 public:
-    explicit DocumentSerializer(Registry& registry)
+    explicit Serializer(Registry& registry)
         : m_registry(registry)
     {
     }
 
-    /// 把 Registry 当前的完整实体集合与全部追踪组件序列化成一份 JSON 文档。
-    [[nodiscard]] nlohmann::json save() const
+    /// 便捷重载：使用默认二进制后端（ByteBufferWriter），直接返回完整字节序列。
+    [[nodiscard]] std::vector<std::byte> save() const
     {
-        nlohmann::json doc;
-        doc["version"] = kFormatVersion;
-
-        serialize_detail::JsonWriter entityWriter;
-        Snapshot{m_registry}.template get<Entity>(entityWriter);
-        doc["entities"] = std::move(entityWriter.array);
-
-        nlohmann::json componentsObj = nlohmann::json::object();
-        (writeComponentInto<Components>(componentsObj), ...);
-        doc["components"] = std::move(componentsObj);
-
-        return doc;
+        ByteBufferWriter writer;
+        save(writer);
+        return writer.takeBuffer();
     }
 
     /**
-     * @brief 从 save() 产出的 JSON 文档整体恢复 Registry 的状态（覆盖当前内容）。
-     * @return 成功返回 Ok()；文档格式不对（缺字段/字段类型不匹配/版本不认识）
-     *         返回 Fail<void>(StatusCode::InvalidArgument, 具体原因)，此时
-     *         Registry 的状态是未定义的部分恢复结果——调用方应当把这种失败
-     *         当作"整份文档不可用"处理，不要假设失败后 Registry 还是干净的
-     *         旧状态（毕竟 clear() 已经先发生了）。
+     * @brief 序列化进调用方提供的任意 IArchiveWriter 实现。
+     * @note 本类完全不知道 writer 背后是什么具体格式——这正是"格式与组件
+     *       解耦"这条设计约束在写入路径上的体现。
      */
-    [[nodiscard]] Result<void> load(const nlohmann::json& doc)
+    void save(IArchiveWriter& writer) const
+    {
+        writer.writeU32(kMagic);
+        writer.writeU32(kFormatVersion);
+
+        ArchiveWritable entityAdapter(writer);
+        const Snapshot snapshot{m_registry};
+        snapshot.template get<Entity>(entityAdapter);
+
+        writer.writeU32(static_cast<std::uint32_t>(sizeof...(Components)));
+        (writeComponent<Components>(snapshot, writer), ...);
+    }
+
+    /// 便捷重载：从 save() 产出的一段连续内存整体恢复。
+    [[nodiscard]] Result<void> load(std::span<const std::byte> bytes)
+    {
+        ByteBufferReader reader(bytes);
+        return load(reader);
+    }
+
+    /**
+     * @brief 从调用方提供的任意 IArchiveReader 整体恢复（覆盖 Registry 当前内容）。
+     * @return 成功返回 Ok()；magic/version 不匹配、组件类型数量或顺序与
+     *         Components... 声明不一致、或数据被截断，均返回 Fail<void>。
+     *         失败时 Registry 已经被 clear() 过，调用方应把这种失败当作
+     *         "整份数据不可用"处理，不要假设失败后 Registry 还是干净旧状态。
+     */
+    [[nodiscard]] Result<void> load(IArchiveReader& reader)
     {
         try {
-            if (!doc.contains("version") || !doc.contains("entities")
-                || !doc.contains("components")) {
-                return Fail<void>(StatusCode::InvalidArgument,
-                                  "文档缺少 version/entities/components 字段之一");
+            const auto magic = reader.readU32();
+            if (magic != kMagic) {
+                return Fail<void>(StatusCode::InvalidArgument, "归档 magic 不匹配，不是合法文件");
             }
-            if (doc.at("version").get<int>() != kFormatVersion) {
+            const auto version = reader.readU32();
+            if (version != kFormatVersion) {
                 return Fail<void>(StatusCode::InvalidArgument,
-                                  "文档格式版本不受支持（期望 " + std::to_string(kFormatVersion)
+                                  "归档格式版本不受支持（期望 " + std::to_string(kFormatVersion)
                                       + "）");
             }
 
             m_registry.clear();
 
+            ArchiveReadable entityAdapter(reader);
             SnapshotLoader loader{m_registry};
-            serialize_detail::JsonReader entityReader{doc.at("entities")};
-            loader.template get<Entity>(entityReader);
+            loader.template get<Entity>(entityAdapter);
 
-            const nlohmann::json& componentsObj = doc.at("components");
-            (readComponentFrom<Components>(loader, componentsObj), ...);
+            const auto count = reader.readU32();
+            if (count != sizeof...(Components)) {
+                return Fail<void>(StatusCode::InvalidArgument,
+                                  serializer_detail::describeCountMismatch(sizeof...(Components),
+                                                                           count));
+            }
 
+            m_lastError.clear();
+            // && 短路：一旦某个位置的类型名对不上就立即停止，不再从 reader
+            // 继续读取——错位之后的字节已经不可信，读越多越可能变成越界访问。
+            const bool ok = (readComponent<Components>(loader, reader) && ...);
+            if (!ok) {
+                return Fail<void>(StatusCode::InvalidArgument, m_lastError);
+            }
             return Ok();
-        } catch (const nlohmann::json::exception& e) {
-            return Fail<void>(StatusCode::InvalidArgument, e.what());
+        } catch (const ArchiveError& e) {
+            return Fail<void>(StatusCode::DataLoss, e.what());
         }
     }
 
+    [[nodiscard]] static constexpr std::size_t count() noexcept { return sizeof...(Components); }
+
 private:
     template<typename T>
-    [[nodiscard]] static constexpr std::string_view keyOf()
+    void writeComponent(const Snapshot& snapshot, IArchiveWriter& writer) const
     {
-        static_assert(!component_name<T>::value().empty(),
-                      "DocumentSerializer 的每个 Components 类型都必须先用 "
-                      "BAKUON_DECLARE_COMPONENT_NAME 声明一个非空的字符串键");
-        return component_name<T>::value();
+        writer.writeString(typeName<T>());
+        ArchiveWritable adapter(writer);
+        snapshot.template get<T>(adapter);
     }
 
     template<typename T>
-    void writeComponentInto(nlohmann::json& componentsObj) const
+    bool readComponent(SnapshotLoader& loader, IArchiveReader& reader)
     {
-        serialize_detail::JsonWriter writer;
-        Snapshot{m_registry}.template get<T>(writer);
-        componentsObj[std::string(keyOf<T>())] = std::move(writer.array);
-    }
-
-    template<typename T>
-    void readComponentFrom(SnapshotLoader& loader, const nlohmann::json& componentsObj)
-    {
-        // componentsObj.at() 对缺失的键会自己抛出 nlohmann::json::out_of_range，
-        // 附带清晰的错误信息；不需要我们手工构造异常，外层 load() 的
-        // catch (const nlohmann::json::exception&) 会统一接住。
-        serialize_detail::JsonReader reader{componentsObj.at(std::string(keyOf<T>()))};
-        loader.template get<T>(reader);
+        const std::string storedName    = reader.readString();
+        const std::string_view expected = typeName<T>();
+        if (storedName != expected) {
+            m_lastError = serializer_detail::describeNameMismatch(expected, storedName);
+            return false;
+        }
+        ArchiveReadable adapter(reader);
+        loader.template get<T>(adapter);
+        return true;
     }
 
 private:
-    static constexpr int kFormatVersion = 1;
+    static constexpr std::uint32_t kMagic         = 0x53524B42; // 'BKRS' ('Bakuon Serializer')
+    static constexpr std::uint32_t kFormatVersion = 1;
 
     Registry& m_registry;
+    std::string m_lastError;
 };
 
 } // namespace bakuon::core
