@@ -125,7 +125,7 @@ private:
 * - 明确地针对一个注册表和一个稳定 ID 生成器进行构造（因此调用者可
 *   控制 ID 空间的分区，例如每个沙箱工作线程使用一个生成器）；
 * - 其索引作为普通成员状态而非 entt::registry.ctx() ---隐藏状态被持有，这设计上避
-*   免了其进入 UndoStack/DocumentSerializer 的 clear()+reload 
+*   免了其进入 UndoStack/Serializer 的 clear()+reload 
 *   循环——该注册表旨在用于批处理克隆流程自身的记录管理，而非用于保存撤销快照。
 *
 * 两者可以安全地共存于同一注册表中：它们会透明地操作相同的稳定标识符（StableId）组件类型。

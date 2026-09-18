@@ -107,7 +107,7 @@ TEST(Identity, DestroyWithoutIdentityIsIgnored)
 }
 
 // ----------------------------------------------------------------------------
-// StableId 与 UndoStack / DocumentSerializer 的交互
+// StableId 与 UndoStack / Serializer 的交互
 //
 // 这两个类都是靠 registry.clear() 之后再整体 reload 来实现"回到某个
 // 历史时间点/文档状态"的（见 b_undostack.h / b_serializer.h）。StableId 的

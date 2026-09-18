@@ -170,7 +170,7 @@ public:
         }
     }
 
-    // TODO: 使用内置的 DocumentSerializer 类型来实现序列化功能
+    // TODO: 使用内置的 Serializer 类型来实现序列化功能
     [[nodiscard]] std::vector<Blob> serialize(const Registry& registry, Entity entity,
                                               std::span<const std::uint32_t> exclude = {}) const
     {
@@ -195,7 +195,7 @@ public:
         return blobs;
     }
 
-    // TODO: 使用内置的 DocumentSerializer 类型来实现序列化功能
+    // TODO: 使用内置的 Serializer 类型来实现序列化功能
     void deserialize(Registry& registry, Entity entity, std::span<const Blob> blobs) const
     {
         for (const auto& blob : blobs) {
