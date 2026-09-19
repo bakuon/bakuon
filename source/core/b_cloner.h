@@ -3,7 +3,7 @@
 #include <memory>
 
 #include "core/b_entity.h"
-#include "core/b_identity.h"
+#include "core/b_identifier.h"
 #include "core/b_mapper.h"
 #include "core/b_stableid.h"
 
@@ -51,7 +51,7 @@ public:
     {
     }
 
-    Cloner(const Registry &src, const Identity &srcId, Registry &dst, Identity &dstId)
+    Cloner(const Registry &src, const Identifier &srcId, Registry &dst, Identifier &dstId)
         : m_srcReg(&src)
         , m_srcId(&srcId)
         , m_dstReg(&dst)
@@ -60,13 +60,13 @@ public:
     {
     }
 
-    void setSource(const Registry &src, const Identity &srcId)
+    void setSource(const Registry &src, const Identifier &srcId)
     {
         m_srcReg = &src;
         m_srcId  = &srcId;
     }
 
-    void setDestination(Registry &dst, Identity &dstId)
+    void setDestination(Registry &dst, Identifier &dstId)
     {
         m_dstReg = &dst;
         m_dstId  = &dstId;
@@ -256,10 +256,10 @@ private:
     }
 
 private:
-    const Registry *m_srcReg = nullptr;
-    const Identity *m_srcId  = nullptr;
-    Registry *m_dstReg       = nullptr;
-    Identity *m_dstId        = nullptr;
+    const Registry *m_srcReg  = nullptr;
+    const Identifier *m_srcId = nullptr;
+    Registry *m_dstReg        = nullptr;
+    Identifier *m_dstId       = nullptr;
 
     std::unique_ptr<ComponentMapper> m_mapper;
 };

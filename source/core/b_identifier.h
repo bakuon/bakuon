@@ -120,7 +120,8 @@ private:
 
 /**
 * @brief 非正式化、基于生成器的 O(1) 双向 Handle <-> StableId 注册表，
-* 通过 on_construct/on_destroy 回调实现自动清理。
+*        通过 on_construct/on_destroy 回调实现自动清理。
+* @todo 重命名为 Identifier
 *
 * - 明确地针对一个注册表和一个稳定 ID 生成器进行构造（因此调用者可
 *   控制 ID 空间的分区，例如每个沙箱工作线程使用一个生成器）；
@@ -133,16 +134,16 @@ private:
 * 不可复制/不可移动：onConstruct/onDestroy lambda 会捕获 `this`，  
 * 原因与 Registry 自身的不可移动策略相同（参见 b_registry.h）。
 */
-class Identity
+class Identifier
 {
 public:
-    explicit Identity(Registry& registry, StableIdGenerator* generator = nullptr);
-    ~Identity();
+    explicit Identifier(Registry& registry, StableIdGenerator* generator = nullptr);
+    ~Identifier();
 
-    Identity(const Identity&)            = delete;
-    Identity& operator=(const Identity&) = delete;
-    Identity(Identity&&)                 = delete;
-    Identity& operator=(Identity&&)      = delete;
+    Identifier(const Identifier&)            = delete;
+    Identifier& operator=(const Identifier&) = delete;
+    Identifier(Identifier&&)                 = delete;
+    Identifier& operator=(Identifier&&)      = delete;
 
     void setGenerator(StableIdGenerator* generator);
 

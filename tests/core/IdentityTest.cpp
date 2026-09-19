@@ -2,10 +2,10 @@
 
 #include <unordered_set>
 
-#include <bakuon/core/Identity.h>
+#include <bakuon/core/Identifier.h>
 
 using Snowflake = bakuon::core::SnowflakeGenerator;
-using bakuon::core::Identity;
+using bakuon::core::Identifier;
 using bakuon::core::Registry;
 using bakuon::core::StableId;
 using bakuon::core::StableIdError;
@@ -33,77 +33,77 @@ TEST(SnowflakeGenerator, UniqueMonotonicAndDecodable)
     }
 }
 
-TEST(Identity, BidirectionalInsertAndSignalDrivenDelete)
+TEST(Identifier, BidirectionalInsertAndSignalDrivenDelete)
 {
     Registry registry;
     Snowflake generator{1};
-    Identity identity{registry, &generator};
+    Identifier identifier{registry, &generator};
 
     const auto entity = registry.create();
-    const auto sid    = identity.ensure(entity);
+    const auto sid    = identifier.ensure(entity);
 
     EXPECT_TRUE(sid.isValid());
-    EXPECT_EQ(identity.size(), 1u);
-    EXPECT_EQ(identity.find(sid), entity);
-    EXPECT_EQ(identity.get(entity), sid);
+    EXPECT_EQ(identifier.size(), 1u);
+    EXPECT_EQ(identifier.find(sid), entity);
+    EXPECT_EQ(identifier.get(entity), sid);
     EXPECT_TRUE(registry.all_of<StableId>(entity));
     EXPECT_EQ(registry.get<StableId>(entity), sid);
 
     registry.destroy(entity);
 
-    EXPECT_EQ(identity.size(), 0u);
-    EXPECT_EQ(identity.find(sid), std::nullopt);
-    EXPECT_FALSE(identity.contains(sid));
+    EXPECT_EQ(identifier.size(), 0u);
+    EXPECT_EQ(identifier.find(sid), std::nullopt);
+    EXPECT_FALSE(identifier.contains(sid));
 }
 
-TEST(Identity, RecycledEntityIndexGetsNewStableId)
+TEST(Identifier, RecycledEntityIndexGetsNewStableId)
 {
     Registry registry;
     Snowflake generator{2};
-    Identity identity{registry, &generator};
+    Identifier identifier{registry, &generator};
 
     const auto first       = registry.create();
-    const auto first_id    = identity.ensure(first);
+    const auto first_id    = identifier.ensure(first);
     const auto first_index = bakuon::core::toEntity(first);
     registry.destroy(first);
 
     const auto second    = registry.create();
-    const auto second_id = identity.ensure(second);
+    const auto second_id = identifier.ensure(second);
 
     EXPECT_EQ(bakuon::core::toEntity(second), first_index);
     EXPECT_NE(first, second);
     EXPECT_NE(first_id, second_id);
-    EXPECT_EQ(identity.find(first_id), std::nullopt);
-    EXPECT_EQ(identity.find(second_id), second);
+    EXPECT_EQ(identifier.find(first_id), std::nullopt);
+    EXPECT_EQ(identifier.find(second_id), second);
 }
 
-TEST(Identity, BindRestoresIdentityForUndoRedo)
+TEST(Identifier, BindRestoresIdentityForUndoRedo)
 {
     Registry registry;
     Snowflake generator{3};
-    Identity identity{registry, &generator};
+    Identifier identifier{registry, &generator};
 
     const auto original = registry.create();
-    const auto sid      = identity.ensure(original);
+    const auto sid      = identifier.ensure(original);
     registry.destroy(original);
 
     const auto restored = registry.create();
-    identity.assign(restored, sid);
+    identifier.assign(restored, sid);
 
-    EXPECT_EQ(identity.find(sid), restored);
-    EXPECT_EQ(identity.get(restored), sid);
+    EXPECT_EQ(identifier.find(sid), restored);
+    EXPECT_EQ(identifier.get(restored), sid);
 }
 
-TEST(Identity, DestroyWithoutIdentityIsIgnored)
+TEST(Identifier, DestroyWithoutIdentityIsIgnored)
 {
     Registry registry;
     Snowflake generator{5};
-    Identity identity{registry, &generator};
+    Identifier identifier{registry, &generator};
 
     const auto transient = registry.create();
-    EXPECT_FALSE(identity.contains(transient));
+    EXPECT_FALSE(identifier.contains(transient));
     registry.destroy(transient);
-    EXPECT_EQ(identity.size(), 0u);
+    EXPECT_EQ(identifier.size(), 0u);
 }
 
 // ----------------------------------------------------------------------------

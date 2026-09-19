@@ -4,4 +4,4 @@
 // bakuon::core 门面头文件（facade）—— 参见 Entity.h 顶部的说明。
 // ============================================================================
 
-#include "core/b_identity.h" // IWYU pragma: export
+#include "core/b_identifier.h" // IWYU pragma: export

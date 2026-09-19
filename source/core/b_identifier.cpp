@@ -1,4 +1,4 @@
-#include "core/b_identity.h"
+#include "core/b_identifier.h"
 
 #include <chrono>
 #include <sstream>
@@ -121,7 +121,7 @@ std::uint64_t SnowflakeGenerator::assemble(std::uint64_t seconds, std::uint64_t 
     return id; // 31+16+16 = 63 位已用满，最高位(符号位)天然留空为 0。
 }
 
-class Identity::IdentityImpl
+class Identifier::IdentityImpl
 {
 public:
     IdentityImpl(Registry& reg, StableIdGenerator* gen)
@@ -143,13 +143,13 @@ public:
     std::unordered_map<Entity, StableId> entity_to_id;
 };
 
-Identity::Identity(Registry& registry, StableIdGenerator* generator)
+Identifier::Identifier(Registry& registry, StableIdGenerator* generator)
     : m_impl(new IdentityImpl(registry, generator))
 {
-    m_impl->construct_conn = registry.on_construct<StableId>().connect<&Identity::constructed>(
+    m_impl->construct_conn = registry.on_construct<StableId>().connect<&Identifier::constructed>(
         *this);
-    m_impl->destroy_conn = registry.on_destroy<StableId>().connect<&Identity::destroyed>(*this);
-    m_impl->update_conn  = registry.on_destroy<StableId>().connect<&Identity::updated>(*this);
+    m_impl->destroy_conn = registry.on_destroy<StableId>().connect<&Identifier::destroyed>(*this);
+    m_impl->update_conn  = registry.on_destroy<StableId>().connect<&Identifier::updated>(*this);
 
     // 填充：钩子仅能看到*未来的*事件，因此在本注册对象创建之前已存在的任何 StableId 组件都需要提前索引。
     m_impl->registry.view<StableId>().each([this](Entity entity, const StableId& id) {
@@ -160,13 +160,13 @@ Identity::Identity(Registry& registry, StableIdGenerator* generator)
     });
 }
 
-Identity::~Identity()
+Identifier::~Identifier()
 {
     delete m_impl;
     m_impl = nullptr;
 }
 
-void Identity::setGenerator(StableIdGenerator* generator)
+void Identifier::setGenerator(StableIdGenerator* generator)
 {
     m_impl->generator = generator;
     if (!m_impl->generator) {
@@ -174,12 +174,12 @@ void Identity::setGenerator(StableIdGenerator* generator)
     }
 }
 
-std::uint64_t Identity::mint() const noexcept
+std::uint64_t Identifier::mint() const noexcept
 {
     return m_impl->generator->next();
 }
 
-StableId Identity::ensure(Entity entity)
+StableId Identifier::ensure(Entity entity)
 {
     if (!m_impl->registry.valid(entity)) {
         throw StableIdError("cannot mint StableId to an invalid entity");
@@ -194,7 +194,7 @@ StableId Identity::ensure(Entity entity)
     return id;
 }
 
-void Identity::assign(Entity entity, StableId id)
+void Identifier::assign(Entity entity, StableId id)
 {
     if (!m_impl->registry.valid(entity)) {
         throw StableIdError("cannot assign StableId to an invalid entity");
@@ -217,40 +217,40 @@ void Identity::assign(Entity entity, StableId id)
     m_impl->registry.emplace_or_replace<StableId>(entity, id);
 }
 
-std::optional<Entity> Identity::find(StableId id) const noexcept
+std::optional<Entity> Identifier::find(StableId id) const noexcept
 {
     const auto it = m_impl->id_to_entity.find(id);
     return it != m_impl->id_to_entity.end() ? std::optional(it->second) : std::nullopt;
 }
 
-std::optional<StableId> Identity::get(Entity entity) const noexcept
+std::optional<StableId> Identifier::get(Entity entity) const noexcept
 {
     const auto it = m_impl->entity_to_id.find(entity);
     return it != m_impl->entity_to_id.end() ? std::optional(it->second) : std::nullopt;
 }
 
-bool Identity::contains(Entity entity) const noexcept
+bool Identifier::contains(Entity entity) const noexcept
 {
     return this->get(entity).has_value();
 }
 
-bool Identity::contains(StableId id) const noexcept
+bool Identifier::contains(StableId id) const noexcept
 {
     return this->find(id).has_value();
 }
 
-void Identity::reserve(std::size_t size)
+void Identifier::reserve(std::size_t size)
 {
     m_impl->id_to_entity.reserve(size);
     m_impl->entity_to_id.reserve(size);
 }
 
-std::size_t Identity::size() const noexcept
+std::size_t Identifier::size() const noexcept
 {
     return m_impl->id_to_entity.size();
 }
 
-void Identity::constructed(Registry& registry, Entity entity)
+void Identifier::constructed(Registry& registry, Entity entity)
 {
     if (const auto& id = registry.get<StableId>(entity); id.isValid()) {
         m_impl->id_to_entity[id]     = entity;
@@ -258,7 +258,7 @@ void Identity::constructed(Registry& registry, Entity entity)
     }
 }
 
-void Identity::destroyed(Registry& /*registry*/, Entity entity)
+void Identifier::destroyed(Registry& /*registry*/, Entity entity)
 {
     const auto it = m_impl->entity_to_id.find(entity);
     if (it == m_impl->entity_to_id.end()) {
@@ -268,7 +268,7 @@ void Identity::destroyed(Registry& /*registry*/, Entity entity)
     m_impl->entity_to_id.erase(it);
 }
 
-void Identity::updated(Registry& /*registry*/, Entity entity)
+void Identifier::updated(Registry& /*registry*/, Entity entity)
 {
     const auto it = m_impl->entity_to_id.find(entity);
     if (it == m_impl->entity_to_id.end()) {

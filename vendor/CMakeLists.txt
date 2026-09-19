@@ -28,7 +28,7 @@ if(BAKUON_BUILD_CORE)
         EXCLUDE_FROM_ALL YES
     )
 
-    # nlohmann::json —— header-only、MIT 协议的 JSON 库，用于 core::DocumentSerializer
+    # nlohmann::json —— header-only、MIT 协议的 JSON 库，用于 core::Serializer
     # 的落盘格式（entt::snapshot/snapshot_loader 的 JSON 归档器实现），见
     # source/core/b_serializer.h 的类文档。与 EnTT 同样按需拉取，不强加给不需要
     # core 的下游集成。
