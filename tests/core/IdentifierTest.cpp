@@ -2,9 +2,11 @@
 
 #include <unordered_set>
 
+#include <bakuon/core/Entity.h>
 #include <bakuon/core/Identifier.h>
 
 using Snowflake = bakuon::core::SnowflakeGenerator;
+using bakuon::core::Entity;
 using bakuon::core::Identifier;
 using bakuon::core::Registry;
 using bakuon::core::StableId;
@@ -52,7 +54,7 @@ TEST(Identifier, BidirectionalInsertAndSignalDrivenDelete)
     registry.destroy(entity);
 
     EXPECT_EQ(identifier.size(), 0u);
-    EXPECT_EQ(identifier.find(sid), std::nullopt);
+    EXPECT_TRUE(identifier.find(sid) == bakuon::core::nullentity);
     EXPECT_FALSE(identifier.contains(sid));
 }
 
@@ -73,7 +75,7 @@ TEST(Identifier, RecycledEntityIndexGetsNewStableId)
     EXPECT_EQ(bakuon::core::toEntity(second), first_index);
     EXPECT_NE(first, second);
     EXPECT_NE(first_id, second_id);
-    EXPECT_EQ(identifier.find(first_id), std::nullopt);
+    EXPECT_TRUE(identifier.find(first_id) == bakuon::core::nullentity);
     EXPECT_EQ(identifier.find(second_id), second);
 }
 
