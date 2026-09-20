@@ -1,10 +1,10 @@
 #pragma once
 
 #include <memory>
+#include <span>
 
 #include "core/b_entity.h"
 #include "core/b_identifier.h"
-#include "core/b_mapper.h"
 #include "core/b_stableid.h"
 
 /// 复制粘贴是编辑器最基础的交互，且能验证 Reference 设计是否合理
@@ -29,15 +29,18 @@
 */
 namespace bakuon::core {
 
+/// old StableId -> new (cloned) StableId, scoped to a single batch-clone call.
+using StableIdRemap = std::unordered_map<StableId, StableId>;
+
 class Cloner
 {
 public:
     // TODO: 可尝试使用带状态消息的 core::Result<T>
     struct Result
     {
-        Entity clonedEntity{nullentity};
-        StableId sourceId{};
-        StableId clonedid{};
+        Entity entity{nullentity};
+        StableId source{};
+        StableId cloned{};
     };
 
     struct BatchResult
@@ -46,17 +49,13 @@ public:
         StableIdRemap remap;
     };
 
-    Cloner()
-        : m_mapper(std::make_unique<ComponentMapper>())
-    {
-    }
+    Cloner() = default;
 
     Cloner(const Registry &src, const Identifier &srcId, Registry &dst, Identifier &dstId)
         : m_srcReg(&src)
         , m_srcId(&srcId)
         , m_dstReg(&dst)
         , m_dstId(&dstId)
-        , m_mapper(std::make_unique<ComponentMapper>())
     {
     }
 
@@ -73,18 +72,53 @@ public:
     }
 
     template<typename Component>
-    void addComponent(std::string name)
+    void addComponent(std::string name = {})
     {
-        m_mapper->addMapping<Component>(std::move(name));
+        static_assert(std::is_copy_constructible_v<Component> || std::is_empty_v<Component>,
+                      "Component must be copy-constructible to participate in cloning");
+
+        Entry entry;
+        entry.type            = typeHash<Component>();
+        entry.name            = name.empty() ? std::string{typeName<Component>()} : std::move(name);
+        entry.clone           = &cloner<Component>;
+        entry.snapshotEnabled = true;
+        m_entries[entry.type] = std::move(entry);
     }
 
     template<typename Component>
-    void removeComponent(std::string name)
+    void removeComponent()
     {
-        m_mapper->removeMapping<Component>(std::move(name));
+        const auto id = typeHash<Component>();
+        auto it       = m_entries.find(id);
+        if (it == m_entries.end()) {
+            return;
+        }
+        m_entries.erase(it);
     }
 
-    [[nodiscard]] std::size_t totalComponents() const noexcept { return m_mapper->size(); }
+    /// Relationship fix-up after a batch clone. `fn` sees the *clone's* component.
+    /// Fn signature: `void fn(Component& component, const StableIdRemap& remap)`
+    template<typename Component, typename Fn>
+    void setRemapper(Fn fn)
+    {
+        const auto id = typeHash<Component>();
+        auto it       = m_entries.find(id);
+        if (it == m_entries.end()) {
+            addComponent<Component>();
+            it = m_entries.find(id);
+        }
+        it->second.remap = [fn](Registry &registry, Entity entity, const StableIdRemap &remap) {
+            if (!registry.template all_of<Component>(entity)) {
+                return;
+            }
+            if constexpr (std::is_empty_v<Component>) {
+                (void) fn;
+                (void) remap;
+            } else {
+                fn(registry.template get<Component>(entity), remap);
+            }
+        };
+    }
 
     [[nodiscard]] Result clone(Entity source) { return cloneEntity(source, true); }
 
@@ -94,7 +128,7 @@ public:
             throw std::runtime_error("Cloner not initialized");
         }
 
-        const auto sourceEntity = m_srcId->find(source).value_or({});
+        const auto sourceEntity = m_srcId->find(source);
         if (!m_srcReg->valid(sourceEntity)) {
             throw StableIdError("clone source StableId does not resolve to a live entity");
         }
@@ -102,7 +136,7 @@ public:
         return cloneEntity(sourceEntity, true);
     }
 
-    [[nodiscard]] BatchResult cloneBatch(std::span<Entity> sources)
+    [[nodiscard]] BatchResult cloneBatch(std::span<const Entity> sources)
     {
         if (!m_srcReg || !m_srcId || !m_dstReg || !m_dstId) {
             throw std::runtime_error("Cloner not initialized");
@@ -111,19 +145,17 @@ public:
         BatchResult results;
         results.clones.reserve(sources.size());
         results.remap.reserve(sources.size());
-
-        const auto skip = ComponentMapper::stableidType();
+        const std::uint32_t exclude[] = {typeHash<StableId>()};
 
         for (auto srcEntity : sources) {
             if (!m_srcReg->valid(srcEntity)) {
                 continue; // 已失效/未知的 StableId，跳过，不是致命错误
             }
 
-            const Entity dstEntity        = m_dstReg->create();
-            const std::uint32_t exclude[] = {skip};
-            m_mapper->clone(*m_srcReg, srcEntity, *m_dstReg, dstEntity, exclude);
+            const Entity dstEntity = m_dstReg->create();
+            this->clone(*m_srcReg, srcEntity, *m_dstReg, dstEntity, exclude);
 
-            const StableId sourceId = m_srcId->get(srcEntity)->value();
+            const StableId sourceId = m_srcId->get(srcEntity);
             const StableId clonedId = m_dstId->ensure(dstEntity);
             results.clones.emplace_back(Result{dstEntity, sourceId, clonedId});
             results.remap.emplace(sourceId, clonedId);
@@ -134,7 +166,7 @@ public:
         return results;
     }
 
-    [[nodiscard]] BatchResult cloneBatch(std::span<StableId> sourceIds)
+    [[nodiscard]] BatchResult cloneBatch(std::span<const StableId> sourceIds)
     {
         if (sourceIds.empty()) {
             return {};
@@ -148,7 +180,7 @@ public:
         srcEntities.reserve(sourceIds.size());
 
         for (const StableId &oldId : sourceIds) {
-            const Entity srcEntity = m_srcId->find(oldId).value_or({});
+            const Entity srcEntity = m_srcId->find(oldId);
             if (!m_srcReg->valid(srcEntity)) {
                 continue; // 已失效/未知的 StableId，跳过，不是致命错误
             }
@@ -185,7 +217,7 @@ public:
         srcEntities.reserve(sourceIds.size());
 
         for (const StableId &oldId : sourceIds) {
-            const Entity srcEntity = m_srcId->find(oldId).value_or({});
+            const Entity srcEntity = m_srcId->find(oldId);
             if (!m_srcReg->valid(srcEntity)) {
                 continue; // 已失效/未知的 StableId，跳过，不是致命错误
             }
@@ -198,24 +230,46 @@ public:
         //      然后附加预先生成的身份信息（切勿使用复制的那一个 -> sourceIds）----
         std::vector<Entity> newEntities;
         newEntities.reserve(srcEntities.size());
+        const std::uint32_t exclude[] = {typeHash<StableId>()};
 
-        const auto skip = ComponentMapper::stableidType();
         for (Entity srcEntity : srcEntities) {
-            const Entity dstEntity        = m_dstReg->create();
-            const std::uint32_t exclude[] = {skip};
-            m_mapper->clone(*m_srcReg, srcEntity, *m_dstReg, dstEntity, exclude);
+            const Entity dstEntity = m_dstReg->create();
+            this->clone(*m_srcReg, srcEntity, *m_dstReg, dstEntity, exclude);
 
-            const StableId oldId = m_srcId->get(srcEntity).value();
+            const StableId oldId = m_srcId->get(srcEntity);
             m_dstId->assign(dstEntity, remap.at(oldId)); //  pre-generated in Phase 1
             newEntities.emplace_back(dstEntity);
         }
 
         // ---- Phase 3: 关系修复 — 重写批处理中的 StableId 引用 ----
         for (Entity dstEntity : newEntities) {
-            m_mapper->remap(*m_dstReg, dstEntity, remap);
+            this->remap(*m_dstReg, dstEntity, remap);
         }
 
         return remap;
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept { return m_entries.size(); }
+
+    [[nodiscard]] bool contains(std::uint32_t typeId) const noexcept
+    {
+        return m_entries.find(typeId) != m_entries.end();
+    }
+
+    template<typename Component>
+    [[nodiscard]] static constexpr std::uint32_t typeOf() noexcept
+    {
+        return typeHash<Component>();
+    }
+
+    [[nodiscard]] std::vector<std::string> namelist() const
+    {
+        std::vector<std::string> out;
+        out.reserve(m_entries.size());
+        for (const auto &[id, entry] : m_entries) {
+            out.push_back(entry.name);
+        }
+        return out;
     }
 
 private:
@@ -229,17 +283,17 @@ private:
             throw StableIdError("clone source is not a valid entity");
         }
 
-        const auto sourceId           = m_srcId->get(source).value_or({});
+        const auto sourceId           = m_srcId->get(source);
         const auto dstEntity          = m_dstReg->create();
-        const std::uint32_t exclude[] = {ComponentMapper::stableidType()};
-        m_mapper->clone(*m_srcReg, source, *m_dstReg, dstEntity, exclude);
+        const std::uint32_t exclude[] = {typeHash<StableId>()};
+        this->clone(*m_srcReg, source, *m_dstReg, dstEntity, exclude);
 
         Result result;
-        result.clonedEntity = dstEntity;
-        result.sourceId     = sourceId;
+        result.entity = dstEntity;
+        result.source = sourceId;
 
         if (assign) {
-            result.clonedid = m_dstId->ensure(dstEntity);
+            result.cloned = m_dstId->ensure(dstEntity);
         }
         return result;
     }
@@ -251,9 +305,61 @@ private:
         }
 
         for (const auto &clone : results.clones) {
-            m_mapper->remap(*m_dstReg, clone.clonedEntity, results.remap);
+            this->remap(*m_dstReg, clone.entity, results.remap);
         }
     }
+
+    void remap(Registry &registry, Entity entity, const StableIdRemap &remap) const
+    {
+        for (const auto &[id, entry] : m_entries) {
+            if (entry.remap) {
+                entry.remap(registry, entity, remap);
+            }
+        }
+    }
+
+    void clone(const Registry &src, Entity from, Registry &dst, Entity to,
+               std::span<const std::uint32_t> exclude = {}) const
+    {
+        for (const auto &[id, entry] : m_entries) {
+            if (containsId(exclude, id)) {
+                continue;
+            }
+            entry.clone(src, from, dst, to);
+        }
+    }
+
+    static bool containsId(std::span<const std::uint32_t> ids, std::uint32_t needle) noexcept
+    {
+        return std::ranges::any_of(ids, [needle](std::uint32_t id) { return id == needle; });
+    }
+
+    template<typename Component>
+    static void cloner(const Registry &src, Entity from, Registry &dst, Entity to)
+    {
+        if (!src.all_of<Component>(from)) {
+            return;
+        }
+        if constexpr (std::is_empty_v<Component>) {
+            dst.template emplace_or_replace<Component>(to);
+        } else {
+            const auto value = src.get<Component>(from);
+            dst.template emplace_or_replace<Component>(to, value);
+        }
+    }
+
+private:
+    struct Entry
+    {
+        using Clone = std::function<void(const Registry &, Entity, Registry &, Entity)>;
+        using Remap = std::function<void(Registry &, Entity, const StableIdRemap &)>;
+
+        std::uint32_t type{};
+        std::string name; // diagnostic only
+        bool snapshotEnabled = false;
+        Clone clone;
+        Remap remap; // may be empty: most components hold no cross-entity references
+    };
 
 private:
     const Registry *m_srcReg  = nullptr;
@@ -261,7 +367,7 @@ private:
     Registry *m_dstReg        = nullptr;
     Identifier *m_dstId       = nullptr;
 
-    std::unique_ptr<ComponentMapper> m_mapper;
+    std::unordered_map<std::uint32_t, Entry> m_entries;
 };
 
 } // namespace bakuon::core

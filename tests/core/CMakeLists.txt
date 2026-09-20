@@ -10,13 +10,14 @@ set(CORE_TESTS
     "ContainerTest.cpp"
     "ResultStatusTest.cpp"
     "BimapTest.cpp"
-    "IdentityTest.cpp"
+    "IdentifierTest.cpp"
     "HierarchyTest.cpp"
     "UndoStackTest.cpp"
     "ContainerBatchTest.cpp"
     "SerializerTest.cpp"
     "ComponentsTest.cpp"
     "SelectionTest.cpp"
+    "ClonerTest.cpp"
 )
 
 foreach(test_file ${CORE_TESTS})

@@ -217,26 +217,26 @@ void Identifier::assign(Entity entity, StableId id)
     m_impl->registry.emplace_or_replace<StableId>(entity, id);
 }
 
-std::optional<Entity> Identifier::find(StableId id) const noexcept
+Entity Identifier::find(StableId id) const noexcept
 {
     const auto it = m_impl->id_to_entity.find(id);
-    return it != m_impl->id_to_entity.end() ? std::optional(it->second) : std::nullopt;
+    return it != m_impl->id_to_entity.end() ? it->second : nullentity;
 }
 
-std::optional<StableId> Identifier::get(Entity entity) const noexcept
+StableId Identifier::get(Entity entity) const noexcept
 {
     const auto it = m_impl->entity_to_id.find(entity);
-    return it != m_impl->entity_to_id.end() ? std::optional(it->second) : std::nullopt;
+    return it != m_impl->entity_to_id.end() ? it->second : StableId{};
 }
 
 bool Identifier::contains(Entity entity) const noexcept
 {
-    return this->get(entity).has_value();
+    return this->get(entity).isValid();
 }
 
 bool Identifier::contains(StableId id) const noexcept
 {
-    return this->find(id).has_value();
+    return this->find(id) != nullentity;
 }
 
 void Identifier::reserve(std::size_t size)

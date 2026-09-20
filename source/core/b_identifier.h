@@ -4,7 +4,6 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -158,10 +157,10 @@ public:
 
     /// 用于撤销、QtRO 处理器和项目文件恢复的反向查找。
     /// 当标识符未知或实体已死亡时，返回 `entt::null`。
-    [[nodiscard]] std::optional<Entity> find(StableId id) const noexcept;
+    [[nodiscard]] Entity find(StableId id) const noexcept;
 
     /// 前向查找。如果实体没有标识符，则抛出 `StableIdError` 异常。
-    [[nodiscard]] std::optional<StableId> get(Entity entity) const noexcept;
+    [[nodiscard]] StableId get(Entity entity) const noexcept;
 
     [[nodiscard]] bool contains(StableId id) const noexcept;
     [[nodiscard]] bool contains(Entity entity) const noexcept;
