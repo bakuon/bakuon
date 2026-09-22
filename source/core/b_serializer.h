@@ -25,12 +25,12 @@ namespace serializer_detail {
 } // namespace serializer_detail
 
 /**
- * @brief 编译期已知组件集合的整体序列化器（与 ComponentArchive 共享同一套底层原语）。
+ * @brief 编译期已知组件集合的整体序列化器。
  *
  * @tparam Components 参与序列化的组件类型（至少一个）。每个类型必须：
  *   - 可平凡拷贝（`std::is_trivially_copyable_v`），此时零代码接入；或
  *   - 提供一对 ADL 自由函数 `archive_write(IArchiveWriter&, const T&)` /
- *     `archive_read(IArchiveReader&, T&)`（见 b_componentarchive.h 的
+ *     `archive_read(IArchiveReader&, T&)`（见 b_archivable.h 的
  *     `ArchivableComponent` 概念）。
  *
  * ## 与 UndoStack 的分工
@@ -42,11 +42,8 @@ namespace serializer_detail {
  * 两者都不重复发明"怎么遍历整个 Registry 的实体和组件"这件事——那正是
  * entt::snapshot 已经做好、经过 entt 自身测试覆盖的部分。
  *
- * ## 与 ComponentArchive 的关系
  * 本类是"类型集合编译期固定"场景的薄封装——文档/场景全量存盘这类场景，
- * 参与序列化的类型通常在写代码时就已知，不需要 `ComponentArchive`
- * 的运行期动态注册能力。两者共用 `EnttWriteAdapter`/`EnttReadAdapter`/
- * `IArchiveWriter`/`IArchiveReader`，因此：
+ * 参与序列化的类型通常在写代码时就已知，不需要运行期动态注册能力。
  *   - 想换序列化后端（二进制 → Protobuf/FlatBuffers）：只需要新写一对
  *     `IArchiveWriter`/`IArchiveReader` 实现，`Serializer`/组件代码都不用改；
  *   - 想让插件组件也参与（编译期不可知的类型集合）：改用 `ComponentArchive`。
