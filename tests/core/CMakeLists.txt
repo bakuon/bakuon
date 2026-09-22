@@ -19,6 +19,7 @@ set(CORE_TESTS
     "SelectionTest.cpp"
     "ClonerTest.cpp"
     "WorkspaceTest.cpp"
+    "FlagsTest.cpp"
 )
 
 foreach(test_file ${CORE_TESTS})
