@@ -102,7 +102,7 @@ struct Tag
  */
 struct Parent
 {
-    Entity entity{nullentity};
+    Entity entity{NullEntity};
 };
 
 /**

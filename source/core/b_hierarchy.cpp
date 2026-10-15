@@ -81,14 +81,14 @@ inline Hierarchy& ensure(Registry& registry, Entity node)
 Entity parent(const Registry& registry, Entity child)
 {
     const Hierarchy* hy = registry.try_get<Hierarchy>(child);
-    return hy ? hy->parent : nullentity;
+    return hy ? hy->parent : NullEntity;
 }
 
 Entity child(const Registry& registry, std::size_t index, Entity parent)
 {
     const Hierarchy* hy = registry.try_get<Hierarchy>(parent);
     if (!hy || index >= hy->child_count) {
-        return nullentity;
+        return NullEntity;
     }
 
     Entity current = hy->first_child;
@@ -172,14 +172,14 @@ std::vector<std::size_t> path(const Registry& registry, Entity node)
 Entity pathNode(const Registry& registry, Entity root, std::span<const std::size_t> path)
 {
     if (!registry.valid(root) || !registry.all_of<Hierarchy>(root)) {
-        return nullentity;
+        return NullEntity;
     }
 
     Entity current = root;
     for (const std::size_t idx : path) {
         const Hierarchy& hier = registry.get<Hierarchy>(current);
         if (idx >= hier.child_count) {
-            return nullentity;
+            return NullEntity;
         }
         current = hier.first_child;
         for (std::size_t i = 0; i < idx; ++i) {
@@ -248,9 +248,9 @@ void detach(Registry& registry, Entity node)
 
     // 成为独立根：清空链接字段，depth 整棵子树相对归零
     const int depthDelta   = -static_cast<int>(nodeHier->depth);
-    nodeHier->parent       = nullentity;
-    nodeHier->prev_sibling = nullentity;
-    nodeHier->next_sibling = nullentity;
+    nodeHier->parent       = NullEntity;
+    nodeHier->prev_sibling = NullEntity;
+    nodeHier->next_sibling = NullEntity;
     nodeHier->index        = 0;
 
     if (depthDelta != 0) {
@@ -304,7 +304,7 @@ bool attach(Registry& registry, Entity child, Entity parent, Entity before)
     } else {
         // 追加到末尾
         childHier.prev_sibling = parentHier.last_child;
-        childHier.next_sibling = nullentity;
+        childHier.next_sibling = NullEntity;
         if (registry.valid(parentHier.last_child)) {
             Hierarchy& lastHier   = registry.get<Hierarchy>(parentHier.last_child);
             lastHier.next_sibling = child;
@@ -331,7 +331,7 @@ bool attach(Registry& registry, Entity child, Entity parent, Entity before)
 
 bool append(Registry& registry, Entity child, Entity parent)
 {
-    return attach(registry, child, parent, /*before=*/nullentity);
+    return attach(registry, child, parent, /*before=*/NullEntity);
 }
 
 bool insertBefore(Registry& registry, Entity child, Entity target)
@@ -382,9 +382,9 @@ void extract(Registry& registry, Entity node)
         }
         // 断开与原父/兄弟的链接，成为根
         const int depthDelta = -static_cast<int>(h->depth);
-        h->parent            = nullentity;
-        h->prev_sibling      = nullentity;
-        h->next_sibling      = nullentity;
+        h->parent            = NullEntity;
+        h->prev_sibling      = NullEntity;
+        h->next_sibling      = NullEntity;
         h->index             = 0;
         if (depthDelta != 0) {
             detail::update_subtree_depth(registry, c, depthDelta);
@@ -393,8 +393,8 @@ void extract(Registry& registry, Entity node)
 
     // 清空 node 自身的子链（即将销毁，防御性清理）
     if (Hierarchy* nodeHier = registry.try_get<Hierarchy>(node)) {
-        nodeHier->first_child = nullentity;
-        nodeHier->last_child  = nullentity;
+        nodeHier->first_child = NullEntity;
+        nodeHier->last_child  = NullEntity;
         nodeHier->child_count = 0;
     }
 
@@ -441,7 +441,7 @@ bool reorder(Registry& registry, Entity child, std::size_t newIndex)
     // 目标位置当前的节点（reorder 前）；若 newIndex 指向自身之后的槽位，
     // 先 detach 再 attach 时索引会变化，因此用“目标 before”语义：
     // newIndex == child_count-1 且移动到末尾 → before 无效（append）。
-    Entity before{nullentity};
+    Entity before{NullEntity};
     if (newIndex + 1 < parentHier.child_count) {
         // 想插到原 newIndex 位置 ≡ 以“当前占该位置的节点”为 before
         // 但若该节点就是 child 自身，需取其后继。

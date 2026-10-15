@@ -54,7 +54,7 @@ TEST(Identifier, BidirectionalInsertAndSignalDrivenDelete)
     registry.destroy(entity);
 
     EXPECT_EQ(identifier.size(), 0u);
-    EXPECT_TRUE(identifier.find(sid) == bakuon::core::nullentity);
+    EXPECT_TRUE(identifier.find(sid) == bakuon::core::NullEntity);
     EXPECT_FALSE(identifier.contains(sid));
 }
 
@@ -75,7 +75,7 @@ TEST(Identifier, RecycledEntityIndexGetsNewStableId)
     EXPECT_EQ(bakuon::core::toEntity(second), first_index);
     EXPECT_NE(first, second);
     EXPECT_NE(first_id, second_id);
-    EXPECT_TRUE(identifier.find(first_id) == bakuon::core::nullentity);
+    EXPECT_TRUE(identifier.find(first_id) == bakuon::core::NullEntity);
     EXPECT_EQ(identifier.find(second_id), second);
 }
 

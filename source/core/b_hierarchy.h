@@ -31,11 +31,11 @@ namespace bakuon::core::hierarchy {
  */
 struct Hierarchy
 {
-    Entity parent{nullentity};       ///< 父节点；根为无效 Entity
-    Entity first_child{nullentity};  ///< 第一个子节点
-    Entity last_child{nullentity};   ///< 最后一个子节点
-    Entity prev_sibling{nullentity}; ///< 前一个兄弟
-    Entity next_sibling{nullentity}; ///< 后一个兄弟
+    Entity parent{NullEntity};       ///< 父节点；根为无效 Entity
+    Entity first_child{NullEntity};  ///< 第一个子节点
+    Entity last_child{NullEntity};   ///< 最后一个子节点
+    Entity prev_sibling{NullEntity}; ///< 前一个兄弟
+    Entity next_sibling{NullEntity}; ///< 后一个兄弟
     std::size_t child_count{0};      ///< 直接子节点数
     std::size_t depth{0};            ///< 深度；根为 0
     std::size_t index{0};            ///< 在父节点子列表中的下标
@@ -53,7 +53,7 @@ struct ChildIterator
     using reference         = const Entity&;
 
     Registry* reg{nullptr};
-    Entity current{nullentity};
+    Entity current{NullEntity};
 
     constexpr ChildIterator() = default;
     constexpr ChildIterator(Registry& r, Entity e) noexcept
@@ -171,7 +171,7 @@ bool insertAfter(Registry& registry, Entity child, Entity target);
  * @param before 无效时追加到末尾；否则插入到该兄弟之前（before 必须是 parent 的直接子节点）。
  * @return false 若节点无效、成环、或 before 不是 parent 的直接子节点
  */
-bool attach(Registry& registry, Entity child, Entity parent, Entity before = nullentity);
+bool attach(Registry& registry, Entity child, Entity parent, Entity before = NullEntity);
 
 /**
  * @brief 从父节点脱离，成为独立根；子树 depth 相对归零。不销毁实体。
@@ -217,7 +217,7 @@ void eachChild(const Registry& registry, Entity parent, Func&& func)
         for (Entity current = hier->first_child; registry.valid(current);) {
             snapshot.push_back(current);
             const Hierarchy* childHier = registry.try_get<Hierarchy>(current);
-            current                    = childHier ? childHier->next_sibling : nullentity;
+            current                    = childHier ? childHier->next_sibling : NullEntity;
         }
     }
     for (Entity child : snapshot) {

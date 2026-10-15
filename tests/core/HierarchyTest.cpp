@@ -219,7 +219,7 @@ TEST(HierarchyTest, IsDescendantOf)
     EXPECT_TRUE(h::isDescendant(registry, mid, root));
     EXPECT_FALSE(h::isDescendant(registry, root, leaf));
     EXPECT_FALSE(h::isDescendant(registry, stray, root));
-    EXPECT_FALSE(h::isDescendant(registry, leaf, nullentity));
+    EXPECT_FALSE(h::isDescendant(registry, leaf, NullEntity));
 }
 
 TEST(HierarchyTest, ForEachDescendantPreOrderVisitsParentBeforeChildren)

@@ -11,7 +11,7 @@
 
 /**
  * 克隆/深拷贝子树
- * 
+ *
  * entt 本身不提供"复制一个实体及其全部组件，生成一批新 StableId"的能力，
  * hierarchy:: 也只有摘除/挂接，没有"整棵子树连带组件一起复制"。
  * 复制/粘贴、预制体实例化都需要它，而且要和 Ref（b_reference.h）联动
@@ -19,14 +19,14 @@
  */
 
 /**
-* @brief 关系一致性批处理克隆：复制一组相互关联的实体时，
-* 会重新将指向“批内”位置的任何 StableId 引用重定向至新创
-* 建的克隆对象，而指向“批外”位置的引用则继续指向原始共享对象。
-*
-* src == dst（相同的 Registry/StableIdRegistry）是常见情况
-* ——即“在同一文档内重复选择”。跨注册表的构造也受到支持（例如，将
-* 一个沙箱文档中的剪贴板批处理粘贴到另一个文档中），因为 src 和 dst 是独立的引用。
-*/
+ * @brief 关系一致性批处理克隆：复制一组相互关联的实体时，
+ * 会重新将指向“批内”位置的任何 StableId 引用重定向至新创
+ * 建的克隆对象，而指向“批外”位置的引用则继续指向原始共享对象。
+ *
+ * src == dst（相同的 Registry/StableIdRegistry）是常见情况
+ * ——即“在同一文档内重复选择”。跨注册表的构造也受到支持（例如，将
+ * 一个沙箱文档中的剪贴板批处理粘贴到另一个文档中），因为 src 和 dst 是独立的引用。
+ */
 namespace bakuon::core {
 
 /// old StableId -> new (cloned) StableId, scoped to a single batch-clone call.
@@ -38,7 +38,7 @@ public:
     // TODO: 可尝试使用带状态消息的 core::Result<T>
     struct Result
     {
-        Entity entity{nullentity};
+        Entity entity{NullEntity};
         StableId source{};
         StableId cloned{};
     };
@@ -194,7 +194,7 @@ public:
      * @brief 批量克隆实体，返回一个 StableIdRemap，记录了每个实体的旧ID到新ID的映射。
      * @param sourceIds 要作为一组进行克隆的实体的稳定ID  以关系一致的批次形式。
      *        未知或过时的ID将被静默跳过（不构成致命错误）。
-     * @return 每个实体实际上都映射了从旧的 StableId 到新的 StableId 的映射  
+     * @return 每个实体实际上都映射了从旧的 StableId 到新的 StableId 的映射
      *         cloned — 调用者可以重复使用它（例如，将 Selection 重新映射到新克隆上）
      *
      *@note 使用 cloneBatch 代替

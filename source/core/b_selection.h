@@ -112,7 +112,7 @@ public:
     /// 主选：有序列表最后一个；空集返回无效 Handle。
     [[nodiscard]] Entity primary() const noexcept
     {
-        return m_ordered.empty() ? nullentity : m_ordered.back();
+        return m_ordered.empty() ? NullEntity : m_ordered.back();
     }
 
     [[nodiscard]] const std::vector<Entity>& ordered() const noexcept { return m_ordered; }

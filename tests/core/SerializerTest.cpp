@@ -127,7 +127,7 @@ TEST(SerializerTest, LoadRejectsComponentTypeCountMismatch)
     Registry registry;
     registry.emplace<Position>(registry.create(), 1.f, 1.f);
     registry.emplace<Name>(registry.get<Position>(*registry.view<Position>().begin()) == Position{}
-                               ? Entity{}
+                               ? NullEntity
                                : *registry.view<Position>().begin(),
                            Name{"x"});
 

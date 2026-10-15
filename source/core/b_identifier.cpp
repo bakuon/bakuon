@@ -220,7 +220,7 @@ void Identifier::assign(Entity entity, StableId id)
 Entity Identifier::find(StableId id) const noexcept
 {
     const auto it = m_impl->id_to_entity.find(id);
-    return it != m_impl->id_to_entity.end() ? it->second : nullentity;
+    return it != m_impl->id_to_entity.end() ? it->second : NullEntity;
 }
 
 StableId Identifier::get(Entity entity) const noexcept
@@ -236,7 +236,7 @@ bool Identifier::contains(Entity entity) const noexcept
 
 bool Identifier::contains(StableId id) const noexcept
 {
-    return this->find(id) != nullentity;
+    return this->find(id) != NullEntity;
 }
 
 void Identifier::reserve(std::size_t size)
