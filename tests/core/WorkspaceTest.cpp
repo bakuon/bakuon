@@ -76,13 +76,14 @@ TEST(WorkspaceTest, DomainsAreIsolated)
     Domain& b = ws.require("b");
 
     int constructedInB = 0;
-    Connection conn    = b.container().onConstruct<Position>(
-        [&](Container&, Entity) { ++constructedInB; });
+    // or use entt::emitter
+    auto fun           = [&](Registry&, Entity) { ++constructedInB; };
+    auto conn = b.registry().on_construct<Position>().connect<&decltype(fun)::operator()>(&fun);
 
-    a.container().emplace<Position>(a.container().create(), 1.f, 2.f);
+    a.registry().emplace<Position>(a.registry().create(), 1.f, 2.f);
 
     int visitedInB = 0;
-    b.container().each<Position>([&](Entity, Position&) { ++visitedInB; });
+    b.registry().view<Position>().each([&](Entity, Position&) { ++visitedInB; });
     EXPECT_EQ(constructedInB, 0);
     EXPECT_EQ(visitedInB, 0);
 }
@@ -206,7 +207,7 @@ TEST(WorkspaceTest, ServicesDestroyInReverseOrderBeforeRegistry)
     {
         Workspace ws;
         Domain& d      = ws.require("doc");
-        const Entity e = d.container().create();
+        const Entity e = d.registry().create();
         d.emplaceService<Probe<1>>(log, d.registry(), e);
         d.emplaceService<Probe<2>>(log, d.registry(), e);
         d.emplaceService<Probe<3>>(log, d.registry(), e);
@@ -239,7 +240,7 @@ TEST(WorkspaceTest, InitializerFailureRollsBackCleanly)
     Workspace ws;
     EXPECT_THROW(ws.require("bad",
                             [&](Domain& d) {
-                                const Entity e = d.container().create();
+                                const Entity e = d.registry().create();
                                 d.emplaceService<Probe<1>>(log, d.registry(), e);
                                 throw std::runtime_error("boom");
                             }),
@@ -255,12 +256,12 @@ TEST(WorkspaceTest, ExistingCoreModulesAttachAsServices)
 {
     Workspace ws;
     Domain& d = ws.require("doc", [](Domain& dom) {
-        auto& gen = dom.emplaceService<SnowflakeGenerator>(1);
+        auto& gen = dom.emplaceService<SnowflakeGenerator>(uint16_t(1));
         dom.emplaceService<Identifier>(dom.registry(), &gen);
         dom.emplaceService<UndoStack<Position>>(dom.registry());
     });
 
-    const Entity e   = d.container().create();
+    const Entity e   = d.registry().create();
     const StableId s = d.service<Identifier>().ensure(e);
     EXPECT_EQ(d.service<Identifier>().find(s), e);
     EXPECT_TRUE(d.service<UndoStack<Position>>().historyDepth() >= 1u);
