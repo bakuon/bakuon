@@ -14,6 +14,7 @@ namespace bakuon::core {
 
 /**
  * @brief GUI 无关的实体-组件状态容器 —— 对 entt::registry 的一层薄封装。
+ * @todo 重命名为 Registry 替换 entt::registry 的别名 Registry
  *
  * @details 面向"复杂 GUI 状态的底层数据驱动"这个定位设计：文档/场景里的每一个
  * "对象"（图层、节点、场景实体、工具面板条目……）对应一个 Handle，具体属性
@@ -190,12 +191,12 @@ public:
      *        见下方说明）。
      *
      * @note 这里没有直接把调用方的 Func 转发给 entt::basic_view::each()，是刻意的：
-     *       entt 内部通过"Func 能否用裸 entt::entity 调用"来判断要不要把实体传给
+     *       entt 内部通过"Func 能否用裸 Entity 调用"来判断要不要把实体传给
      *       回调（is_applicable_v 探测），而 Entity 的转换构造函数是 explicit 的
-     *       （见 b_entity.h，故意不允许从 entt::entity 隐式转换），这个探测永远会
+     *       （见 b_entity.h，故意不允许从 Entity 隐式转换），这个探测永远会
      *       失败，entt 会静默地把实体参数从调用里去掉，导致调用方按"第一个参数是
      *       Entity"写的回调在运行期实参个数对不上。这里改为自己包一层只接受裸
-     *       entt::entity 的胶水 lambda（满足 entt 的探测条件），拿到实体后才转换成
+     *       Entity 的胶水 lambda（满足 entt 的探测条件），拿到实体后才转换成
      *       Entity 再转发给调用方的 Func——调用方因此完全不需要知道 entt 这层探测
      *       逻辑的存在，contract 始终是"Entity 必须作为第一个参数"。
      * @note 空结构体"标签组件"（如 Selected，见类文档顶部示例）不占用存储空间，
@@ -207,18 +208,16 @@ public:
              typename = std::enable_if_t<(sizeof...(Components) > 0)>>
     void each(Func&& func)
     {
-        m_registry.view<Components...>().each([&func](entt::entity entity, auto&&... comps) {
-            std::invoke(std::forward<Func>(func),
-                        Entity{entity},
-                        std::forward<decltype(comps)>(comps)...);
+        m_registry.view<Components...>().each([&func](Entity entity, auto&&... comps) {
+            std::invoke(std::forward<Func>(func), entity, std::forward<decltype(comps)>(comps)...);
         });
     }
 
     template<typename Func>
     void each(Func&& func)
     {
-        m_registry.view<entt::entity>().each(
-            [&func](const entt::entity entity) { std::invoke(func, Entity{entity}); });
+        m_registry.view<Entity>().each(
+            [&func](const Entity entity) { std::invoke(func, Entity{entity}); });
     }
 
     template<typename... Components, typename Func,
@@ -227,19 +226,17 @@ public:
     {
         // 关键点：将传入的 Components... 映射为 const Components...
         // 这样可以确保即使外部传入 each<Position>，在 const 注册表下也能正确生成 view<const Position>
-        m_registry.view<std::add_const_t<Components>...>().each(
-            [&func](const entt::entity entity, auto&&... comps) {
-                std::invoke(std::forward<Func>(func),
-                            Entity{entity},
-                            std::forward<decltype(comps)>(comps)...);
-            });
+        m_registry.view<std::add_const_t<Components>...>().each([&func](const Entity entity,
+                                                                        auto&&... comps) {
+            std::invoke(std::forward<Func>(func), entity, std::forward<decltype(comps)>(comps)...);
+        });
     }
 
     template<typename Func>
     void each(Func&& func) const
     {
-        m_registry.view<entt::entity>().each(
-            [&func](const entt::entity entity) { std::invoke(func, Entity{entity}); });
+        m_registry.view<Entity>().each(
+            [&func](const Entity entity) { std::invoke(func, Entity{entity}); });
     }
 
     /**
@@ -312,8 +309,8 @@ public:
     /// 自定义 view 组合）的场景可以拿到底层 entt::registry；日常业务代码应优先
     /// 使用本类已封装的接口，不要绕开它直接操作 registry()——那样会让"core 不依赖
     /// Qt、不泄漏 entt 类型"的边界形同虚设。
-    [[nodiscard]] entt::registry& registry() noexcept { return m_registry; }
-    [[nodiscard]] const entt::registry& registry() const noexcept { return m_registry; }
+    [[nodiscard]] Registry& registry() noexcept { return m_registry; }
+    [[nodiscard]] const Registry& registry() const noexcept { return m_registry; }
 
 private:
     // entt 的 sink::connect<&Fn>(instance) 要求一个具名成员函数 + 一个具体实例地址；
@@ -334,7 +331,7 @@ private:
         std::vector<Entity> pending;  // 当前批次内已经去重的待通知列表
         bool flushRegistered = false; // 本批次内是否已经把 flush() 登记给了 owner
 
-        void invoke(entt::registry&, entt::entity entity)
+        void invoke(entt::registry&, Entity entity)
         {
             if (!owner) {
                 return;
@@ -425,7 +422,7 @@ private:
     }
 
 private:
-    entt::registry m_registry;
+    Registry m_registry;
     // entt::dispatcher m_dispatcher;
 
     // 被 dismiss() 的连接背后的 Slot<T> 在此长期挂靠，见 bindSink() 的说明；

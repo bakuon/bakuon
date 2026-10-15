@@ -13,7 +13,6 @@
 #include <type_traits>
 #include <vector>
 
-#include "core/b_container.h"
 #include "core/b_entity.h"
 
 namespace bakuon::core {
@@ -125,11 +124,9 @@ public:
     /// 正在被销毁（onDomainDestroying 回调期间为 true）。
     [[nodiscard]] bool isClosing() const noexcept { return m_closing; }
 
-    [[nodiscard]] Container& container() noexcept { return m_container; }
-    [[nodiscard]] const Container& container() const noexcept { return m_container; }
     /// 逃生舱口，语义同 Container::registry()：给 UndoStack/Selection 等需要 Registry& 的服务用。
-    [[nodiscard]] Registry& registry() noexcept { return m_container.registry(); }
-    [[nodiscard]] const Registry& registry() const noexcept { return m_container.registry(); }
+    [[nodiscard]] Registry& registry() noexcept { return m_registry; }
+    [[nodiscard]] const Registry& registry() const noexcept { return m_registry; }
 
     // ---- 服务表 ----
 
@@ -226,9 +223,9 @@ private:
     std::uint64_t m_serial;
     bool m_closing = false;
 
-    // 声明顺序 = 构造顺序；析构时 m_services 先于 m_container 销毁。
+    // 声明顺序 = 构造顺序；析构时 m_services 先于 m_registry 销毁。
     // 不要为了"看起来整齐"调整这两个成员的相对顺序。
-    Container m_container;
+    Registry m_registry;
     std::vector<ServiceSlot> m_services;
 };
 
