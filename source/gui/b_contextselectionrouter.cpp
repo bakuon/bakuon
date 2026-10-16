@@ -19,7 +19,7 @@ ContextSelectionRouter::~ContextSelectionRouter()
     // 析构时如果仍处于"已选中"状态，主动 pop 掉——不能依赖调用方在对象销毁前
     // 记得调用一次 setSelected(false)，否则会遗留一份永远不会再被 pop 的引用。
     if (m_selected) {
-        CommandSystem::popContext(m_context, this, m_tier);
+        // CommandSystem::popContext(m_context, this, m_tier);
         m_selected = false;
     }
 }
@@ -29,11 +29,11 @@ void ContextSelectionRouter::setSelected(bool selected)
     if (selected == m_selected) {
         return; // 状态未变化，保持幂等，避免把重复调用误当成一次新的 push/pop
     }
-    if (selected) {
-        CommandSystem::pushContext(m_context, this, m_tier);
-    } else {
-        CommandSystem::popContext(m_context, this, m_tier);
-    }
+    // if (selected) {
+    //     CommandSystem::pushContext(m_context, this, m_tier);
+    // } else {
+    //     CommandSystem::popContext(m_context, this, m_tier);
+    // }
     m_selected = selected;
 }
 

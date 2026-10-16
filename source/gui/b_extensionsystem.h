@@ -1,36 +1,54 @@
 #pragma once
 
 #include <memory>
-#include <string>
 
 #include <bakuon/gui/IExtensionSystem.h>
 
-#include "gui/b_defaultextensionpoint.h"
+#include "core/b_extension.h"
 #include "gui/b_gui_export.h"
 
 namespace bakuon::gui {
 
-/* ============================================================
- *  ExtensionSystem：全局扩展点注册中心（Facade）
- * ============================================================*/
-
 /**
- * @brief 扩展点注册中心 - extension facade
- * @note 扩展点是依据主程序支持的扩展接口(内部定义)而在内部创建并注册的，无必要外部不应手动注册扩展点。
- * @todo 在 IPlugin::initialize 中注入 IExtensionSystem 让插件注册扩展，
- *       明示插件作者这是一种契约，以便所有插件在 IPlugin::extensionsInitialized 能相互连接扩展。
- * 
- * 职责：
- *  - 管理所有扩展点的注册、注销与查询；
- *  - 提供类型安全的扩展点访问（模板方法）；
- *  - 读写锁保护并发访问。
+ * @brief 扩展系统：ECS 里的一个 System ———— 对 registry 中"扩展点实体 / 扩展实体"的
+ *        注册、排序、查询、销毁逻辑，自身只持有 Registry 引用和 id 索引
  *
- * 使用说明：
- *  - 主程序/核心库：创建 DefaultExtensionPoint<T>（或自定义 IExtensionPoint<T>），
- *    调用 registerExtensionPoint 注册到中心；
- *  - 插件：通过 extensionPoint<T>() 获取扩展点，并 registerExtension 注入实现；
- *  - 消费者：通过 tryExtensions / extensions 获取扩展并调用。
+ * ## 归属与访问（没有单例）
+ * 它是 Domain 的一个服务，由最上层创建并持有：
+ * @code
+ *   // Application / Workspace 启动时
+ *   Domain& app = workspace.require("app", [](Domain& d) {
+ *       d.emplaceService<ExtensionSystem>(d.registry());
+ *   });
  *
+ *   // 插件侧：PluginContext 只暴露接口，且是"某个领域"的扩展系统
+ *   IExtensionSystem* ext = workspace.find("app")->tryService<ExtensionSystem>();
+ * @endcode
+ * 不同领域（例如每个沙箱/每个文档）各自拥有隔离的扩展点表，互不可见——这正是单例
+ * 做不到、而原来依赖"进程隔离"才获得的隔离性，现在在进程内也成立。
+ * 单例方案下需要 IExtensionSystem* 显式注入以绕开 STATIC 库的多份单例问题；现在没有任何
+ * 全局状态，插件库即便静态链接了自己的一份本类代码，操作的也始终是宿主传入的那个实例的数据。
+ *
+ * ## 数据模型
+ * 扩展点和扩展都是实体，其关系完全由组件表达，见 core/b_extension.h 顶部的组件表。
+ * 扩展点 id → 实体的唯一性与索引复用 BasicTagger<ExtensionPointKey>（id 空间与其它
+ * Tagger 隔离，见 b_tagger.h）。
+ *
+ * ## 生命周期与一致性
+ *  - 扩展实体被销毁（无论经由 remove()、unregisterPoint()、还是 registry.destroy()/clear()）
+ *    时，on_destroy<ExtensionOf> 监听器负责把它从所属扩展点的有序列表里摘除。
+ *  - 扩展点实体不要直接 registry.destroy()：请用 unregisterPoint()，它会先销毁名下的扩展实体；
+ *    直接销毁扩展点会让名下扩展成为孤儿（查询时因句柄校验失败而不可见，但实体仍占内存）。
+ *  - 必须先于 Registry 销毁（作为 Domain 服务时由 Domain 的逆序销毁保证）。
+ *
+ * ## 线程模型
+ * 非线程安全：与 Registry/Domain 一致，线程亲和性由持有该领域的一方决定（旧实现里的读写锁
+ * 保护的是"全局单例被任意线程访问"这个前提，前提消失后锁也一并去掉）。
+ * 需要跨线程派发的场景，先用 list()/resolve() 在领域线程取快照，再把 shared_ptr 交给工作线程。
+ *
+ * 不可拷贝、不可移动。
+ *
+ * @code
  * 示例：
  * /// 在内部：
  * // 定义扩展接口
@@ -42,156 +60,94 @@ namespace bakuon::gui {
  * };
  * Q_DECLARE_INTERFACE(bakuon::gui::IEditor, "com.bakuon.extension.IEditor")
  *
- * // 创建接口扩展点
- * auto editorExtensionPoint = std::make_shared<IExtensionPoint<IEditor>>(
- *     qobject_interface_iid<IEditor*>(),//"com.bakuon.extension.editor",
- *     "Editor extension interface"
+ * // 注册接口扩展点
+ * ExtensionSystem system;
+ * ExtensionPoint<IEditor> point = system.ensure<IEditor>(
+ *     qobject_interface_iid<IEditor*>(), //"com.bakuon.extension.editor",
+ *     "编辑器扩展点"", // description
  * );
- * // 注册到全局注册表
- * ExtensionSystem::registerExtensionPoint(editorExtensionPoint);
- * // 监听扩展变化
- * connect(editorExtensionPoint.get(), &ExtensionPointBase::extensionRegistered,
- *         this, &SomeQObject::onEditorRegistered);
  *
- * // 使用接口扩展实例
- * // IEditor* editor = ... // 获取接口扩展方式与同外部一致
+ * // 内部也可像插件一样使用扩展
+ * IEditor* editor = point.extension<IEditor*>(
+ *     [&](auto &editor) -> IEditor* {
+ *         return editor->canHandle(filePath) ? editor.get() : nullptr;
+ *     },
+ *     nullptr  // 默认值
+ * );
  * // 将编辑器的部件置于主窗口编辑器布局
  * QWidget *widget = editor->widget();
  * editorArea->addWidget(widget);
- * 
+ *
  * ----------------------------------------------------------------------
  *
  * /// 在外部（插件 A）：
  * // 实现扩展接口
- * class TextEditor : public TextEditor{};
- * // 使用扩展点
- * auto extensionPoint = ExtensionSystem::extensionPoint<IEditor>();
- * // 向扩展点注册接口扩展实例
- * extensionPoint->registerExtension(std::make_shared<TextEditor>());
+ * class TextEditor : public IEditor{};
+ * IEditor *editor = new TextEditor;
+ *
+ * // 注册新扩展
+ * IExtensionSystem *system = ctx.extensions("app");
+ * auto point = system->point<IEditor>(qobject_interface_iid<IEditor*>());
+ * point.add(editor, 100);
  *
  * // 使用扩展接口（插件 B）：
- * IEditor* editor = editorExtensionPoint->tryExtensions<IEditor*>(
- *     [&](auto editor) -> IEditor* {
- *         return editor->canHandle(filePath) ? editor : nullptr;
+ * IExtensionSystem *system = ctx.extensions("app");
+ * auto point = system->point<IEditor>(qobject_interface_iid<IEditor*>());
+ * // 获取扩展
+ * IEditor* editor = point.extension<IEditor*>(
+ *     [&](auto &editor) -> IEditor* {
+ *         return editor->canHandle(filePath) ? editor.get() : nullptr;
  *     },
  *     nullptr  // 默认值
  * );
- * editor->open(filePath);
+ * editor->open(filePath); // TextEditor
+ * @endcode
  */
 class BAKUON_GUI_EXPORT ExtensionSystem : public IExtensionSystem
 {
 public:
-    /**
-     * @brief 获取全局单例（Meyers' Singleton，线程安全、自动析构）
-     * @todo 不要做成单例，在程序启动入口处实例化，
-     *       其他类使用依赖注入方式传入。见 SandboxControlSourceImpl 构造函数内的 TODO 注释。
-     *
-     * @note 本类必须带 BAKUON_GUI_EXPORT：instance() 虽然写在类体内、语义上是
-     *       inline，但一旦类被标注导出，MSVC 会把它当成 dllexport/dllimport 的
-     *       "跨 DLL 边界符号"处理，consumer 侧不会各自内联出一份自己的局部静态
-     *       变量 s，而是统一 dllimport 调用 gui.dll 里唯一的那一份实现——这正是
-     *       bakuon::gui 从 STATIC 改为 SHARED 之后，Meyers' Singleton 能在插件 /
-     *       沙箱进程 / Host 应用程序之间天然共享同一个实例的关键前提（另见
-     *       include/bakuon/gui/PluginContext.h 顶部关于这一点的详细说明）。
-     */
-    static ExtensionSystem& instance()
-    {
-        static ExtensionSystem s;
-        return s;
-    }
-
-    ExtensionSystem(const ExtensionSystem&)            = delete;
-    ExtensionSystem& operator=(const ExtensionSystem&) = delete;
-
-    /* ---------- 扩展点注册 / 注销 ---------- */
-
-    /**
-     * @brief 注册扩展点
-     * @param point 扩展点基类指针
-     * @return true 注册成功；false 为空或 ID 已存在
-     * @note 通常由核心库内部调用，插件无需手动注册扩展点
-     */
-    bool registerExtensionPoint(std::shared_ptr<ExtensionPointBase> point) override;
-
-    /**
-     * @brief 便捷注册：直接构造 DefaultExtensionPoint<T> 并注册
-     * @tparam T           扩展接口类型
-     * @param description  描述
-     * @param id           可选 IID；为空时使用 extension_iid<T>::value()
-     * @return 注册成功返回 shared_ptr<DefaultExtensionPoint<T>>；失败返回 nullptr
-     */
-    template<typename T>
-    std::shared_ptr<DefaultExtensionPoint<T>> registerDefaultExtensionPoint(
-        std::string description = {}, std::string id = {});
-
-    /**
-     * @brief 注销扩展点
-     * @param id 扩展点 IID
-     */
-    bool unregisterExtensionPoint(const std::string& id) override;
-
-    /**
-     * @brief 按 ID 获取类型擦除的扩展点
-     * @param id 扩展点 IID
-     *
-     * @note 获取接口唯一 IID 便捷方法：
-     *       1.如果使用 BAKUON_DECLARE_EXTENSION_IID 注册的使用 bakuon::gui::extension_iid<T>() 
-     *       2.如果使用 Q_DECLARE_INTERFACE 定注册的使用 qobject_interface_iid<T>()      
-     */
-    std::shared_ptr<ExtensionPointBase> extensionPoint(const std::string& id) const override;
-
-    /**
-     * @brief 类型安全地获取指定 T 的扩展点
-     * @note 需重新定义同名模板函数，或调用基类模板函数： this->IExtensionSystem::template extensionPoint<T>(id);
-     * @tparam T 接口类型
-     * @param id IID；为空时使用 extension_iid<T>::value()
-     * @return 转换成功返回 shared_ptr<IExtensionPoint<T>>；失败返回 nullptr
-     */
-    template<typename T>
-    std::shared_ptr<IExtensionPoint<T>> extensionPoint(const std::string& id = {}) const
-    {
-        std::string iid = id.empty() ? std::string(extension_iid<T>::value()) : id;
-        return std::dynamic_pointer_cast<IExtensionPoint<T>>(extensionPoint(iid));
-    }
-
-    /**
-     * @brief 是否存在指定 ID 的扩展点
-     */
-    bool hasExtensionPoint(const std::string& id) const override;
-
-    /**
-     * @brief 列出所有已注册扩展点 ID
-     */
-    std::vector<std::string> extensionPointIds() override;
-
-    /**
-     * @brief 清空所有扩展点（通常仅用于测试/卸载）
-     */
-    void clear() override;
-
-private:
-    ExtensionSystem();
+    explicit ExtensionSystem(core::Registry &registry);
     ~ExtensionSystem() override;
 
-    class Impl;
-    Impl* d;
-};
+    ExtensionSystem(const ExtensionSystem &)            = delete;
+    ExtensionSystem &operator=(const ExtensionSystem &) = delete;
+    ExtensionSystem(ExtensionSystem &&)                 = delete;
+    ExtensionSystem &operator=(ExtensionSystem &&)      = delete;
 
-template<typename T>
-inline std::shared_ptr<DefaultExtensionPoint<T>> ExtensionSystem::registerDefaultExtensionPoint(
-    std::string description, std::string id)
-{
-    if (id.empty()) {
-        id = std::string(extension_iid<T>::value());
-    }
-    if (id.empty()) {
-        return nullptr;
-    }
-    auto point = std::make_shared<DefaultExtensionPoint<T>>(std::move(id), std::move(description));
-    if (!registerExtensionPoint(point)) {
-        return nullptr;
-    }
-    return point;
-}
+    // IExtensionSystem —— 扩展点
+
+    [[nodiscard]] ExtensionPointHandle registerPoint(std::string_view id,
+                                                     std::string_view description,
+                                                     std::uint64_t type) override;
+    [[nodiscard]] ExtensionPointHandle ensurePoint(std::string_view id,
+                                                   std::string_view description,
+                                                   std::uint64_t type) override;
+    bool unregisterPoint(std::string_view id) override;
+
+    [[nodiscard]] bool hasPoint(std::string_view id) const override;
+    [[nodiscard]] ExtensionPointHandle findPoint(std::string_view id) const override;
+    [[nodiscard]] std::string pointId(ExtensionPointHandle point) const override;
+    [[nodiscard]] std::uint64_t pointType(ExtensionPointHandle point) const override;
+    [[nodiscard]] std::vector<std::string> pointIds() const override;
+
+    // ---- 扩展 ----
+
+    [[nodiscard]] ExtensionHandle add(ExtensionPointHandle point, std::shared_ptr<void> object,
+                                      int priority) override;
+    [[nodiscard]] ExtensionHandle add(ExtensionPointHandle point,
+                                      std::function<std::shared_ptr<void>()> factory, int priority,
+                                      bool singleton) override;
+
+    bool remove(ExtensionHandle extension) override;
+    bool setPriority(ExtensionHandle extension, int priority) override;
+
+    [[nodiscard]] std::size_t count(ExtensionPointHandle point) const override;
+    [[nodiscard]] std::vector<ExtensionHandle> list(ExtensionPointHandle point) const override;
+    [[nodiscard]] std::shared_ptr<void> resolve(ExtensionHandle extension) override;
+
+private:
+    std::unique_ptr<core::ExtensionPoint> m_points;
+    std::unique_ptr<core::Extension> m_extensions;
+};
 
 } // namespace bakuon::gui

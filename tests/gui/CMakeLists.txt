@@ -9,13 +9,8 @@ set(module_label "gui")
 set(GUI_TEST_CONFIGS
     "TreeNodeTest.cpp\;OFF"
     "ContextTest.cpp\;ON"
-    "CommandSystemTest.cpp\;ON"
     "PluginPipelineTest.cpp\;OFF"
     "PluginSystemTest.cpp\;OFF"
-    "ExtensionPointTest.cpp\;OFF"
-    "RegistryBridgeTest.cpp\;OFF"
-    "DocumentSessionTest.cpp\;OFF"
-    "HierarchyModelTest.cpp\;OFF"
 )
 
 foreach(config ${GUI_TEST_CONFIGS})

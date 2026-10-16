@@ -1,85 +1,110 @@
 #include "gui/b_extensionsystem.h"
 
-#include <shared_mutex>
-#include <unordered_map>
-// std::unique_lock / std::shared_lock —— <shared_mutex> 只保证 std::shared_mutex
-// 本身可用，不保证连带带进 std::unique_lock；MSVC 的实现凑巧传递包含了，
-// GCC/Clang 下必须显式 include，否则编译不过。
-#include <mutex>
-
 namespace bakuon::gui {
 
-class ExtensionSystem::Impl
-{
-public:
-    std::unordered_map<std::string, std::shared_ptr<ExtensionPointBase>> extensionPoints;
-    mutable std::shared_mutex mutex;
-};
-
-ExtensionSystem::ExtensionSystem()
-    : d(new Impl())
+ExtensionSystem::ExtensionSystem(core::Registry &registry)
+    : m_points(std::make_unique<core::ExtensionPoint>(registry))
+    , m_extensions(std::make_unique<core::Extension>(registry))
 {
 }
 
-ExtensionSystem::~ExtensionSystem()
+ExtensionSystem::~ExtensionSystem() = default;
+
+ExtensionPointHandle ExtensionSystem::registerPoint(std::string_view id,
+                                                    std::string_view description,
+                                                    std::uint64_t type)
 {
-    delete d;
+    auto result = m_points->create(id, description, type);
+    // TODO: report error result
+    // ...
+    return core::handleOf<ExtensionPointHandle>(result.value());
 }
 
-bool ExtensionSystem::registerExtensionPoint(std::shared_ptr<ExtensionPointBase> point)
+ExtensionPointHandle ExtensionSystem::ensurePoint(std::string_view id, std::string_view description,
+                                                  std::uint64_t type)
 {
-    if (!point)
-        return false;
+    auto result = m_points->ensure(id, description, type);
+    // TODO: report error result
+    // ...
+    return core::handleOf<ExtensionPointHandle>(result.value());
+}
 
-    std::unique_lock<std::shared_mutex> lock(d->mutex);
-    const std::string id = point->id();
-    if (id.empty() || d->extensionPoints.contains(id)) {
-        return false;
+bool ExtensionSystem::unregisterPoint(std::string_view id)
+{
+    return m_points->erase(id);
+}
+
+bool ExtensionSystem::hasPoint(std::string_view id) const
+{
+    return m_points->contains(id);
+}
+
+ExtensionPointHandle ExtensionSystem::findPoint(std::string_view id) const
+{
+    return core::handleOf<ExtensionPointHandle>(m_points->find(id));
+}
+
+std::string ExtensionSystem::pointId(ExtensionPointHandle point) const
+{
+    return m_points->id(core::entityOf(point));
+}
+
+std::uint64_t ExtensionSystem::pointType(ExtensionPointHandle point) const
+{
+    return m_points->type(core::entityOf(point));
+}
+
+std::vector<std::string> ExtensionSystem::pointIds() const
+{
+    return m_points->list();
+}
+
+ExtensionHandle ExtensionSystem::add(ExtensionPointHandle point, std::shared_ptr<void> object,
+                                     int priority)
+{
+    auto result = m_extensions->add(core::entityOf(point), object, priority);
+    // TODO: report error result
+    return core::handleOf<ExtensionHandle>(result.value());
+}
+
+ExtensionHandle ExtensionSystem::add(ExtensionPointHandle point,
+                                     std::function<std::shared_ptr<void>()> factory, int priority,
+                                     bool singleton)
+{
+    auto result = m_extensions->addFactory(core::entityOf(point), factory, priority, singleton);
+    // TODO: report error result
+    return core::handleOf<ExtensionHandle>(result.value());
+}
+
+bool ExtensionSystem::remove(ExtensionHandle extension)
+{
+    return m_extensions->remove(core::entityOf(extension));
+}
+
+bool ExtensionSystem::setPriority(ExtensionHandle extension, int priority)
+{
+    return m_extensions->setPriority(core::entityOf(extension), priority);
+}
+
+std::size_t ExtensionSystem::count(ExtensionPointHandle point) const
+{
+    return m_extensions->count(core::entityOf(point));
+}
+
+std::vector<ExtensionHandle> ExtensionSystem::list(ExtensionPointHandle point) const
+{
+    auto items = m_extensions->list(core::entityOf(point));
+    std::vector<ExtensionHandle> result;
+    result.reserve(items.size());
+    for (auto entity : items) {
+        result.push_back(core::handleOf<ExtensionHandle>(entity));
     }
-    d->extensionPoints.emplace(id, std::move(point));
-    return true;
+    return result;
 }
 
-bool ExtensionSystem::unregisterExtensionPoint(const std::string& id)
+std::shared_ptr<void> ExtensionSystem::resolve(ExtensionHandle extension)
 {
-    if (id.empty())
-        return false;
-    std::unique_lock<std::shared_mutex> lock(d->mutex);
-    return d->extensionPoints.erase(id) > 0;
-}
-
-std::shared_ptr<ExtensionPointBase> ExtensionSystem::extensionPoint(const std::string& id) const
-{
-    if (id.empty())
-        return nullptr;
-    std::shared_lock<std::shared_mutex> lock(d->mutex);
-    if (auto it = d->extensionPoints.find(id); it != d->extensionPoints.end()) {
-        return it->second;
-    }
-    return nullptr;
-}
-
-bool ExtensionSystem::hasExtensionPoint(const std::string& id) const
-{
-    if (id.empty())
-        return false;
-    std::shared_lock<std::shared_mutex> lock(d->mutex);
-    return d->extensionPoints.contains(id);
-}
-std::vector<std::string> ExtensionSystem::extensionPointIds()
-{
-    std::shared_lock<std::shared_mutex> lock(d->mutex);
-    std::vector<std::string> keys;
-    keys.reserve(d->extensionPoints.size());
-    for (const auto& [k, _] : d->extensionPoints) {
-        keys.push_back(k);
-    }
-    return keys;
-}
-void ExtensionSystem::clear()
-{
-    std::unique_lock<std::shared_mutex> lock(d->mutex);
-    d->extensionPoints.clear();
+    return m_extensions->resolve(core::entityOf(extension));
 }
 
 } // namespace bakuon::gui

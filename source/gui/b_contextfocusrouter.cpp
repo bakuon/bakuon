@@ -82,11 +82,11 @@ void ContextFocusRouter::uninstall()
 
 void ContextFocusRouter::popCurrent()
 {
-    if (m_currentProvider) {
-        for (const ContextId& ctx : m_currentContext) {
-            CommandSystem::popContext(ctx, m_currentProvider.data());
-        }
-    }
+    // if (m_currentProvider) {
+    //     for (const ContextId& ctx : m_currentContext) {
+    //         CommandSystem::popContext(ctx, m_currentProvider.data());
+    //     }
+    // }
     m_currentProvider = nullptr;
     m_currentContext  = {};
 }
@@ -127,10 +127,10 @@ void ContextFocusRouter::handleFocusIn(QObject* gainer)
             break;
         }
         // 同时支持使用属性标签的形式
-        if (Context ctx = CommandSystem::providerContext(provider); !ctx.empty()) {
-            foundContext.append(ctx);
-            break;
-        }
+        // if (Context ctx = CommandSystem::providerContext(provider); !ctx.empty()) {
+        //     foundContext.append(ctx);
+        //     break;
+        // }
         provider = provider->parent(); // 沿着对象树向上冒泡
     }
 
@@ -154,16 +154,16 @@ void ContextFocusRouter::handleFocusIn(QObject* gainer)
     // 问题：任何同时绑定新旧上下文的 Command，会在旧上下文失活之前就已经因为新
     // 上下文有更大的 activationOrder 而立刻切换过去；极端情况下如果新旧上下文恰好
     // 是同一个字符串，引用计数全程不会掉到 0，完全不会触发多余的全局重新仲裁。
-    if (provider) {
-        for (const ContextId& ctx : foundContext) {
-            CommandSystem::pushContext(ctx, provider);
-        }
-    }
-    if (oldProvider) {
-        for (const ContextId& ctx : oldContext) {
-            CommandSystem::popContext(ctx, oldProvider);
-        }
-    }
+    // if (provider) {
+    //     for (const ContextId& ctx : foundContext) {
+    //         CommandSystem::pushContext(ctx, provider);
+    //     }
+    // }
+    // if (oldProvider) {
+    //     for (const ContextId& ctx : oldContext) {
+    //         CommandSystem::popContext(ctx, oldProvider);
+    //     }
+    // }
 
     m_currentProvider = provider; // 为 nullptr 表示焦点完全离开了所有已标记部件
     m_currentContext  = foundContext;
@@ -176,9 +176,9 @@ QObject* ContextFocusRouter::findContextProvider(QObject* object) const
         if (auto it = m_providers.find(provider); it != m_providers.end()) {
             return provider;
         }
-        if (!CommandSystem::providerContext(provider).empty()) {
-            return provider;
-        }
+        // if (!CommandSystem::providerContext(provider).empty()) {
+        //     return provider;
+        // }
         provider = provider->parent(); // 沿着对象树向上冒泡
     }
     return nullptr;

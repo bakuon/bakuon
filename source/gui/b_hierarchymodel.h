@@ -42,7 +42,7 @@ public:
         HandleRole = Qt::UserRole + 1,
     };
 
-    explicit HierarchyModel(DocumentSession& session, QObject* parent = nullptr);
+    explicit HierarchyModel(core::Registry& registry, QObject* parent = nullptr);
     ~HierarchyModel() override;
 
     // QAbstractItemModel
@@ -75,7 +75,6 @@ private:
     [[nodiscard]] quintptr idFromHandle(core::Entity h) const noexcept;
     [[nodiscard]] core::Entity handleFromId(quintptr id) const noexcept;
 
-    DocumentSession& m_session;
     core::Registry& m_registry;
 
     QItemSelectionModel* m_selModel = nullptr;

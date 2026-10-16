@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/b_entity.h"
+#include "core/b_result.h"
 #include "core/b_tagger.h"
 
 // ============================================================================

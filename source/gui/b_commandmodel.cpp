@@ -95,9 +95,9 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
                 // 展示文本实时向 CommandSystem 查询，做到"所见即所得"；
                 // 查不到（命令尚未注册/已被移除）时给出明确提示而不是空白，便于排查。
                 const QString id = item.data(CommandItem::CommandRole).toString();
-                if (Command* cmd = CommandSystem::command(CommandId(id))) {
-                    return cmd->action()->text();
-                }
+                // if (Command* cmd = CommandSystem::command(CommandId(id))) {
+                //     return cmd->action()->text();
+                // }
                 return QStringLiteral("<未知命令: %1>").arg(id);
             }
             case CommandItem::Type::Section  : return item.data(CommandItem::DisplayRole);
@@ -111,16 +111,16 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
             if (index.column() == 1) {
                 return item.data(CommandItem::CommandRole);
             }
-            if (index.column() == 2) {
-                const QString id    = item.data(CommandItem::CommandRole).toString();
-                const auto contexts = CommandSystem::contextsForCommand(CommandId(id));
-                QStringList list;
-                list.reserve(contexts.size());
-                for (const auto& c : contexts) {
-                    list.append(c.toString());
-                }
-                return list.join(" | ");
-            }
+            // if (index.column() == 2) {
+            //     const QString id    = item.data(CommandItem::CommandRole).toString();
+            //     const auto contexts = CommandSystem::contextsForCommand(CommandId(id));
+            //     QStringList list;
+            //     list.reserve(contexts.size());
+            //     for (const auto& c : contexts) {
+            //         list.append(c.toString());
+            //     }
+            //     return list.join(" | ");
+            // }
         }
 
         break;
@@ -128,14 +128,14 @@ QVariant CommandModel::data(const QModelIndex& index, int role) const
     case CommandTypeRole   : return static_cast<int>(type);
     case CommandIdRole     : return item.data(CommandItem::CommandRole);
     case CommandContextRole: {
-        const QString id    = item.data(CommandItem::CommandRole).toString();
-        const auto contexts = CommandSystem::contextsForCommand(CommandId(id));
-        QStringList list;
-        list.reserve(contexts.size());
-        for (const auto& c : contexts) {
-            list.append(c.toString());
-        }
-        return list.join(" | ");
+        // const QString id    = item.data(CommandItem::CommandRole).toString();
+        // const auto contexts = CommandSystem::contextsForCommand(CommandId(id));
+        // QStringList list;
+        // list.reserve(contexts.size());
+        // for (const auto& c : contexts) {
+        //     list.append(c.toString());
+        // }
+        // return list.join(" | ");
     }
     default: break;
     }

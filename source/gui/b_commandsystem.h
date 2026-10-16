@@ -1,259 +1,264 @@
 #pragma once
 
-#include <QtCore/QDataStream>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include "gui/b_command.h"
-#include "gui/b_commandlayout.h"
-#include "gui/b_commandmanager.h"
-#include "gui/b_context.h"
-#include "gui/b_contextarbiter.h"
-#include "gui/b_contextstatus.h"
+#include <QtCore/QMetaObject>
+#include <QtCore/QObject>
+#include <QtCore/QPointer>
+#include <QtGui/QAction>
+#include <QtGui/QIcon>
+#include <QtGui/QKeySequence>
+
+#include <bakuon/core/Connection.h>
+#include <bakuon/core/Entity.h>
+#include <bakuon/core/Tagger.h>
+#include <bakuon/gui/ICommandSystem.h>
+
+#include "core/b_ref.h"
+#include "gui/b_contextsystem.h"
 #include "gui/b_gui_export.h"
-#include "gui/b_shortcutmanager.h"
-#include "gui/b_types.h"
+
+namespace bakuon::gui::command {
+
+// ============================================================================
+// 命令 / 绑定实体的组件词汇表。
+// 这里允许出现 Qt 值类型（QString/QIcon/QKeySequence）和 QPointer<QAction>：本头文件属于 gui
+// 层，不进入 core；而"QAction 裸指针放进组件"仍然被禁止——一律 QPointer / unique_ptr。
+//
+//  命令实体： CommandKey + CommandProxy + CommandPresentation + CommandShortcuts +
+//             CommandPolicy + CommandFlags + CommandBindings + CommandAuthority
+//  绑定实体： ActionBinding + BoundAction                （挂在命令和上下文两侧的有序列表里）
+//  上下文侧： ContextBindings                            （由本系统在 bind 时附加到上下文实体上）
+// ============================================================================
+
+struct CommandKey
+{
+    std::string value;
+};
+
+/// 代理 QAction 的所有者：命令实体销毁时代理一并销毁（菜单/工具栏里的引用自动消失）。
+struct CommandProxy
+{
+    std::unique_ptr<QAction> action;
+};
+
+struct CommandPresentation
+{
+    QString text;
+    QIcon icon;
+    QString toolTip;
+    bool checkable{false};
+};
+
+struct CommandShortcuts
+{
+    QList<QKeySequence> current;
+    QList<QKeySequence> defaults;
+};
+
+using CommandPolicy = gui::CommandPolicy;
+
+struct CommandFlags
+{
+    bool disabled{false};
+};
+
+/// 命令名下的全部绑定（顺序无意义）。只由 CommandSystem 维护。
+struct CommandBindings
+{
+    std::vector<core::Entity> ordered;
+};
+struct ContextBindings
+{
+    std::vector<core::Entity> ordered;
+};
+
+/// 仲裁出来的当前权威。binding 为空表示没有权威源。
+struct CommandAuthority
+{
+    core::Entity binding{core::NullEntity};
+    QPointer<QAction> real;
+    QMetaObject::Connection changed;   ///< real->changed -> 重新同步代理
+    QMetaObject::Connection triggered; ///< 代理->triggered -> real->trigger()
+};
+
+struct ActionBinding
+{
+    core::Entity command{core::NullEntity};
+    core::Entity context{core::NullEntity};
+};
+
+struct BoundAction
+{
+    QPointer<QAction> action;
+    QMetaObject::Connection destroyed; ///< action 销毁 -> 移除本绑定
+};
+
+// ---------------------------------------------------------------------------
+// 句柄种类描述 + 带领域方法的内部引用（见 core/b_ref.h）。
+// 对外仍然是 OpaqueHandle；这些 Ref 只在本系统内部、栈上使用。
+// ---------------------------------------------------------------------------
+struct CommandTraits
+{
+    using tag      = CommandHandleTag;
+    using required = entt::type_list<CommandProxy>;
+};
+
+template<typename Reg>
+class BasicCommandRef : public core::RefBase<CommandTraits, Reg>
+{
+    using Base = core::RefBase<CommandTraits, Reg>;
+
+public:
+    using Base::Base;
+    BasicCommandRef() = default;
+
+    [[nodiscard]] QAction *proxy() const { return this->template get<CommandProxy>().action.get(); }
+    [[nodiscard]] decltype(auto) presentation() const
+    {
+        return this->template get<CommandPresentation>();
+    }
+    [[nodiscard]] decltype(auto) shortcuts() const
+    {
+        return this->template get<CommandShortcuts>();
+    }
+    [[nodiscard]] decltype(auto) policy() const { return this->template get<CommandPolicy>(); }
+    [[nodiscard]] decltype(auto) flags() const { return this->template get<CommandFlags>(); }
+    [[nodiscard]] decltype(auto) authority() const
+    {
+        return this->template get<CommandAuthority>();
+    }
+    [[nodiscard]] decltype(auto) bindings() const
+    {
+        return (this->template get<CommandBindings>().ordered);
+    }
+    /// 当前权威 QAction（没有则为空）。
+    [[nodiscard]] QAction *real() const { return authority().real.data(); }
+};
+
+struct BindingTraits
+{
+    using tag      = BindingHandleTag;
+    using required = entt::type_list<ActionBinding, BoundAction>;
+};
+
+template<typename Reg>
+class BasicBindingRef : public core::RefBase<BindingTraits, Reg>
+{
+    using Base = core::RefBase<BindingTraits, Reg>;
+
+public:
+    using Base::Base;
+    BasicBindingRef() = default;
+
+    [[nodiscard]] core::Entity command() const
+    {
+        return this->template get<ActionBinding>().command;
+    }
+    [[nodiscard]] core::Entity context() const
+    {
+        return this->template get<ActionBinding>().context;
+    }
+    [[nodiscard]] QAction *action() const
+    {
+        return this->template get<BoundAction>().action.data();
+    }
+};
+
+using CommandRef      = BasicCommandRef<core::Registry>;
+using ConstCommandRef = BasicCommandRef<const core::Registry>;
+using BindingRef      = BasicBindingRef<core::Registry>;
+using ConstBindingRef = BasicBindingRef<const core::Registry>;
+
+} // namespace bakuon::gui::command
 
 namespace bakuon::gui {
 
 /**
- * @brief 一套独立的命令 / 上下文 / 快捷键工作区。
+ * @brief 命令系统：ECS 里的一个 System——命令/绑定实体的注册、仲裁、代理 QAction 同步。
  *
- * CommandSystem 静态门面委托给进程默认实例；多窗口 / 插件沙箱可以各自持有
- * 一个 CommandWorkspace，彼此的命令注册表和激活集合完全隔离。
+ * ## 数据流
+ *   插件 patch()/bind()/ContextSystem::push()  →  改组件  →  on_update 监听器 / 观察者
+ *   →  resolve(命令)（重新选出权威绑定）/ syncProxy(命令)（组件状态 → 代理 QAction）
+ * 同一条"组件 → 代理"的同步路径服务于所有改动来源，没有"某些入口忘了刷新"的可能。
+ *
+ * ## 仲裁规则（与旧版 ContextArbiter 一致）
+ * 在命令的全部绑定里，只看其上下文处于激活态、且 QAction 仍然存活的那些，用
+ * core::beats() 按 (tier > priority > activationOrder) 选最大者。
+ *
+ * ## 归属与访问（没有单例）
+ * @code
+ *   domain.emplaceService<ContextSystem>(domain.registry());
+ *   domain.emplaceService<CommandSystem>(domain.registry(), domain.service<ContextSystem>());
+ * @endcode
+ *
+ * ## 已吸取的历史教训
+ *  - 把代理 QAction 当成"真实 QAction"绑定会形成 `代理->trigger() -> 代理->trigger()` 的死循环：
+ *    bind() 用代理上的动态属性识别并拒绝。
+ *  - 可勾选动作只转发 triggered，不转发 toggled，避免 real 被切换两次。
+ *  - 同步 checked 时屏蔽信号，避免递归 toggled。
+ *
+ * ## 约束
+ *  - 只在 GUI 线程使用；不可拷贝、不可移动；必须先于 Registry 销毁，且晚于 ContextSystem 创建。
+ *  - 不要直接 registry.destroy() 命令/绑定实体：请用 unregisterCommand()/unbind()。
+ *  - 快捷键冲突管理（原 ShortcutManager）应作为另一个 System 读写 CommandShortcuts，不在本类内。
  */
-class BAKUON_GUI_EXPORT CommandWorkspace
+class BAKUON_GUI_EXPORT CommandSystem final : public QObject,
+                                              public ICommandSystem,
+                                              private core::RefResolver
 {
 public:
-    CommandWorkspace();
-    CommandWorkspace(const CommandWorkspace&)            = delete;
-    CommandWorkspace& operator=(const CommandWorkspace&) = delete;
-    CommandWorkspace(CommandWorkspace&&)                 = delete;
-    CommandWorkspace& operator=(CommandWorkspace&&)      = delete;
-    ~CommandWorkspace()                                  = default;
+    CommandSystem(core::Registry &registry, ContextSystem &contexts, QObject *parent = nullptr);
+    ~CommandSystem() override;
 
-    CommandManager& commandManager() noexcept { return m_cmdManager; }
-    const CommandManager& commandManager() const noexcept { return m_cmdManager; }
+    CommandSystem(const CommandSystem &)            = delete;
+    CommandSystem &operator=(const CommandSystem &) = delete;
+    CommandSystem(CommandSystem &&)                 = delete;
+    CommandSystem &operator=(CommandSystem &&)      = delete;
 
-    ShortcutManager& shortcutManager() noexcept { return m_shortcutManager; }
-    const ShortcutManager& shortcutManager() const noexcept { return m_shortcutManager; }
+    [[nodiscard]] core::Registry &registry() noexcept { return m_registry; }
 
-    ContextArbiter& contextArbiter() noexcept { return m_ctxArbiter; }
-    const ContextArbiter& contextArbiter() const noexcept { return m_ctxArbiter; }
+    [[nodiscard]] core::Result<CommandHandle> registerCommand(std::string_view id,
+                                                              const QString &text) override;
+    [[nodiscard]] core::Result<CommandHandle> ensureCommand(std::string_view id,
+                                                            const QString &text) override;
+    bool unregisterCommand(CommandHandle command) override;
+    [[nodiscard]] CommandHandle find(std::string_view id) const override;
+    [[nodiscard]] std::vector<CommandHandle> commands() const override;
+    [[nodiscard]] QAction *action(CommandHandle command) const override;
+    [[nodiscard]] std::optional<CommandState> state(CommandHandle command) const override;
+    bool patch(CommandHandle command, const CommandPatch &patch) override;
 
-private:
-    ContextArbiter m_ctxArbiter;
-    CommandManager m_cmdManager;
-    ShortcutManager m_shortcutManager;
-};
-
-/**
- * @brief 命令系统门面 Command Facade
- * @todo 未来可能会走向“多个独立的命令系统实例”，
-  * 进程默认工作区的静态入口。需要隔离实例时直接构造 CommandWorkspace。
- * 因为每个插件沙箱都可能有各自隔离的一套命令和上下文，尤其是多文档多窗口的编辑器。
- * 
- * 而使用命名空间的原则是：
- * Google C++ 风格指南和 C++ Core Guidelines 都明确建议:
- * 如果一个类里只有 static 成员、没有任何实例状态,就不该是类,
- * 应该用命名空间。这条建议的落脚点很直接——class 的存在意义是
- * "封装状态 + 行为不变量",一旦你发现自己在写 private: SomeClass() = default; 
- * 只是为了"防止被 new 出来",这本身就是一个信号:
- * 你其实想要的是命名空间,只是习惯性地用类的语法在表达它。
- *
- * // 拆成语义明确的子命名空间,而不是维持一个大而全的静态门面
- * namespace bakuon::gui::commands { Command& registerCommand(...); ... }
- * namespace bakuon::gui::context  { bool registerContext(...); void pushContext(...); ... }
- * namespace bakuon::gui::shortcuts{ QString shortcutString(...); ... }
- * namespace bakuon::gui::layout   { CommandLayout* menubarLayout(); ... }
- *
- * // 拆散之后失去"一个入口好记好敲代码补全"的体验可加一层薄的汇聚命名空间做门面
- * namespace bakuon::gui::cmd {
- *     using namespace commands;
- *     using namespace context;
- *     using namespace shortcuts;
- *     using namespace layout;
- * }
- *
- * 唯一真正值得权衡、不能一句话打发的点是:
- * 如果未来真的会走向"多个独立的命令系统实例"(比如每个文档窗口、
- * 每个插件沙箱各自隔离一套命令注册表和上下文),那从"静态门面类"演进到"可实
- * 例化的类"是渐进式改动;而从"命名空间自由函数"演进到那一步,是结构性重写。
- * 给定是 IDE/工业软件编辑器这种有可能走向多文档、多窗口架构的项目,这确实是一个不能忽略的伏笔。
- */
-class BAKUON_GUI_EXPORT CommandSystem
-{
-public:
-    /// 命令管理
-
-    static Command& registerCommand(const CommandId& id, const QString& text);
-    static void unregisterCommand(const CommandId& id);
-    static Command* command(const CommandId& id);
-    static std::vector<Command*> allCommands();
-    static std::vector<CommandId> allCommandIds();
-
-    /// 命令菜单栏和工具栏
-
-    // TODO: 使用 ICommandLayout 和 CommandItem
-    static CommandLayout* menubarLayout(); // 默认菜单布局
-    static CommandLayout* toolbarLayout(); // 默认工具栏布局
-    static void renderMenuBar(CommandLayout* layout, QMenuBar* menubar);
-    static void renderMenuBar(CommandLayout::Node* parent, QMenuBar* menubar);
-    static void renderMenu(CommandLayout::Node* parent, QMenu* menu);
-    static void renderToolBar(CommandLayout* layout, QMainWindow* window);
-    static void renderToolBar(CommandLayout::Node* parent, QToolBar* toolbar);
-    static bool saveLayout(const QString& path);
-    static bool loadLayout(const QString& path);
-
-    /// 命令上下文注册表
-
-    // 显式登记一个上下文 id（owner 必填，通常传入模块/插件的唯一标识），
-    // 详细的冲突判定规则见 ContextTracker::registerContext() 的注释。
-    static std::shared_ptr<ContextState> registerContext(const ContextId& id, const QString& owner,
-                                                         const QString& description);
-    static std::optional<ContextArbiter::ContextInfo> contextInfo(const ContextId& id);
-    static std::vector<ContextId> registeredContexts();
-    /**
-     * declareContext：注册 + 取得 ContextId 的一步到位版本，专为"模块级常量
-     * 声明文件"设计，典型用法：
-     *
-     *   // EditorContexts.h
-     *   namespace editor::contexts {
-     *   inline const gui::ContextId kFocused =
-     *       gui::CommandSystem::declareContext("editor.image.focused",
-     *                                          "plugin.image",
-     *                                          "图像编辑器获得焦点");
-     *   }
-     *
-     * 这样业务代码里永远不会出现裸的 ContextId("字符串") 字面量——只会引用
-     * 已经声明好的常量，重复/拼写不一致的问题从"运行时才会暴露"变成
-     * "登记时就地址空间统一"。owner 不同的两次 declareContext 撞到同一个
-     * 字符串会在这里被 qWarning 出来（见 registerContext），但仍然返回一个
-     * 可用的 ContextId——不让命名冲突直接导致编译期/启动期崩溃，只是足够刺眼。
-     *
-     * @todo 之后可以内置声明标准命令（StandardCommands）如保存、复制、删除等
-     */
-    static ContextId declareContext(const QString& id, const QString& owner,
-                                    const QString& description);
-
-    static std::shared_ptr<ContextState> context(const ContextId& ctxId);
-    static std::vector<ContextId> contextsForCommand(const CommandId& cmdId);
-
-    /// 命令上下文激活/失活
-
-    static void pushContext(const ContextId& context, const void* source,
-                            ContextTier tier = ContextTier::Foreground);
-    static void popContext(const ContextId& context, const void* source,
-                           ContextTier tier = ContextTier::Foreground);
-    static void releaseContext(const void* source);
-    static std::unordered_set<ContextId> activeContexts();
-    static bool isActiveContext(const ContextId& context) noexcept;
-    static uint64_t activationOrder(const ContextId& context) noexcept;
-
-    // 为焦点部件设置属性标签上下文
-    static void setProviderContexts(QObject* widget, const Context& context);
-    // 单上下文场景的语法糖
-    static inline void setProviderContext(QObject* widget, const ContextId& context)
-    {
-        setProviderContexts(widget, Context{context});
-    }
-    static Context providerContext(const QObject* widget);
-
-    /// 快捷键管理
-
-    static QString shortcutString(const QKeySequence& shortcut,
-                                  QKeySequence::SequenceFormat format = QKeySequence::NativeText);
-    static QList<QKeySequence> shortcuts(const CommandId& id);
-    static QList<QKeySequence> defaultShortcuts(const CommandId& id);
-    static bool setShortcuts(const CommandId& id, const QList<QKeySequence>& shortcuts,
-                             bool checkConflicts = true);
-    static bool addShortcut(const CommandId& id, const QKeySequence& shortcut,
-                            bool checkConflicts = true);
-    static void removeShortcut(const CommandId& id, const QKeySequence& shortcut);
-    static void clearShortcuts(const CommandId& id);
-    static void resetDefaultShortcut(const CommandId& id);
-    static void resetAllDefaultShortcut();
-    static QList<CommandId> conflictCommands(const QKeySequence& shortcut);
-    static QList<ShortcutConflict> shortcutConflicts();
-    static QList<ShortcutBinding> shortcutBindings();
-    static QList<ShortcutBinding> modifiedShortcutBindings();
-    static bool isCommandModified(const CommandId& id);
-    static QList<CommandId> commandsWithShortcut(const QKeySequence& shortcut);
-    static bool saveShortcuts(const QString& filePath);
-    static bool restoreShortcuts(const QString& filePath);
-
-    // 命令管理器
-    static CommandManager& commandManager();
-
-    // 快捷键管理器
-    static ShortcutManager& shortcutManager();
-
-    // 进程默认工作区（Construct-On-First-Use）
-    static CommandWorkspace& workspace();
+    [[nodiscard]] core::Result<BindingHandle> bind(CommandHandle command, ContextHandle context,
+                                                   QAction *real) override;
+    bool unbind(BindingHandle binding) override;
+    [[nodiscard]] QAction *authority(CommandHandle command) const override;
+    [[nodiscard]] std::vector<ContextHandle> contextsOf(CommandHandle command) const override;
 
 private:
-    CommandSystem() = default;
-};
+    template<typename Component>
+    void watch();
 
-// RAII 生命周期管理器：构造时 pushContext，析构时自动 popContext（除非 dismiss）。
-// 不可拷贝；支持移动以便从工厂函数返回。
-class BAKUON_GUI_EXPORT ContextGuard
-{
-public:
-    ContextGuard(const ContextId& context, const void* source,
-                 ContextTier tier = ContextTier::Foreground)
-        : m_context(context)
-        , m_source(source)
-        , m_tier(tier)
-        , m_dismissed(false)
-    {
-        CommandSystem::pushContext(m_context, m_source, m_tier);
-    }
+    // 注意：私有成员不能叫 resolve —— 会遮蔽 RefResolver::resolve<Ref>()。
+    void arbitrate(command::CommandRef command);
+    void setAuthority(command::CommandRef command, core::Entity binding, QAction *action);
+    void syncProxy(core::Entity command);
+    void removeBinding(command::BindingRef binding);
+    [[nodiscard]] QMetaObject::Connection watchAction(core::Entity binding, QAction *action);
 
-    ContextGuard(const ContextGuard&)            = delete;
-    ContextGuard& operator=(const ContextGuard&) = delete;
-
-    ContextGuard(ContextGuard&& other) noexcept
-        : m_context(other.m_context)
-        , m_source(other.m_source)
-        , m_tier(other.m_tier)
-        , m_dismissed(other.m_dismissed)
-    {
-        other.m_dismissed = true; // 源对象不再负责 pop
-    }
-
-    ContextGuard& operator=(ContextGuard&& other) noexcept
-    {
-        if (this != &other) {
-            if (!m_dismissed) {
-                CommandSystem::popContext(m_context, m_source, m_tier);
-            }
-            m_context         = other.m_context;
-            m_source          = other.m_source;
-            m_tier            = other.m_tier;
-            m_dismissed       = other.m_dismissed;
-            other.m_dismissed = true;
-        }
-        return *this;
-    }
-
-    ~ContextGuard()
-    {
-        if (!m_dismissed) {
-            CommandSystem::popContext(m_context, m_source, m_tier);
-        }
-    }
-
-    /// 提前解除职责：析构时不再 pop（调用方需自行保证对称的 pop/release）
-    void dismiss() noexcept { m_dismissed = true; }
-
-    bool isActive() const noexcept { return !m_dismissed; }
-    const ContextId& context() const noexcept { return m_context; }
-    ContextTier tier() const noexcept { return m_tier; }
+    void componentChanged(core::Registry &registry, core::Entity command);
+    void bindingDestroyed(core::Registry &registry, core::Entity binding);
+    void onContextChanged(ContextHandle context, ContextChange change);
 
 private:
-    ContextId m_context;
-    const void* m_source;
-    ContextTier m_tier;
-    bool m_dismissed;
+    core::Registry &m_registry;
+    ContextSystem &m_contexts;
+    core::BasicTagger<command::CommandKey> m_keys;
+    int m_syncDepth = 0; ///< patch() 批处理期间 > 0：监听器不立即同步，批末统一同步一次
+    std::vector<core::ScopedConnection> m_connections;
+    core::Connection m_contextObserver;
 };
 
 } // namespace bakuon::gui

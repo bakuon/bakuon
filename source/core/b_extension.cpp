@@ -208,10 +208,7 @@ std::vector<Entity> Extension::list(Entity point) const
 {
     std::vector<Entity> result;
     if (const ExtensionList *list = listOf(point)) {
-        result.reserve(list->ordered.size());
-        for (const Entity entity : list->ordered) {
-            result.push_back(entity);
-        }
+        return list->ordered;
     }
     return result;
 }

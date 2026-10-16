@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstdint>
 #include <string_view>
 
 namespace bakuon::core {
+
+using IdType = std::uint32_t; // entt::id_type
 
 /**
  * @brief bakuon::core 模块版本号（人类可读），供诊断日志/关于对话框使用。
@@ -17,4 +20,11 @@ namespace bakuon::core {
  */
 [[nodiscard]] std::string_view versionString() noexcept;
 
+[[nodiscard]] IdType stringHashed(std::string_view str) noexcept;
+
+/// FNV-1a 64 位哈希
+[[nodiscard]] std::uint64_t stringFnv1a(std::string_view str) noexcept;
+
 } // namespace bakuon::core
+
+#define TYPE_ID(Type) (bakuon::core::stringHashed(#Type))

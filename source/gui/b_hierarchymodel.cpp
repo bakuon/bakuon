@@ -8,9 +8,6 @@
 
 #include <bakuon/core/Components.h>
 
-#include "gui/b_documentsession.h"
-#include "gui/b_registrybridge.h"
-
 namespace bakuon::gui {
 namespace h = bakuon::core::hierarchy;
 using namespace bakuon::core;
@@ -32,10 +29,9 @@ Entity HierarchyModel::handleFromId(quintptr id) const noexcept
     return Entity{static_cast<Entity>(static_cast<Underlying>(id))};
 }
 
-HierarchyModel::HierarchyModel(DocumentSession& session, QObject* parent)
+HierarchyModel::HierarchyModel(core::Registry& registry, QObject* parent)
     : QAbstractItemModel(parent)
-    , m_session(session)
-    , m_registry(session.container().registry())
+    , m_registry(registry)
 {
     connectBridge();
 }
@@ -47,28 +43,7 @@ HierarchyModel::~HierarchyModel()
 
 void HierarchyModel::connectBridge()
 {
-    auto& bridge = m_session.bridge();
-    connect(&bridge, &RegistryBridge::entityConstructed, this, [this](const QString& tag, Entity id) {
-        if (tag == QLatin1String("Hierarchy") || tag == QLatin1String("Name")) {
-            onHierarchyChanged(id);
-        }
-    });
-    connect(&bridge, &RegistryBridge::entityUpdated, this, [this](const QString& tag, Entity id) {
-        if (tag == QLatin1String("Name")) {
-            onNameChanged(id);
-        } else if (tag == QLatin1String("Hierarchy")) {
-            onHierarchyChanged(id);
-        }
-    });
-    connect(&bridge,
-            &RegistryBridge::entityDestroyed,
-            this,
-            [this](const QString& tag, Entity /*id*/) {
-                if (tag == QLatin1String("Hierarchy")) {
-                    // 结构变化：全量重置最安全（子树可能已销毁）
-                    reload();
-                }
-            });
+    // ...
 }
 
 QModelIndex HierarchyModel::index(int row, int column, const QModelIndex& parent) const
@@ -283,11 +258,8 @@ void HierarchyModel::bindSelection(QItemSelectionModel* selectionModel)
         return;
     }
 
-    m_viewSelConn    = connect(m_selModel, &QItemSelectionModel::selectionChanged, this, [this]() {
+    m_viewSelConn = connect(m_selModel, &QItemSelectionModel::selectionChanged, this, [this]() {
         onSelectionFromView();
-    });
-    m_sessionSelConn = connect(&m_session, &DocumentSession::selectionChanged, this, [this]() {
-        onSelectionFromSession();
     });
 
     onSelectionFromSession();
@@ -309,8 +281,6 @@ void HierarchyModel::onSelectionFromView()
             handles.push_back(h);
         }
     }
-    m_session.selection().set(std::move(handles));
-
     m_syncingSelection = false;
 }
 
@@ -322,12 +292,7 @@ void HierarchyModel::onSelectionFromSession()
     m_syncingSelection = true;
 
     QItemSelection itemSel;
-    for (Entity h : m_session.selection().ordered()) {
-        const QModelIndex idx = indexForHandle(h);
-        if (idx.isValid()) {
-            itemSel.select(idx, idx);
-        }
-    }
+    // ...
     m_selModel->select(itemSel, QItemSelectionModel::ClearAndSelect);
 
     m_syncingSelection = false;

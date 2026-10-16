@@ -4,8 +4,6 @@
 #include <QtCore/QJsonObject>
 #include <QtCore/QLibrary>
 
-#include "gui/b_extensionsystem.h"
-
 namespace bakuon::gui {
 
 QString toString(PluginState state)
@@ -17,7 +15,7 @@ QString toString(PluginState state)
 static bool shouldLoad(PluginEnablePolicy policy)
 {
     switch (policy) {
-    case PluginEnablePolicy::ForceEnabled:
+    case PluginEnablePolicy::ForceEnabled     :
     case PluginEnablePolicy::EnabledByDefault : return true;
     case PluginEnablePolicy::ForceDisabled    :
     case PluginEnablePolicy::DisabledByDefault: return false;
@@ -249,7 +247,7 @@ void PluginPipeline::executeInitialize()
         handle(PluginEvent::Fail);
         return;
     }
-    PluginContext ctx(m_argumentValues, &ExtensionSystem::instance());
+    PluginContext ctx(m_argumentValues);
     if (!m_instance->initialize(ctx)) {
         m_lastError = QStringLiteral("initialize() returned false");
         handle(PluginEvent::Fail);
